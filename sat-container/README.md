@@ -7,9 +7,9 @@ These files are copied into the Docker image during the build and define the con
 
 •	sat-agent-internal.py: The Main Event Loop. This multi-threaded Python script runs continuously.
   
-    o	Thread 1 (L2 Topology): Watches Etcd for link changes. It manages the Layer 2 Data Plane by creating VXLAN tunnels (via update-link-internal.sh) and bridging them   to local antennas. This creates the virtual "wires" between nodes at the Ethernet level.
+   o	Thread 1 (L2 Topology): Watches Etcd for link changes. It manages the Layer 2 Data Plane by creating VXLAN tunnels (via update-link-internal.sh) and bridging them   to local antennas. This creates the virtual "wires" between nodes at the Ethernet level.
   
-    o	Thread 2 (Runtime): Watches Etcd for command queues (/config/run/) and executes shell commands inside the container.
+   o	Thread 2 (Runtime): Watches Etcd for command queues (/config/run/) and executes shell commands inside the container.
 
 •	configure-isis.sh: An Optional configuration utility. It is invoked externally (usually by network-configuration.py) only if routing is enabled. It writes the FRRouting (FRR) configuration to establish Layer 3 routing (IS-IS) over the Layer 2 VXLAN bridges.
 
