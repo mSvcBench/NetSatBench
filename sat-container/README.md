@@ -1,15 +1,26 @@
-Internal Container Logic (sat-container/)
-These files are copied into the Docker image during the build and define the container's lifecycle and networking behavior:
+## Internal Container Logic (`sat-container/`)
 
-•	Dockerfile: Builds the simulation image based on ubuntu:22.04. It installs core networking tools (frr, tcpdump, iproute2), Python dependencies (etcd3, protobuf), and the SSH server. It sets create_bridges.sh as the container entrypoint.
+This directory contains the files copied into the Docker image during the build process. These scripts define the container's lifecycle, initialization, and networking behavior.
 
-•	create_bridges.sh: The Entrypoint Script. It initializes the container environment by starting the SSH daemon and waiting for the Etcd database to become reachable. It dynamically determines the number of antennas (bridges) needed based on the hostname (5 for satellites, 1 for ground stations), creates those bridges (brX), and then execs the persistent Python agent.
+### File Overview
 
-•	sat-agent-internal.py: The Main Event Loop. This multi-threaded Python script runs continuously.
-  
-   o	Thread 1 (L2 Topology): Watches Etcd for link changes. It manages the Layer 2 Data Plane by creating VXLAN tunnels (via update-link-internal.sh) and bridging them   to local antennas. This creates the virtual "wires" between nodes at the Ethernet level.
-  
-   o	Thread 2 (Runtime): Watches Etcd for command queues (/config/run/) and executes shell commands inside the container.
+####  `Dockerfile`
+Builds the simulation image based on `ubuntu:22.04`.
+* **Installs dependencies:** Core networking tools (`frr`, `tcpdump`, `iproute2`), Python packages (`etcd3`, `protobuf`), and the SSH server.
+* **Sets Entrypoint:** Configures `create_bridges.sh` as the container entrypoint.
 
-•	configure-isis.sh: An Optional configuration utility. It is invoked externally (usually by network-configuration.py) only if routing is enabled. It writes the FRRouting (FRR) configuration to establish Layer 3 routing (IS-IS) over the Layer 2 VXLAN bridges.
+####  `create_bridges.sh` (Entrypoint Script)
+Initializes the container environment on startup.
+1.  Starts the SSH daemon.
+2.  Waits for the Etcd database to become reachable.
+3.  **Dynamic Configuration:** checks the hostname to determine the number of antennas (bridges) needed (e.g., 5 for satellites, 1 for ground stations).
+4.  Creates the necessary bridges (`brX`) and then `exec`s the persistent Python agent.
 
+####  `sat-agent-internal.py` (Main Event Loop)
+A multi-threaded Python script that runs continuously to manage node behavior.
+* **Thread 1 (L2 Topology):** Watches Etcd for link changes. It manages the Layer 2 Data Plane by creating VXLAN tunnels (calling `update-link-internal.sh`) and bridging them to local antennas. This creates the virtual "wires" connecting nodes via Ethernet.
+* **Thread 2 (Runtime):** Watches Etcd for command queues at `/config/run/` and executes shell commands inside the container.
+
+####  `configure-isis.sh` (Routing Configuration)
+An optional configuration utility invoked externally (usually by `network-configuration.py`) when routing is enabled.
+* **Function:** Writes the FRRouting (FRR) configuration to establish Layer 3 routing (IS-IS) over the existing Layer 2 VXLAN bridges.
