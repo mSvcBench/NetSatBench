@@ -1,49 +1,37 @@
 #!/bin/bash
-# create-sat.sh — create a satellite container on any host, but always communicate with host-1
-# Usage:
-#   ./create-sat.sh <SAT_NAME> <N_ANTENNAS> [SAT_HOST] [SSH_USERNAME]
-# Example:
-#   ./create-sat.sh sat5 5 host-2 ubuntu
+# create-sat.sh — create a satellite container
+# Usage: ./create-sat.sh <NAME> <N_ANT> <HOST> <USER> <IMAGE>
 
 set -euo pipefail
 
 SAT_NAME="${1:-}"
 N_ANTENNAS="${2:-}"
-SAT_HOST="${3:-host-1}"         # Host where the container will be created (host-1 / host-2 / host-3)
+SAT_HOST="${3:-host-1}"
 SSH_USERNAME="${4:-$(whoami)}"
+CONTAINER_IMAGE="${5:-shahramdd/sat:7.6}"
 
-SAT_HOST_BRIDGE_NAME="sat-bridge"
-
-# ➊ The target for coordination is always host-1
 HOST1_ALIAS="host-1"
 HOST1_IP="10.0.1.215"
+SAT_HOST_BRIDGE_NAME="sat-bridge"
 
 if [[ -z "$SAT_NAME" || -z "$N_ANTENNAS" ]]; then
-  echo "Usage: $0 <SAT_NAME> <N_ANTENNAS> [SAT_HOST] [SSH_USERNAME]"
+  echo "Usage: $0 <SAT_NAME> <N_ANTENNAS> [SAT_HOST] [SSH_USERNAME] [CONTAINER_IMAGE]"
   exit 1
 fi
 
-# Ensure the private key on the target host has correct permissions
+# Ensure permissions on remote host
 ssh "$SSH_USERNAME@$SAT_HOST" chmod 600 /home/ubuntu/.ssh/id_rsa >/dev/null 2>&1 || true
 
-# Create Docker network 'sat-bridge' if it doesn't exist
-if ssh "$SSH_USERNAME@$SAT_HOST" docker network inspect "$SAT_HOST_BRIDGE_NAME" >/dev/null 2>&1; then
-  echo "Docker network '$SAT_HOST_BRIDGE_NAME' already exists on $SAT_HOST."
-else
-  echo "Creating Docker network '$SAT_HOST_BRIDGE_NAME' on $SAT_HOST..."
-  ssh "$SSH_USERNAME@$SAT_HOST" docker network create "$SAT_HOST_BRIDGE_NAME"
-fi
+# Create Docker Network if missing
+ssh "$SSH_USERNAME@$SAT_HOST" "docker network create $SAT_HOST_BRIDGE_NAME 2>/dev/null || true"
 
-# Remove existing container if it already exists
+# Remove existing container
 if ssh "$SSH_USERNAME@$SAT_HOST" docker ps -a --format '{{.Names}}' | grep -Fxq "$SAT_NAME"; then
   echo "Container '$SAT_NAME' already exists on $SAT_HOST. Recreating..."
   ssh "$SSH_USERNAME@$SAT_HOST" docker rm -f "$SAT_NAME" >/dev/null 2>&1 || true
 fi
 
-# Run the satellite container on SAT_HOST:
-#  - Always includes --add-host for host-1
-#  - Always sets REMOTE_SCRIPT_HOST=host-1 (agent communicates with host-1)
-#  - SSH key from the same SAT_HOST is bind-mounted into the container
+# Run the container
 ssh "$SSH_USERNAME@$SAT_HOST" docker run -d \
   --name "$SAT_NAME" \
   --hostname "$SAT_NAME" \
@@ -57,6 +45,6 @@ ssh "$SSH_USERNAME@$SAT_HOST" docker run -d \
   -e UPDATE_LINK_SH="/agent/update-link-internal.sh" \
   -v /home/ubuntu/.ssh/id_rsa:/root/.ssh/id_rsa:ro \
   -v /home/ubuntu/.ssh/id_rsa.pub:/root/.ssh/id_rsa.pub:ro \
-  shahramdd/sat:7.6
+  "$CONTAINER_IMAGE"
 
-echo "✅ Satellite '$SAT_NAME' created on $SAT_HOST (communicates with $HOST1_ALIAS=$HOST1_IP)."
+echo "✅ Satellite '$SAT_NAME' created on $SAT_HOST."
