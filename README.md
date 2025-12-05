@@ -6,7 +6,7 @@
 <div align="center">
 
 # NetSatBench
-## Distributed LEO Satellite Emulator
+## Distributed LEO Satellite Simulator
 ### High-Scale • Distributed • Application-Agnostic
 
 </div>
@@ -33,7 +33,7 @@ NetSatBench decouples simulation logic from physical proximity.
 >
 > 1.  **Distributed Execution:** The constellation is partitioned across a cluster of physical workers (bare metal or VMs).
 > 2.  **VXLAN Overlays:** The framework dynamically establishes VXLAN tunnels to encapsulate inter-satellite traffic, ensuring the "virtual space" remains continuous regardless of the underlying physical topology.
-> 3.  **Scalability:** By distributing containers, the emulation can scale to thousands of nodes without bottlenecking the CPU or memory of a single machine.
+> 3.  **Scalability:** By distributing containers, the simmulation can scale to thousands of nodes without bottlenecking the CPU or memory of a single machine.
 
 ---
 
