@@ -86,8 +86,7 @@ echo "    All bridges (br1–br$N_ANTENNAS) are ready."
 # 5️⃣ Fix SSH key permissions
 # ======================
 if [[ -f /root/.ssh/id_rsa ]]; then
-    chmod 600 /root/.ssh/id_rsa 2>/dev/null || \
-        echo "    ⚠️  Cannot chmod /root/.ssh/id_rsa (maybe read-only volume)"
+    chmod 600 /root/.ssh/id_rsa 2>/dev/null || true 
 fi
 
 # ======================
