@@ -10,7 +10,7 @@ import sys
 import re
 
 # ----------------------------
-# 🚩 CONFIGURATION
+#  CONFIGURATION
 # ----------------------------
 ETCD_ENDPOINT = os.getenv("ETCD_ENDPOINT", "10.0.1.215:2379")
 if ":" in ETCD_ENDPOINT:
@@ -28,7 +28,7 @@ logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)
 log = logging.getLogger("sat-agent")
 
 # ----------------------------
-# 📡 ETCD HELPERS
+#  ETCD HELPERS
 # ----------------------------
 def get_etcd_client():
     while True:
@@ -70,14 +70,21 @@ def load_remote_ips(cli):
     return ips
 
 # ----------------------------
-# 🛠️ IP & BRIDGE LOGIC
+#  IP & BRIDGE LOGIC
 # ----------------------------
 def register_my_ip(cli):
     try:
+        # Get the IP
         cmd = "ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1"
         my_ip = subprocess.check_output(cmd, shell=True).decode().strip()
-        if not my_ip: return
+        
+        #  VALIDATION CHECK
+        # If IP is empty OR ends in .0 (network address), it's bad.
+        if not my_ip or my_ip.endswith(".0"):
+            log.warning(f"⚠️ Found invalid IP '{my_ip}'. Waiting for a real one...")
+            return False
 
+        # If we got here, the IP is good (e.g., 172.100.0.5)
         def update_if_needed(key):
             val, _ = cli.get(key)
             if val:
@@ -91,8 +98,12 @@ def register_my_ip(cli):
 
         if not update_if_needed(f"/config/satellites/{SAT_NAME}"):
             update_if_needed(f"/config/users/{SAT_NAME}")
+            
+        return True # Success!
+
     except Exception as e:
         log.error(f"Failed to register IP: {e}")
+        return False
 
 def ensure_interface_ip(iface, ip_cidr):
     if subprocess.run(f"ip link show {iface}", shell=True, stdout=subprocess.DEVNULL).returncode != 0:
@@ -119,7 +130,7 @@ def apply_local_ips(cli):
             prefix = raw_cidr.split('/')[0].rsplit('.', 1)[0]
             ip_vector = [f"{prefix}.{i}/32" for i in range(1, n_antennas + 1)]
     else:
-        # 🪄 AUTO-GENERATE (Fallback for Ground Stations)
+        #  AUTO-GENERATE (Fallback for Ground Stations)
         match = re.search(r'(\d+)', SAT_NAME)
         if match:
             node_id = int(match.group(1))
@@ -134,7 +145,7 @@ def apply_local_ips(cli):
             if octet == 0: octet = 1
             
             ip_vector = [f"192.168.{octet}.{i}/32" for i in range(1, n_antennas + 1)]
-            log.info(f"🪄 Auto-generated IPs for {SAT_NAME}: {ip_vector}")
+            log.info(f" Auto-generated IPs for {SAT_NAME}: {ip_vector}")
 
     for i, ip_cidr in enumerate(ip_vector):
         if i >= n_antennas: break 
@@ -160,9 +171,16 @@ def process_topology(cli):
     for l in my_links:
         ep1, ep2 = l["endpoint1"], l["endpoint2"]
         ip1, ip2 = remote_ips.get(ep1), remote_ips.get(ep2)
-        if ip1 and ip2:
-            subprocess.run(["/bin/bash", UPDATE_LINK_SH, ep1, str(l["endpoint1_antenna"]), ip1, ep2, str(l["endpoint2_antenna"]), ip2])
 
+        # If the other node's IP is missing OR looks like a network address (.0), wait.
+        if not ip1 or ip1.endswith(".0") or not ip2 or ip2.endswith(".0"):
+             log.info(f"⏳ Waiting for valid remote IP for link {ep1}<->{ep2}...")
+             continue 
+
+        # If we get here, both IPs are valid (e.g., .4 and .5)
+        subprocess.run(["/bin/bash", UPDATE_LINK_SH, ep1, str(l["endpoint1_antenna"]), ip1, ep2, str(l["endpoint2_antenna"]), ip2])
+
+    # ... (rest of the function is fine)
     # Cleanup stale interfaces
     try:
         output = subprocess.check_output(["ip", "-o", "link", "show"], text=True)
@@ -175,11 +193,11 @@ def process_topology(cli):
     except: pass
 
 # ----------------------------
-# 🧪 RUNTIME EXECUTION LOGIC (THREAD 2)
+# RUNTIME EXECUTION LOGIC (THREAD 2)
 # ----------------------------
 def execute_commands(commands):
     if not commands: return
-    log.info(f"🧪 Executing {len(commands)} runtime commands...")
+    log.info(f" Executing {len(commands)} runtime commands...")
     
     full_cmd = " && ".join(commands)
     
@@ -206,7 +224,7 @@ def execute_commands(commands):
     threading.Thread(target=run_shell, daemon=True).start()
 
 # ----------------------------
-# 🧵 WATCHER THREADS
+# WATCHER THREADS
 # ----------------------------
 def watch_network_loop():
     """Thread 1: Watches Network Topology"""
@@ -251,11 +269,21 @@ def watch_runtime_loop():
 def main():
     log.info(f"🚀 Unified Agent Starting for {SAT_NAME}")
 
-    # Start Network Watcher
+    # 1. Connect to Etcd immediately
+    cli = get_etcd_client()
+
+    # 2.  BLOCKING LOOP: Wait for a valid IP before doing ANYTHING else
+    log.info("⏳ Verifying local network configuration...")
+    while True:
+        if register_my_ip(cli):
+            break # IP is good, we can proceed!
+        time.sleep(1) # IP was bad (or .0), wait 1s and try again
+
+    # 3. Start Network Watcher (Now that we know our IP is safe)
     t_net = threading.Thread(target=watch_network_loop, daemon=True)
     t_net.start()
 
-    # Start Runtime Watcher
+    # 4. Start Runtime Watcher
     t_run = threading.Thread(target=watch_runtime_loop, daemon=True)
     t_run.start()
 
