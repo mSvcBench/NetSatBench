@@ -20,7 +20,7 @@
     "sat3": {
       "host": "host-1",
       "bridge": "sat-bridge",
-      "image": "shahramdd/sat:8.6",
+      "image": "shahramdd/sat:8.8",
       "eth0_ip": "172.100.0.2",
       "sat_net_cidr":[
         "192.168.3.1/32",
@@ -34,7 +34,7 @@
     "sat4": {
       "host": "host-1",
       "bridge": "sat-bridge",
-      "image": "shahramdd/sat:8.6",
+      "image": "shahramdd/sat:8.8",
       "eth0_ip": "172.100.0.3",
       "sat_net_cidr":[
         "192.168.4.1/32",
@@ -48,7 +48,7 @@
     "sat5": {
       "host": "host-2",
       "bridge": "sat-bridge",
-      "image": "shahramdd/sat:8.6",
+      "image": "shahramdd/sat:8.8",
       "eth0_ip": "172.101.0.2",
       "sat_net_cidr":[
         "192.168.5.1/32",
@@ -62,7 +62,7 @@
     "sat6": {
       "host": "host-2",
       "bridge": "sat-bridge",
-      "image": "shahramdd/sat:8.6",
+      "image": "shahramdd/sat:8.8",
       "eth0_ip": "172.101.0.3",
       "sat_net_cidr": [
         "192.168.6.1/32",
@@ -76,7 +76,7 @@
     "sat7": {
       "host": "host-3",
       "bridge": "sat-bridge",
-      "image": "shahramdd/sat:8.6",
+      "image": "shahramdd/sat:8.8",
       "eth0_ip": "172.102.0.2",
       "sat_net_cidr": [
         "192.168.7.1/32",
@@ -90,7 +90,7 @@
     "sat8": {
       "host": "host-3",
       "bridge": "sat-bridge",
-      "image": "shahramdd/sat:8.6",
+      "image": "shahramdd/sat:8.8",
       "eth0_ip": "172.102.0.3",
       "sat_net_cidr": [
         "192.168.8.1/32",
@@ -104,7 +104,7 @@
     "sat9": {
       "host": "host-1",
       "bridge": "sat-bridge",
-      "image": "shahramdd/sat:8.6",
+      "image": "shahramdd/sat:8.8",
       "eth0_ip": "172.100.0.4",
       "sat_net_cidr": [
         "192.168.9.1/32",
@@ -120,7 +120,7 @@
         "ground1": {
             "host": "host-1",
             "bridge": "sat-bridge",
-            "image": "shahramdd/sat:8.6",
+            "image": "shahramdd/sat:8.8",
             "eth0_ip": "172.100.0.5",
             "sat_net_cidr": ["192.168.201.1/32"],
             "N_Antennas": 1
