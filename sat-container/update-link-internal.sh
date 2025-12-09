@@ -42,7 +42,7 @@ if ip link show "$VXLAN_IF" >/dev/null 2>&1; then
 
     if [[ "$CUR_VNI" != "$TARGET_VNI" || "$CUR_REM" != "$REMOTE_IP" || "$CUR_MST" != "$TARGET_BRIDGE" ]]; then
         echo "♻️ Recreating $VXLAN_IF (Changed)"
-        ip link del "$VXLAN_IF"; create_link
+        ip link del "$VXLAN_IF" 2>/dev/null ; create_link
     fi
 else
     echo "➕ Creating $VXLAN_IF"
