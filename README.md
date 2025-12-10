@@ -6,57 +6,55 @@
 <div align="center">
 
 # NetSatBench
-## Distributed LEO Satellite Emulator
+## Large-scale Satellite Network Benchmark System
 ### High-Scale • Distributed • Application-Agnostic
 
 </div>
 
-## Abstract
 
-**NetSatBench** is a high-scale emulator designed to model Low Earth Orbit (LEO) satellite constellations across a distributed infrastructure.
+**NetSatBench** is a distributed emulation framework that supports the evaluation of communication and application workloads across large-scale satellite constellations.
 
 > [!TIP]
 > **The Core Innovation**
-> Unlike single-host simulators, NetSatBench spans multiple hosts to maximize compute resources. We use **VXLAN tunneling** to create a seamless overlay network, allowing satellite containers on different physical hosts to communicate as if they were adjacent nodes in orbit.
+> : Unlike single-host emulators, NetSatBench distributes emulated satellites — implemented as Linux containers — scales out across a cluster of hosts to leverage *parallel computing resources*. It constructs a *dynamic Layer 2 network* interconnecting satellite antennas and ground terminals, enabling the enforcement of specific bandwidth and latency characteristics. The network connection are driven by a physics-based model that reflects *real-world satellite dynamics*. 
 
 > [!NOTE]
-> **Design Philosophy**
-> NetSatBench provides a transparent L2 fabric. While we support standard routing (FRR/IS-IS), the platform is **application-agnostic**; we provide the wires, you choose what runs over them.
+> **Applications**
+> : NetSatBench is  **L3 and application agnostic**; it provides a connected L2 satellite network fabric upon which any routing protocol (e.g., OSPF, BGP, IS-IS) or application (e.g., iperf, custom workloads) can be deployed and evaluated.
 
 ---
 
-### Core Architecture: The VXLAN Fabric
+### Core Architecture
 
 NetSatBench decouples simulation logic from physical proximity.
 > [!IMPORTANT]
 > **Three-Pillar Architecture**
 >
-> 1.  **Distributed Execution:** The constellation is partitioned across a cluster of physical workers (bare metal or VMs).
-> 2.  **VXLAN Overlays:** The framework dynamically establishes VXLAN tunnels to encapsulate inter-satellite traffic, ensuring the "virtual space" remains continuous regardless of the underlying physical topology.
-> 3.  **Scalability:** By distributing containers, the simmulation can scale to thousands of nodes without bottlenecking the CPU or memory of a single machine.
+> 1. **Distributed Execution and Control:** The satellite constellation is spread across a cluster of hosts (bare metal or VMs) and each satellite control itself -no central controller.
+> 2. **L2 Fabric:** The framework dynamically establishes VXLAN L2 tunnels to encapsulate inter-satellite and staellite-ground traffic, ensuring the L2 connectivity remains continuous regardless of the underlying execution hosts.
+> 3. **Scalability:** By distributing satellites/containers, the emulation can scale to thousands of satellites without bottlenecking the CPU or memory of a single machine.
+> 4. **Physics-Driven Networking:** The network characteristics (latency, bandwidth) are derived from real-world LEO satellite physics, ensuring realistic emulation conditions.
 
 ---
 
 ### Repository Structure
 
-The project is organized into two primary logical domains: the **Infrastructure Plane** (internal logic) and the **Control Plane** (external orchestration).
+The project is organized into two primary logical domains: the **Satellite Domain** (internal logic) and the **Infrastructure Domain** (external orchestration).
 
-#### 1. sat-container/ (Infrastructure Plane)
-Defines the satellite node environment and the "shell" for applications.
+#### 1. Infrastructure Domain (scripts/)
+The infrastructure domain run orchestration scripts that manage the initial deployment of the costellation across the distributed cluster and maintain the ongoing status withing a centralized Etcd key-value store. The main components include:
+* **Constellation Configurator (`constellation-conf.py`):** Parses declarative JSON constellation topologies and pushes the global state to Etcd.
+* **Constellation Builder (`constellation-builder.py`):** SSHes into distributed hostes to instantiate satellite containers.
+* **Network Configurator (`network-configuration.py`):** Establishes VXLAN tunnels between containers and applies network characteristics using Linux Traffic Control (TC). -- TODO should be removed ---
 
-* **Docker Context:** Specifications for the base satellite image (Ubuntu-based), including network stacks and SSH services.
-* **Internal Agents (`sat-agent-internal.py`):** A smart, persistent daemon acting as the node's autonomous controller.
-    * **Continuous Sync:** Polls Etcd to stay in sync with the global simulation state.
-    * **Dynamic Topology:** Detects triggers to add/remove Inter-Satellite Links (ISLs) as line-of-sight changes, updating VXLAN/Bridge interfaces instantly without restarts.
-    * **App Lifecycle:** Spins up applications or routing processes on demand.
 
-#### 2. scripts/ (Control Plane)
-The centralized controller that manages the distributed cluster.
+#### 2. Satellite Domain (sat-container)
+Defines the Linux container used to mimic a satellite node.
 
-* **Topology Management:** Python scripts that parse declarative JSON topologies and sync the global state to Etcd.
-* **Provisioning:** Automation tools that SSH into distributed workers to instantiate containers.
-* **Network Controller:** Applies link characteristics (latency, bandwidth, jitter) via Linux Traffic Control (TC), strictly adhering to LEO physics constraints.
-
+* **Internal Agents (`sat-agent-internal.py`):** A smart, persistent daemon acting as the satellite's autonomous controller.
+    * **Continuous Sync:** Polls Etcd to stay in sync with the global simulation statue.
+    * **Dynamic Topology:** Detects triggers to add/remove Inter-Satellite and Stellite-Ground Links as connectivity status changes, updating VXLAN links instantly without any L3 routing interruption.
+    * **App Lifecycle:** Spins up or tears down on-board applications on demand.
 ---
 
 ### Agnosticism & Workloads
