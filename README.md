@@ -18,7 +18,7 @@
 ## 🚀 Core Innovation
 
 Unlike single-host emulators, **NetSatBench** distributes emulated satellites—implemented as Linux containers—across a cluster of machines, enabling high degrees of parallelism and scalability.  
-VXLAN tunnels form a dynamic **L2 network fabric** interconnecting satellite antennas and ground terminals, while link characteristics (e.g., latency, bandwidth) follow a **physics-driven model of orbital dynamics**, closely reflecting real-world LEO behavior.
+VXLAN tunnels form a dynamic **L2 network fabric** interconnecting satellite antennas and ground terminals, while link characteristics (e.g., latency, bandwidth) follow a **physics-driven model of orbital dynamics**, closely reflecting real-world satellite network behavior.
 
 ---
 
@@ -30,18 +30,18 @@ NetSatBench is **L3- and application-agnostic**. Any routing protocol (e.g., OSP
 
 ## 🏗️ Core Architecture
 
-NetSatBench separates **simulation logic** from **physical execution**, enabling flexible deployment across clusters of heterogeneous hosts.
+NetSatBench separates **emulation logic** from **physical execution**, enabling flexible deployment across clusters of heterogeneous hosts.
 
 ### **Four Architectural Pillars**
 
 1. **Distributed Execution and Control**  
-   Satellite nodes are instantiated across a cluster (bare metal or VMs). Each node manages its own lifecycle and networking logic—no central controller is required.
+   Satellite nodes are instantiated across a cluster (bare metal or VMs). Each satellite node manages its own lifecycle and networking logic—no run-time central controller is required.
 
 2. **Dynamic L2 Fabric**  
-   VXLAN tunnels encapsulate inter-satellite and satellite–ground links, ensuring seamless L2 connectivity regardless of placement on physical hosts.
+   VXLAN tunnels encapsulate inter-satellite and satellite–ground links, ensuring seamless L2 connectivity regardless of container placement on physical hosts.
 
 3. **Scalability Through Distribution**  
-   By spreading containers across multiple machines, the system scales to thousands of satellites without saturating the resources of a single host.
+   By spreading containers across multiple machines, the emulation scales to thousands of satellites without saturating the resources of a single host.
 
 4. **Physics-Driven Networking**  
    Link parameters are derived from orbital mechanics and line-of-sight geometry, ensuring realistic performance evaluation.
