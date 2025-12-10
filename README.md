@@ -5,96 +5,112 @@
 
 <div align="center">
 
-# NetSatBench
-## Large-scale Satellite Network Benchmark System
+# **NetSatBench**  
+## *Large-Scale Satellite Network Benchmarking System*  
 ### High-Scale • Distributed • Application-Agnostic
 
 </div>
 
-
-**NetSatBench** is a distributed emulation framework that supports the evaluation of communication and application workloads across large-scale satellite constellations.
-
-> [!TIP]
-> **The Core Innovation**
-> : Unlike single-host emulators, NetSatBench distributes emulated satellites — implemented as Linux containers — scales out across a cluster of hosts to leverage *parallel computing resources*. It constructs a *dynamic Layer 2 network* interconnecting satellite antennas and ground terminals, enabling the enforcement of specific bandwidth and latency characteristics. The network connection are driven by a physics-based model that reflects *real-world satellite dynamics*. 
-
-> [!NOTE]
-> **Applications**
-> : NetSatBench is  **L3 and application agnostic**; it provides a connected L2 satellite network fabric upon which any routing protocol (e.g., OSPF, BGP, IS-IS) or application (e.g., iperf, custom workloads) can be deployed and evaluated.
+**NetSatBench** is a distributed emulation framework for evaluating communication and application workloads across large-scale satellite constellations. It provides a scalable Layer 2 (L2) network substrate on which arbitrary routing protocols and applications can be deployed without modification.
 
 ---
 
-### Core Architecture
+## 🚀 Core Innovation
 
-NetSatBench decouples simulation logic from physical proximity.
-> [!IMPORTANT]
-> **Three-Pillar Architecture**
->
-> 1. **Distributed Execution and Control:** The satellite constellation is spread across a cluster of hosts (bare metal or VMs) and each satellite control itself -no central controller.
-> 2. **L2 Fabric:** The framework dynamically establishes VXLAN L2 tunnels to encapsulate inter-satellite and staellite-ground traffic, ensuring the L2 connectivity remains continuous regardless of the underlying execution hosts.
-> 3. **Scalability:** By distributing satellites/containers, the emulation can scale to thousands of satellites without bottlenecking the CPU or memory of a single machine.
-> 4. **Physics-Driven Networking:** The network characteristics (latency, bandwidth) are derived from real-world LEO satellite physics, ensuring realistic emulation conditions.
+Unlike single-host emulators, **NetSatBench** distributes emulated satellites—implemented as Linux containers—across a cluster of machines, enabling high degrees of parallelism and scalability.  
+VXLAN tunnels form a dynamic **L2 network fabric** interconnecting satellite antennas and ground terminals, while link characteristics (e.g., latency, bandwidth) follow a **physics-driven model of orbital dynamics**, closely reflecting real-world LEO behavior.
 
 ---
 
-### Repository Structure
+## 🛰️ Applications
 
-The project is organized into two primary logical domains: the **Satellite Domain** (internal logic) and the **Infrastructure Domain** (external orchestration).
+NetSatBench is **L3- and application-agnostic**. Any routing protocol (e.g., OSPF, BGP, IS-IS, FRR) or user-defined application (e.g., iperf, traffic generators, analytics workloads) can run directly over the emulated constellation.
 
-#### 1. Infrastructure Domain (scripts/)
-The infrastructure domain run orchestration scripts that manage the initial deployment of the costellation across the distributed cluster and maintain the ongoing status withing a centralized Etcd key-value store. The main components include:
-* **Constellation Configurator (`constellation-conf.py`):** Parses declarative JSON constellation topologies and pushes the global state to Etcd.
-* **Constellation Builder (`constellation-builder.py`):** SSHes into distributed hostes to instantiate satellite containers.
-* **Network Configurator (`network-configuration.py`):** Establishes VXLAN tunnels between containers and applies network characteristics using Linux Traffic Control (TC). -- TODO should be removed ---
-
-
-#### 2. Satellite Domain (sat-container)
-Defines the Linux container used to mimic a satellite node.
-
-* **Internal Agents (`sat-agent-internal.py`):** A smart, persistent daemon acting as the satellite's autonomous controller.
-    * **Continuous Sync:** Polls Etcd to stay in sync with the global simulation statue.
-    * **Dynamic Topology:** Detects triggers to add/remove Inter-Satellite and Stellite-Ground Links as connectivity status changes, updating VXLAN links instantly without any L3 routing interruption.
-    * **App Lifecycle:** Spins up or tears down on-board applications on demand.
 ---
 
-### Agnosticism & Workloads
+## 🏗️ Core Architecture
 
-NetSatBench is designed to be flexible.
+NetSatBench separates **simulation logic** from **physical execution**, enabling flexible deployment across clusters of heterogeneous hosts.
+
+### **Four Architectural Pillars**
+
+1. **Distributed Execution and Control**  
+   Satellite nodes are instantiated across a cluster (bare metal or VMs). Each node manages its own lifecycle and networking logic—no central controller is required.
+
+2. **Dynamic L2 Fabric**  
+   VXLAN tunnels encapsulate inter-satellite and satellite–ground links, ensuring seamless L2 connectivity regardless of placement on physical hosts.
+
+3. **Scalability Through Distribution**  
+   By spreading containers across multiple machines, the system scales to thousands of satellites without saturating the resources of a single host.
+
+4. **Physics-Driven Networking**  
+   Link parameters are derived from orbital mechanics and line-of-sight geometry, ensuring realistic performance evaluation.
+
+---
+
+## 📁 Repository Structure
+
+The project is organized into two major domains: the **Infrastructure Domain** and the **Satellite Domain**.
+
+### 1. **Infrastructure Domain (`scripts/`)**
+
+Responsible for orchestrating the deployment, configuration, and global state management of the constellation.
+
+- **Constellation Configurator (`constellation-conf.py`)**  
+  Parses declarative JSON topology descriptions and publishes constellation state to an Etcd cluster.
+
+- **Constellation Builder (`constellation-builder.py`)**  
+  Instantiates satellite containers on distributed hosts over SSH.
+
+- **Network Configurator (`network-configuration.py`)**  
+  Establishes VXLAN tunnels and configures link properties using Linux Traffic Control (TC).  
+  *Note: marked for future consolidation or removal.*
+
+### 2. **Satellite Domain (`sat-container/`)**
+
+Defines the Linux container image and internal agents responsible for autonomous satellite behavior.
+
+- **Internal Agent (`sat-agent-internal.py`)**  
+  A persistent daemon that:
+  - Synchronizes with constellation state stored in Etcd.  
+  - Dynamically creates or removes inter-satellite and satellite–ground VXLAN links as topology changes.  
+  - Manages the lifecycle of on-board applications.
+
+---
+
+## 🧩 Agnosticism & Workload Support
 
 | Feature | Description |
-| :--- | :--- |
-| **Optional Routing** | Includes reference implementations for **FRR** and **IS-IS**, but supports OSPF, BGP, or custom SDN controllers. |
-| **Benchmarking** | Ready for `iperf`, `ping`, or custom traffic generators. |
-| **Custom Apps** | Any Linux-compatible application can be deployed within the satellite containers. |
+|--------|-------------|
+| **Routing-Agnostic** | Supports FRR/IS-IS out-of-the-box; compatible with OSPF, BGP, or custom routing modules. |
+| **Net Benchmarking Tools** | Integrates naturally with `iperf`, `ping`, or custom traffic generators. |
+| **Custom Applications** | Any Linux-compatible service or experiment can run inside each emulated satellite. |
 
 ---
 
-### Prerequisites
+## 🛠️ Prerequisites
 
-Before running the simulation, ensure the following are installed:
+Ensure the following are installed on all worker nodes:
 
-* **Docker:** Required on all physical worker nodes.
-* **Etcd:** A running cluster for distributed state management.
-* **Python 3:** With `etcd3` and `protobuf` libraries installed.
-* **Linux Bridge:** For handling local switching and VXLAN endpoints.
+- **Docker** — container runtime for satellite nodes  
+- **Etcd** — distributed key-value store for global state coordination  
+- **Python 3** — with libraries `etcd3` and `protobuf`  
+- **Linux Bridge Utilities** — for VXLAN endpoint and switching configuration  
 
 ---
 
-### Quick Start
+## ⚡ Quick Start
 
-To deploy a simulation scenario across your distributed cluster, navigate to the orchestration directory and execute the lifecycle scripts in order:
+Deploying a constellation across your cluster:
 
 ```bash
 cd scripts/
 
 # 1. Synchronize topology state
-# Parses the constellation geometry and pushes state to Etcd
 python3 constellation-conf.py
 
-# 2. Provision infrastructure
-# Connects to remote hosts via SSH to spin up Docker containers
+# 2. Provision the constellation across remote hosts
 python3 constellation-builder.py
 
-# 3. Establish Connectivity
-# Sets up VXLAN tunnels and applies network physics
+# 3. Establish VXLAN connectivity and apply physics-based link parameters
 python3 network-configuration.py
