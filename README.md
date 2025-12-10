@@ -6,7 +6,7 @@
 <div align="center">
 
 # NetSatBench
-## Distributed LEO Satellite Simulator
+## Distributed LEO Satellite Emulator
 ### High-Scale • Distributed • Application-Agnostic
 
 </div>
