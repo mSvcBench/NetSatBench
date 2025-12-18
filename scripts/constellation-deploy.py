@@ -61,7 +61,7 @@ for name, node in all_nodes.items():
     ssh_user = host_info.get('ssh_user', 'ubuntu')
     
     # 2. Get Config params
-    n_antennas = str(node.get('N_Antennas', 1)) # Default users to 1 antenna if missing
+    n_antennas = str(node.get('n_antennas', 1)) # Default users to 1 antenna if missing
     
     # Get Image (Default to 7.6 if missing)
     image = node.get('image', 'shahramdd/sat:7.6')

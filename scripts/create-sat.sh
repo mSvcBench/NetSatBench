@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SAT_NAME="${1:-}"
-N_ANTENNAS="${2:-}"
+n_antennas="${2:-}"
 SAT_HOST="${3:-host-1}"
 SSH_USERNAME="${4:-$(whoami)}"
 CONTAINER_IMAGE="${5:-shahramdd/sat:7.6}"
@@ -14,8 +14,8 @@ HOST1_ALIAS="host-1"
 HOST1_IP="10.0.1.215"
 SAT_HOST_BRIDGE_NAME="sat-bridge"
 
-if [[ -z "$SAT_NAME" || -z "$N_ANTENNAS" ]]; then
-  echo "Usage: $0 <SAT_NAME> <N_ANTENNAS> [SAT_HOST] [SSH_USERNAME] [CONTAINER_IMAGE]"
+if [[ -z "$SAT_NAME" || -z "$n_antennas" ]]; then
+  echo "Usage: $0 <SAT_NAME> <n_antennas> [SAT_HOST] [SSH_USERNAME] [CONTAINER_IMAGE]"
   exit 1
 fi
 
@@ -42,7 +42,7 @@ ssh "$SSH_USERNAME@$SAT_HOST" docker run -d \
   -e ETCD_ENDPOINT="$HOST1_IP:2379" \
   -e REMOTE_SCRIPT_HOST="$HOST1_ALIAS" \
   -e REMOTE_SCRIPT_USER="$SSH_USERNAME" \
-  -e UPDATE_LINK_SH="/agent/update-link-internal.sh" \
+  -e UPDATE_LINK_SH="/agent/update-link.sh" \
   -v /home/ubuntu/.ssh/id_rsa:/root/.ssh/id_rsa:ro \
   -v /home/ubuntu/.ssh/id_rsa.pub:/root/.ssh/id_rsa.pub:ro \
   "$CONTAINER_IMAGE"

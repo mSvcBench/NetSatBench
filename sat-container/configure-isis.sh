@@ -1,6 +1,5 @@
 #!/bin/bash
-# Usage:
-# ./configure-isis.sh <NET_ID> <SYS_ID> <SAT_NET_CIDR> <ANTENNAS...>
+# Usage: ./configure-isis.sh <NET_ID> <SYS_ID> <SAT_NET_CIDR> <ANTENNAS...>
 
 NET_ID="$1"
 SYS_ID="$2"
@@ -9,18 +8,18 @@ shift 3
 
 ANTENNAS=()
 while [[ "$1" =~ ^[0-9]+$ ]]; do
-  ANTENNAS+=("$1")
-  shift
+    ANTENNAS+=("$1")
+    shift
 done
 
 # Validation
 if [[ -z "$NET_ID" || -z "$SYS_ID" || -z "$SAT_NET" ]]; then
-  echo "Usage: $0 <NET_ID> <SYS_ID> <SAT_NET_CIDR> <ANTENNAS...>"
-  echo "Got: $@"
-  exit 1
+    echo "Usage: $0 <NET_ID> <SYS_ID> <SAT_NET_CIDR> <ANTENNAS...>"
+    echo "Got: $@"
+    exit 1
 fi
 
-# Extract Area ID from NET_ID (assuming NET_ID is the Area ID part)
+# Extract Area id from NET_ID (assuming NET_ID is the Area id part)
 AREA_ID="$NET_ID"
 
 # Extract subnet and loopback IP
@@ -28,7 +27,7 @@ CIDR_MASK="${SAT_NET##*/}"
 BASE_IP="${SAT_NET%%/*}"
 IFS='.' read -r o1 o2 o3 o4 <<< "$BASE_IP"
 NET_PREFIX="$o1.$o2.$o3.0/$CIDR_MASK"
-LO_IP="$o1.$o2.$o3.254/32" 
+LO_IP="$o1.$o2.$o3.254/32"
 LO_IFACE="lo"
 ISIS_NAME="CORE"
 
@@ -68,12 +67,12 @@ EOF
 
 # Add bridge interfaces
 for antenna in "${ANTENNAS[@]}"; do
-  br="br$antenna"
-  echo "interface $br" >> /etc/frr/frr.conf
-  echo " ip router isis $ISIS_NAME" >> /etc/frr/frr.conf
-  echo " isis network point-to-point" >> /etc/frr/frr.conf
-  echo " isis metric 10" >> /etc/frr/frr.conf
-  echo "!" >> /etc/frr/frr.conf
+    br="br$antenna"
+    echo "interface $br" >> /etc/frr/frr.conf
+    echo " ip router isis $ISIS_NAME" >> /etc/frr/frr.conf
+    echo " isis network point-to-point" >> /etc/frr/frr.conf
+    echo " isis metric 10" >> /etc/frr/frr.conf
+    echo "!" >> /etc/frr/frr.conf
 done
 
 # Add static route for redistribution
