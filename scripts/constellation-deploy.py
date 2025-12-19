@@ -8,8 +8,10 @@ import sys
 # ==========================================
 # 🚩 CONFIGURATION
 # ==========================================
-ETCD_HOST = '10.0.1.215'
-ETCD_PORT = 2379
+# get ETCD_HOST, ETCD_PORT and SAT_HOST_BRIDGE_NAME from environment variables if set
+ETCD_HOST = os.getenv('ETCD_HOST', '127.0.0.1')
+ETCD_PORT = int(os.getenv('ETCD_PORT', 2379))
+
 
 try:
     etcd = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
@@ -35,12 +37,13 @@ print(f"📡 Connecting to Etcd at {ETCD_HOST}:{ETCD_PORT}...")
 # Fetch Satellites AND Users
 satellites = get_prefix_data('/config/satellites/')
 users = get_prefix_data('/config/users/')
+grounds = get_prefix_data('/config/grounds/')
 hosts = get_prefix_data('/config/hosts/')
 
 # Merge them into one dictionary for processing
-all_nodes = {**satellites, **users}
+all_nodes = {**satellites, **users, **grounds}
 
-print(f"   Found {len(satellites)} satellites and {len(users)} users in Etcd.")
+print(f"   Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
 
 if not all_nodes:
     print("⚠️  Warning: No nodes found. Run 'constellation-conf.py' to populate Etcd first.")
@@ -52,23 +55,22 @@ for name, node in all_nodes.items():
     print(f"➞ Creating node: {name}")
     
     # 1. Validate Host
-    host_key = node.get('host')
-    if host_key not in hosts:
-        print(f"❌ Error: Node {name} assigned to unknown host '{host_key}'")
+    node_host = node.get('host')
+    if node_host not in hosts:
+        print(f"❌ Error: Node {name} assigned to unknown host '{node_host}'")
         continue
         
-    host_info = hosts[host_key]
+    host_info = hosts[node_host]
     ssh_user = host_info.get('ssh_user', 'ubuntu')
-    
-    # 2. Get Config params
-    n_antennas = str(node.get('n_antennas', 1)) # Default users to 1 antenna if missing
+    ssh_key = host_info.get('ssh_key', '~/.ssh/id_rsa')
+    sat_bridge = host_info.get('sat-bridge', 'sat-bridge')
     
     # Get Image (Default to 7.6 if missing)
-    image = node.get('image', 'shahramdd/sat:7.6')
+    image = node.get('image', 'msvcbench/sat-container:latest')
 
     # 3. Run Creation Script
-    # Usage: ./create-sat.sh <NAME> <N_ANT> <HOST> <USER> <IMAGE>
-    cmd = ['./create-sat.sh', name, n_antennas, host_key, ssh_user, image]
+    # Usage: ./create-sat.sh <SAT_NAME> [SAT_HOST] [SSH_USERNAME] [SSH_KEY_PATH] [ETCD_HOST] [ETCD_PORT] [SAT_HOST_BRIDGE_NAME] [CONTAINER_IMAGE]
+    cmd = ['./create-sat.sh', name, node_host, ssh_user, ssh_key, ETCD_HOST, str(ETCD_PORT), sat_bridge, image]
     
     try:
         subprocess.run(cmd, check=True)

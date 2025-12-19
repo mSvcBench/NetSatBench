@@ -25,7 +25,7 @@ SAT_HOST_BRIDGE_NAME="sat-bridge"
 
 # === Determine correct CIDR based on hostname/IP ===
 case "$SAT_HOST" in
-  *host-1*|10.0.1.215)
+  *host-1*|127.0.0.1)
     AUTO_CIDR="172.100.0.0/16"
     ;;
   *host-2*|10.0.1.144)
@@ -67,7 +67,7 @@ ssh "$SSH_USERNAME@$SAT_HOST" bash -s <<'EOSSH'
 set -e
 
 # IP addresses of hosts
-H1=10.0.1.215   # host-1
+H1=127.0.0.1   # host-1
 H2=10.0.1.144   # host-2
 H3=10.0.2.199   # host-3
 

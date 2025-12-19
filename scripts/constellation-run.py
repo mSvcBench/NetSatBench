@@ -9,10 +9,9 @@ import zlib
 # ==========================================
 # 🚩 CONFIGURATION
 # ==========================================
-ETCD_HOST = "10.0.1.215"
-ETCD_PORT = 2379
-EPOCH_DIR = "constellation-epochs"
-FILE_PATTERN = "NetSatBench-epoch*.json"
+# get ETCD_HOST and ETCD_PORT from environment variables if set
+ETCD_HOST = os.getenv('ETCD_HOST', '127.0.0.1')
+ETCD_PORT = int(os.getenv('ETCD_PORT', 2379))
 
 TIME_OFFSET = None
 
@@ -147,6 +146,21 @@ def apply_single_epoch(json_path, etcd):
 # 🏁 RUNNER
 # ==========================================
 def run_all_epochs():
+    # Load configuration for epoch files from etcd key (epoch-config)
+    try:
+        etcd = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
+        epoch_config_value, _ = etcd.get('/config/epoch-config')
+        if epoch_config_value:
+            epoch_config = json.loads(epoch_config_value.decode('utf-8'))
+            EPOCH_DIR = epoch_config.get('EPOCH_DIR', 'constellation-epochs')
+            FILE_PATTERN = epoch_config.get('FILE_PATTERN', 'NetSatBench-epoch*.json')
+        else:
+            EPOCH_DIR = "constellation-epochs"
+            FILE_PATTERN = "NetSatBench-epoch*.json"
+    except Exception as e:
+        print(f"❌ Failed to load epoch configuration from Etcd: {e}")
+        return
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     search_path = os.path.join(script_dir, EPOCH_DIR, FILE_PATTERN)
     

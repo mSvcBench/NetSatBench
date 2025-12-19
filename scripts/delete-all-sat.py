@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import etcd3
 import subprocess
 import json
@@ -7,8 +8,8 @@ import sys
 # ==========================================
 # 🚩 CONFIGURATION
 # ==========================================
-ETCD_HOST = '10.0.1.215'
-ETCD_PORT = 2379
+ETCD_HOST = os.getenv('ETCD_HOST', '127.0.0.1')
+ETCD_PORT = int(os.getenv('ETCD_PORT', 2379))
 
 # Initialize Etcd
 try:
@@ -39,12 +40,12 @@ print(f"📡 Connecting to Etcd at {ETCD_HOST}:{ETCD_PORT}...")
 # Fetch all relevant configuration
 satellites = get_prefix_data('/config/satellites/')
 users = get_prefix_data('/config/users/')
+grounds = get_prefix_data('/config/grounds/')
 hosts = get_prefix_data('/config/hosts/')
 
 # Merge satellites and users into one list of nodes to clean up
-all_nodes = {**satellites, **users}
-
-print(f"🔎 Found {len(all_nodes)} nodes (satellites + users) to clean up.")
+all_nodes = {**satellites, **users, **grounds}
+print(f"🔎 Found {len(all_nodes)} nodes (satellites + users + grounds) to clean up.")
 
 if not all_nodes:
     print("⚠️  No nodes found in Etcd. Nothing to do.")
@@ -57,22 +58,22 @@ print("\n🧹 Starting Cleanup Process...")
 print("-" * 50)
 
 for name, node in all_nodes.items():
-    host_id = node.get('host')
+    node_host = node.get('host')
     
     # Validation: Does the host exist in config?
-    if host_id not in hosts:
-        print(f"⚠️  Skipping {name}: Host '{host_id}' not found in /config/hosts")
+    if node_host not in hosts:
+        print(f"⚠️  Skipping {name}: Host '{node_host}' not found in /config/hosts")
         continue
 
-    host_info = hosts[host_id]
+    host_info = hosts[node_host]
     
     # Extract SSH Details
     # Uses 'ip' from config, falls back to 'host-X' alias if missing
-    ssh_ip = host_info.get('ip', host_id) 
+    ssh_ip = host_info.get('ip', node_host) 
     ssh_user = host_info.get('ssh_user', 'ubuntu')
     ssh_target = f"{ssh_user}@{ssh_ip}"
 
-    print(f"🔹 Processing {name} on {host_id} ({ssh_ip})...")
+    print(f"🔹 Processing {name} on {node_host} ({ssh_ip})...")
 
     # ----------------------------------------
     # STEP 1: Check if container exists
@@ -87,7 +88,7 @@ for name, node in all_nodes.items():
     )
 
     if check_proc.returncode != 0:
-        print(f"   ❌ Container '{name}' does not exist on {host_id}. Skipping.")
+        print(f"   ❌ Container '{name}' does not exist on {node_host}. Skipping.")
         continue
 
     # ----------------------------------------

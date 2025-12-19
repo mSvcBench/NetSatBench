@@ -81,7 +81,7 @@ def apply_isis_config(cli):
             sys_id_val = 9999
         sys_id = f"{sys_id_val:04d}"
         
-        raw_cidr = my_conf.get("sat_net_cidr")
+        raw_cidr = my_conf.get("antennas_ip")
         base_prefix = raw_cidr[0].split('/')[0].rsplit('.', 1)[0] if isinstance(raw_cidr, list) and raw_cidr else f"192.168.{sys_id_val}"
         subnet_cidr = f"{base_prefix}.0/24"
         n_ant = int(my_conf.get("n_antennas", 1))
@@ -271,7 +271,7 @@ def prepare_bridges(cli):
     my_config = json.loads(val.decode())
     
     n_ant = int(my_config.get("n_antennas", 5))
-    ip_addr = my_config.get("sat_net_cidr",[])
+    ip_addr = my_config.get("antennas_ip",[])
     for i in range(1, n_ant + 1):
         br = f"br{i}"
         subprocess.run(f"ip link add name {br} type bridge 2>/dev/null; ip link set dev {br} up", shell=True)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: ./configure-isis.sh <NET_ID> <SYS_ID> <SAT_NET_CIDR> <ANTENNAS...>
+# Usage: ./configure-isis.sh <NET_ID> <SYS_ID> <antennas_ip> <ANTENNAS...>
 
 NET_ID="$1"
 SYS_ID="$2"
@@ -14,7 +14,7 @@ done
 
 # Validation
 if [[ -z "$NET_ID" || -z "$SYS_ID" || -z "$SAT_NET" ]]; then
-    echo "Usage: $0 <NET_ID> <SYS_ID> <SAT_NET_CIDR> <ANTENNAS...>"
+    echo "Usage: $0 <NET_ID> <SYS_ID> <antennas_ip> <ANTENNAS...>"
     echo "Got: $@"
     exit 1
 fi

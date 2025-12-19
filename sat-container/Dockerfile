@@ -25,7 +25,7 @@ RUN apt-get update && \
     chown frr:frr /var/log/frr || true && \
     rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log
 
-mkdir -p /app
+RUN mkdir -p /app
 WORKDIR /app
 
 # Copy Scripts
