@@ -26,8 +26,8 @@ KEY_LINKS = f"/config/links/{SAT_NAME}"
 KEY_L3 = "/config/L3-config"
 KEY_RUN = f"/config/run/{SAT_NAME}"
 
-LINK_ACTIONS_SH = "/agent/link-actions.sh"
-CONFIGURE_ISIS_SH = "/agent/configure-isis.sh"
+LINK_ACTIONS_SH = "/app/link-actions.sh"
+CONFIGURE_ISIS_SH = "/app/configure-isis.sh"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("sat-agent")
@@ -40,9 +40,11 @@ LINK_STATE_CACHE = {} # Only used for the initial sync
 #   HELPERS
 # ----------------------------
 def get_etcd_client():
+    log.info(f"📁 Connecting to Etcd at {ETCD_HOST}:{ETCD_PORT}...")
     while True:
         try:
             cli = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
+            log.info(f"✅ Connected to Etcd at {ETCD_HOST}:{ETCD_PORT}.")
             return cli
         except:
             time.sleep(5)
@@ -92,6 +94,12 @@ def apply_isis_config(cli):
     except Exception as e:
         log.error(f"❌ Exception triggering IS-IS: {e}")
 
+def run(cmd):
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        log.warning(f"⚠️ Command failed: {' '.join(cmd)}")
+        log.warning(result.stderr.strip())
+
 # ----------------------------
 #   PART 1: INITIAL SETUP (Epoch 0)
 # ----------------------------
@@ -138,16 +146,37 @@ def process_initial_topology(cli):
             bw = burst = latency = ""
 
         # Just call ADD for everything in Epoch 0
-        subprocess.run([
-            "/bin/bash", LINK_ACTIONS_SH, "add",
-            ep1, str(l["endpoint1_antenna"]), ip1,
-            ep2, str(l["endpoint2_antenna"]), ip2,
-            vni, bw, burst, latency
-        ])
-
-        print(f"value {value}, key {meta.key}")
-        log.info(f"✅ Initial Link Added: {ep1}<->{ep2} (VNI:{vni})")
-
+        if ep1 == SAT_NAME:
+            create_vxlan_link(
+                vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}",
+                target_vni=vni,
+                remote_ip=ip2,
+                local_ip=ip1,
+                target_bridge=f"br{l['endpoint1_antenna']}",
+            ) 
+            if tc_flag:
+                apply_tc_settings(
+                    vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}",
+                    bw=bw,
+                    burst=burst,
+                    latency=latency
+                )
+        elif ep2 == SAT_NAME:
+            create_vxlan_link(
+                vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}",
+                target_vni=vni,
+                remote_ip=ip1,
+                local_ip=ip2,
+                target_bridge=f"br{l['endpoint2_antenna']}",
+            )
+            if tc_flag:
+                apply_tc_settings(
+                    vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}",
+                    bw=bw,
+                    burst=burst,
+                    latency=latency
+                )
+    
     ## Execute any pending runtime commands
     val, _ = cli.get(KEY_RUN)
     if val:
@@ -157,54 +186,132 @@ def process_initial_topology(cli):
 # ----------------------------
 #   PART 2: DYNAMIC ACTIONS (Epoch 1+)
 # ----------------------------
+def link_exists(ifname):
+    return subprocess.run(
+        ["ip", "link", "show", ifname],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+def create_vxlan_link(
+    vxlan_if,
+    target_vni,
+    remote_ip,
+    local_ip,
+    target_bridge,
+    ):
+
+        # ⛔ If already exists, do nothing
+    if link_exists(vxlan_if):
+        log.info(f"♻️  Link {vxlan_if} already exists, updating...")
+        return
+    
+    log.info(f"🪢 Creating Link: {vxlan_if} (VNI: {target_vni})")
+
+    run([
+        "ip", "link", "add", vxlan_if,
+        "type", "vxlan",
+        "id", str(target_vni),
+        "remote", remote_ip,
+        "local", local_ip,
+        "dev", "eth0",
+        "dstport", "4789",
+    ])
+
+    run(["ip", "link", "set", vxlan_if, "mtu", "1350"])
+    run(["ip", "link", "set", vxlan_if, "master", target_bridge])
+    run(["ip", "link", "set", "dev", vxlan_if, "up"])
+
+def delete_vxlan_link(
+    vxlan_if):
+    log.info(f"✂️   Deleteing Link: {vxlan_if}")
+
+    run([
+        "ip", "link", "del", vxlan_if
+    ])
+
+def apply_tc_settings(
+    vxlan_if,
+    bw,
+    burst,
+    latency):
+    log.info(f"🎛️  Applying TC Settings on {vxlan_if}: BW={bw}, BURST={burst}, LATENCY={latency}"
+    )
+    # Clear existing qdisc
+    run(["tc", "qdisc", "del", "dev", vxlan_if, "root"])
+    # Apply new settings
+    cmd = [
+        "tc", "qdisc", "add", "dev", vxlan_if, "root", "tbf",
+        "rate", f"{bw}",
+        "burst", f"{burst}",
+        "latency", f"{latency}"
+    ]
+    run(cmd)
+def clean_tc_settings(
+    vxlan_if):
+    log.info(f"🎛️  Cleaning TC Settings on {vxlan_if}"
+    )
+    # Clear existing qdisc
+    run(["tc", "qdisc", "del", "dev", vxlan_if, "root"])
+
 def process_link_action(cli, event):
     try:
-        script_verb = "add"
+        tc_flag, _ = get_l3_flags_values(cli)
         if isinstance(event, etcd3.events.PutEvent):
-                l = event.value.decode("utf-8")
-                script_verb = "add"
+                l = json.loads(event.value.decode())
+                ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
+                if ep1 != SAT_NAME and ep2 != SAT_NAME:
+                    log.error(f"❌ Link action {ep1}<->{ep2} not relevant to this node.")
+                    return
+
+                ip1 = get_remote_ip(cli, ep1)
+                ip2 = get_remote_ip(cli, ep2)
+                if not ip1 or not ip2:
+                    log.error(f"❌ Missing IPs for link action {ep1}<->{ep2}.")
+                    return
+                vni = str(l.get("vni", "0"))
+                if ep1 == SAT_NAME:
+                    create_vxlan_link(
+                    vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}",
+                    target_vni=vni,
+                    remote_ip=ip2,
+                    local_ip=ip1,
+                    target_bridge=f"br{l['endpoint1_antenna']}",
+                ) 
+                elif ep2 == SAT_NAME:
+                    create_vxlan_link(
+                        vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}",
+                        target_vni=vni,
+                        remote_ip=ip1,
+                        local_ip=ip2,
+                        target_bridge=f"br{l['endpoint2_antenna']}",
+                    )
+                if tc_flag:
+                    apply_tc_settings(
+                        vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}" if ep1 == SAT_NAME else f"{ep1}_a{l['endpoint1_antenna']}",
+                        bw=str(l.get("bw", "")),
+                        burst=str(l.get("burst", "")),
+                        latency=str(l.get("latency", ""))
+                    )
+
         elif isinstance(event, etcd3.events.DeleteEvent):
-                script_verb = "del"
+                key_str = event.key.decode()
+                # Extract link info from the key, it is the last parto of the key after /
+                iface = key_str.split('/')[-1]
+                if tc_flag:
+                    clean_tc_settings(iface)
+                delete_vxlan_link(iface)
     except: 
         log.error("❌ Failed to parse link action.")
         return
-    
-    ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
-    if ep1 != SAT_NAME and ep2 != SAT_NAME
-        log.error(f"❌ Link action {ep1}<->{ep2} not relevant to this node.")
-        return
 
-    ip1 = get_remote_ip(cli, ep1)
-    ip2 = get_remote_ip(cli, ep2)
-    if not ip1 or not ip2:
-        log.error(f"❌ Missing IPs for link action {ep1}<->{ep2}.")
-        return
-
-    vni = str(l.get("vni", "0"))
-    tc_flag, _ = get_l3_flags_values(cli)
-    if tc_flag:
-        bw = str(l.get("bw", ""))
-        burst = str(l.get("burst", ""))
-        latency = str(l.get("latency", ""))
-    else:
-        bw = burst = latency = ""
-
-    log.info(f"⚡ ACTION [{script_verb}]: {ep1}<->{ep2} (VNI:{vni})")
-    
-    subprocess.run([
-        "/bin/bash", LINK_ACTIONS_SH, script_verb,
-        ep1, str(l["endpoint1_antenna"]), ip1,
-        ep2, str(l["endpoint2_antenna"]), ip2,
-        vni, bw, burst, latency
-    ])
-            
 # ----------------------------
 #   WATCHERS
 # ----------------------------
 def watch_link_actions_loop():
     log.info("👀 Watching /config/links (Dynamic Events)...")
     cli = get_etcd_client()
-    events_iterator, cancel = cli.watch(KEY_LINKS)
+    events_iterator, cancel = cli.watch_prefix(KEY_LINKS)
     for event in events_iterator:
         process_link_action(cli, event)
 
@@ -213,8 +320,6 @@ def watch_command_loop():
     while True:
         try:
             cli = get_etcd_client()
-            val, _ = cli.get(KEY_RUN)
-            if val: execute_commands(val.decode())
             events, _ = cli.watch(KEY_RUN)
             for e in events:
                 if e.value: execute_commands(e.value.decode())
@@ -281,7 +386,7 @@ def prepare_bridges(cli):
     subprocess.run("ip link set dev lo up", shell=True)
 
 def main():
-    log.info(f"🚀 Hybrid Agent Starting for {SAT_NAME}")
+    log.info(f"🚀 Sat Agent Starting for {SAT_NAME}")
     cli = get_etcd_client()
     
     # Bootstrapping

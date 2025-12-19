@@ -68,26 +68,23 @@ def apply_single_epoch(json_path, etcd):
         # Open in r+ mode to allow reading AND writing back to the same file
         with open(json_path, "r+", encoding="utf-8") as f:
             config = json.load(f)
-            file_modified = False
 
             # --- WAIT FOR SCHEDULED TIME ---
             # Wait happens here so we are ready to push exactly on time
             smart_wait(config.get("epoch-time"), filename)
 
             # --- 3. ETCD SYNC ---
-            special_keys = ["epoch-time", "links-add", "link-delete", "link-update", "run", "L3-config", "hosts", "satellites", "users"]
+            allowed_keys = ["epoch-time", "links-add", "links-del", "links-update", "run", "satellites", "users", "grounds", "time"]
 
-            # A. Push General Config & Inventory
+            # A. Push satellites, users, grounds, run and epoch-time keys in etcd
             for key, value in config.items():
-                if key not in special_keys:
-                    etcd.put(f"/config/{key}", json.dumps(value))
+                if key not in allowed_keys:
+                    # the key should not be present in epoch file, skip it
+                    print(f"❌ [{filename}] Unexpected key '{key}' found in epoch file, skipping...")
                     continue
-                
-                # Handle nested dictionaries for specific keys
-                if key == "L3-config":
-                    for k, v in value.items():
-                        etcd.put(f"/config/L3-config/{k}", str(v).strip().replace('"', ''))
-                elif key in ["hosts", "satellites", "users"]:
+                if key == "epoch-time":
+                    etcd.put(f"/config/epoch-time", str(value).strip().replace('"', ''))
+                elif key in ["satellites", "users", "grounds","run"]:
                     for k, v in value.items():
                         etcd.put(f"/config/{key}/{k}", json.dumps(v))
 
@@ -96,48 +93,47 @@ def apply_single_epoch(json_path, etcd):
             add = config.get("links-add", [])
             delete = config.get("link-delete", [])
             update = config.get("link-update", [])
-
+                
             for l in add:
-                endpoint1 = l["endpoint1"]
-                endpoint2 = l["endpoint2"]
+                # Process additions
+                vxlan_iface_name1 = f"{l['endpoint2']}_a{l['endpoint2_antenna']}"
+                vxlan_iface_name2 = f"{l['endpoint1']}_a{l['endpoint1_antenna']}"
+                etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
+                etcd_key2 = f"/config/links/{l['endpoint2']}/{vxlan_iface_name2}"
                 vni = calculate_vni(l["endpoint1"], l["endpoint1_antenna"], 
-                                            l["endpoint2"], l["endpoint2_antenna"])
+                                                l["endpoint2"], l["endpoint2_antenna"])
                 l["vni"] = vni
-                print(f"🏗️  [{filename}] Syncing /config/links-add for {endpoint1} - {endpoint2} with VNI {vni}")
-                etcd.put(f"/config/links/{endpoint1}/{vni}", json.dumps(l))
-                etcd.put(f"/config/links/{endpoint2}/{vni}", json.dumps(l))
+                print(f"🪢  [{filename}] Syncing /config/links-add for {l['endpoint1']} - {l['endpoint2']} with VNI {vni}")
+                etcd.put(etcd_key1, json.dumps(l))
+                etcd.put(etcd_key2, json.dumps(l))
             for l in delete:
-                endpoint1 = l["endpoint1"]
-                endpoint2 = l["endpoint2"]
-                vni = calculate_vni(l["endpoint1"], l["endpoint1_antenna"], 
-                                            l["endpoint2"], l["endpoint2_antenna"])
-                l["vni"] = vni
-                print(f"🗑️  [{filename}] Syncing /config/link-delete for {endpoint1} - {endpoint2} with VNI {vni}")
-                etcd.delete(f"/config/links/{endpoint1}/{vni}")
-                etcd.delete(f"/config/links/{endpoint2}/{vni}")
+                vxlan_iface_name1 = f"{l['endpoint2']}_a{l['endpoint2_antenna']}"
+                vxlan_iface_name2 = f"{l['endpoint1']}_a{l['endpoint1_antenna']}"
+                etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
+                etcd_key2 = f"/config/links/{l['endpoint2']}/{vxlan_iface_name2}"
+                print(f"✂️  [{filename}] Syncing /config/link-delete for {l['endpoint1']} - {l['endpoint2']} with VNI {vni}")
+                etcd.delete(etcd_key1)
+                etcd.delete(etcd_key2)
             for l in update:
-                endpoint1 = l["endpoint1"]
-                endpoint2 = l["endpoint2"]
-                vni = calculate_vni(l["endpoint1"], l["endpoint1_antenna"], 
-                                            l["endpoint2"], l["endpoint2_antenna"])
-                l["vni"] = vni
-                print(f"♻️  [{filename}] Syncing /config/link-update for {endpoint1} - {endpoint2} with VNI {vni}")
-                etcd.put(f"/config/links/{endpoint1}/{vni}", json.dumps(l))
-                etcd.put(f"/config/links/{endpoint2}/{vni}", json.dumps(l))
+                vxlan_iface_name1 = f"{l['endpoint2']}_a{l['endpoint2_antenna']}"
+                vxlan_iface_name2 = f"{l['endpoint1']}_a{l['endpoint1_antenna']}"
+                etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
+                etcd_key2 = f"/config/links/{l['endpoint2']}/{vxlan_iface_name2}"
+                # sanity check: ensure the link exists before updating
+                etcd_value1, _ = etcd.get(etcd_key1)
+                etcd_value2, _ = etcd.get(etcd_key2)
+                if not etcd_value1 or not etcd_value2:
+                    print(f"⚠️  [{filename}] Link not found in Etcd for {l['endpoint1']} - {l['endpoint2']}. Skipping update.")
+                    continue
+                print(f"♻️  [{filename}] Syncing /config/link-update for {l['endpoint1']} - {l['endpoint2']}")
+                etcd.put(etcd_key1, json.dumps(l))
+                etcd.put(etcd_key2, json.dumps(l))
 
             # D. Push Runtime Commands
             for node, cmds in config.get("run", {}).items():
                 etcd.put(f"/config/run/{node}", json.dumps(cmds))
 
             print(f"✅ [{filename}] Epoch applied successfully.")
-
-            # --- 4. FILE UPDATE (Strictly Last) ---
-            # If we fixed any VNIs, save the changes back to the JSON file now.
-            if file_modified:
-                print(f"💾 [{filename}] Updating JSON file with corrected VNIs...")
-                f.seek(0)
-                json.dump(config, f, indent=2)
-                f.truncate() # Removes any leftover data if new file is smaller
 
     except Exception as e:
         print(f"❌ Error processing {filename}: {e}")
@@ -161,8 +157,7 @@ def run_all_epochs():
         print(f"❌ Failed to load epoch configuration from Etcd: {e}")
         return
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    search_path = os.path.join(script_dir, EPOCH_DIR, FILE_PATTERN)
+    search_path = os.path.join(EPOCH_DIR, FILE_PATTERN)
     
     # Sort files by epoch number (e.g., epoch1, epoch2, ...)
     files = sorted(glob.glob(search_path), key=lambda x: int(re.search(r'epoch(\d+)', x).group(1) or 0))

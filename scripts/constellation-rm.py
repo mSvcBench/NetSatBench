@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import shlex
 import etcd3
 import subprocess
 import json
@@ -35,7 +36,7 @@ def get_prefix_data(prefix):
 # ==========================================
 # 1. LOAD CONFIGURATION
 # ==========================================
-print(f"📡 Connecting to Etcd at {ETCD_HOST}:{ETCD_PORT}...")
+print(f"📁 Connecting to Etcd at {ETCD_HOST}:{ETCD_PORT}...")
 
 # Fetch all relevant configuration
 satellites = get_prefix_data('/config/satellites/')
@@ -49,7 +50,6 @@ print(f"🔎 Found {len(all_nodes)} nodes (satellites + users + grounds) to clea
 
 if not all_nodes:
     print("⚠️  No nodes found in Etcd. Nothing to do.")
-    sys.exit(0)
 
 # ==========================================
 # 2. DELETE CONTAINERS (Bash Logic Merged)
@@ -71,7 +71,8 @@ for name, node in all_nodes.items():
     # Uses 'ip' from config, falls back to 'host-X' alias if missing
     ssh_ip = host_info.get('ip', node_host) 
     ssh_user = host_info.get('ssh_user', 'ubuntu')
-    ssh_target = f"{ssh_user}@{ssh_ip}"
+    ssh_key = host_info.get('ssh_key', '~/.ssh/id_rsa')
+
 
     print(f"🔹 Processing {name} on {node_host} ({ssh_ip})...")
 
@@ -81,10 +82,11 @@ for name, node in all_nodes.items():
     # Bash Equivalent: docker ps -a --format '{{.Names}}' | grep -Fxq "$SAT_NAME"
     check_cmd = f"docker ps -a --format '{{{{.Names}}}}' | grep -Fxq '{name}'"
     
+    print(f"   🔍 Checking if container '{name}' exists with command {check_cmd}...")
     check_proc = subprocess.run(
-        ['ssh', ssh_target, check_cmd],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        ["ssh", "-i", ssh_key, f"{ssh_user}@{ssh_ip}", "-C", check_cmd],
+        capture_output=True,
+        text=True
     )
 
     if check_proc.returncode != 0:
@@ -99,19 +101,31 @@ for name, node in all_nodes.items():
     
     try:
         # We run stop and rm in a single SSH session for efficiency
-        stop_rm_cmd = f"docker stop {name} && docker rm {name}"
+        stop_rm_cmd = f"docker rm -f {name}"
         
-        subprocess.run(
-            ['ssh', ssh_target, stop_rm_cmd],
+        del_proc = subprocess.run(
+            ["ssh", "-i", ssh_key, f"{ssh_user}@{ssh_ip}", "-C", stop_rm_cmd],
             check=True,
             stdout=subprocess.DEVNULL, # Suppress remote docker output
             stderr=subprocess.PIPE     # Capture errors if they happen
         )
-        print(f"   ✅ Successfully deleted {name}")
+        if del_proc.returncode == 0:
+            print(f"   ✅ Successfully deleted {name}")
+        else:
+            print(f"   ❌ Failed to delete {name}. Return code: {del_proc.returncode}")
         
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.decode().strip()
-        print(f"   🚨 Failed to delete {name}. Error: {error_msg}")
+        print(f"   ❌ Failed to delete {name}. Error: {error_msg}")
+
+# ==========================================
+# CLEAN ETCD ENTRIES
+# ==========================================
+print("\n🧼 Cleaning up Etcd entries...")
+prefixes = ['/config/satellites/', '/config/users/', '/config/grounds/','/config/links', '/config/run/']
+for prefix in prefixes:
+    print(f"   ➞ Deleting keys with prefix {prefix} ...")
+    etcd.delete_prefix(prefix)
 
 print("-" * 50)
 print("✅ Global Cleanup Complete.")

@@ -52,7 +52,7 @@ The declarative topology definition file. It defines:
 ### Helper Scripts
 
 * **`create-sat.sh`:** A wrapper script executed on remote hosts to launch a single Docker container with volume mounts for SSH keys.
-* **`create-sat-bridge.sh`:** Manages the host-level Docker network (`sat-bridge`) and establishes static routes between physical hosts to allow cross-server container communication.
+* **`create-sat-vnet.sh`:** Manages the host-level Docker network (`sat-vnet`) and establishes static routes between physical hosts to allow cross-server container communication.
 * **`delete-all-sat.py`:** A cleanup utility that queries Etcd for all known nodes and executes remote destruction commands to tear down the simulation.
 
 ---

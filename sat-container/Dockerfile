@@ -19,8 +19,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       iputils-ping iproute2 net-tools tcpdump bridge-utils \
       iperf3 jq \
-      frr frr-pythontools && \
-    pip3 install --no-cache-dir etcd3 && \
+      frr frr-pythontools screen procps vim && \
+    pip3 install --no-cache-dir protobuf==3.20.* etcd3==0.12.0 && \
     mkdir -p /var/log/frr && \
     chown frr:frr /var/log/frr || true && \
     rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log
@@ -31,7 +31,7 @@ WORKDIR /app
 # Copy Scripts
 COPY start-sat-agent.sh /app/start-sat-agent.sh
 COPY sat-agent.py /app/sat-agent.py
-COPY link-actions.sh /app/link-actions.sh
+# COPY link-actions.sh /app/link-actions.sh
 COPY configure-isis.sh /app/configure-isis.sh
 
 RUN chmod +x /app/start-sat-agent.sh && chmod +x /app/*.sh
