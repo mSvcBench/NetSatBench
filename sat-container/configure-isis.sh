@@ -27,7 +27,7 @@ CIDR_MASK="${SAT_NET##*/}"
 BASE_IP="${SAT_NET%%/*}"
 IFS='.' read -r o1 o2 o3 o4 <<< "$BASE_IP"
 NET_PREFIX="$o1.$o2.$o3.0/$CIDR_MASK"
-LO_IP="$o1.$o2.$o3.254/32"
+LO_IP="$o1.$o2.$o3.254/24"
 LO_IFACE="lo"
 ISIS_NAME="CORE"
 
@@ -38,6 +38,8 @@ cat <<EOF > /etc/frr/daemons
 zebra=yes
 isisd=yes
 staticd=yes
+# Pass ECMP limit to Zebra (Kernel route installation)
+zebra_options=" -A 127.0.0.1 -e 64 --limit-fds 100000"
 EOF
 
 # 2. Write Main FRR Config
@@ -53,15 +55,21 @@ interface $LO_IFACE
  isis circuit-type level-2
  isis passive-interface
 !
+ip prefix-list PL-DENY-32 seq 10 permit 0.0.0.0/0 ge 32
+!
+route-map RM-ISIS-KERNEL deny 10
+ match ip address prefix-list PL-DENY-32
+exit
+!
+route-map RM-ISIS-KERNEL permit 100
+exit
+!
+ip protocol isis route-map RM-ISIS-KERNEL
+!
 router isis $ISIS_NAME
  net 49.$AREA_ID.0000.0000.$SYS_ID.00
  is-type level-2
- metric-style wide
  log-adjacency-changes
- address-family ipv4 unicast
-  maximum-paths 8
-  redistribute static
- exit-address-family
 !
 EOF
 
