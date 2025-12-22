@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import ipaddress
 import os
 import json
 import time
@@ -65,27 +66,38 @@ def get_l3_flags_values(cli):
     return _chk("ENABLE_TC"), _chk("ENABLE_ISIS")
 
 def apply_isis_config(cli):
+
     try:
         val, _ = cli.get(f"/config/satellites/{SAT_NAME}")
+        if not val: val, _ = cli.get(f"/config/users/{SAT_NAME}")
+        if not val: val, _ = cli.get(f"/config/grounds/{SAT_NAME}")
         if not val: return
-        my_conf = json.loads(val.decode())
+        my_conf = json.loads(val.decode())  
+        available_ips = list(ipaddress.ip_network(my_conf.get("subnet_ip","")).hosts())
+        n_ant = int(my_conf.get("n_antennas", 5))
+    
+        ## safety check, len of available_ips should be >= n_ant + 1 (the last one is for the loopback)
+        if len(available_ips) < n_ant + 1:
+            log.info(f"❌ Not enough IPs in subnet {my_conf.get('subnet_ip','')} for {n_ant} antennas. No ISIS will be configured.")
+            return
         
-        host_str = my_conf.get("host", "host-1")
-        try: host_num = int(host_str.split('-')[-1])
-        except: host_num = 1
-        net_id = f"{host_num:04d}"
-        
-        match = re.search(r'(\d+)', SAT_NAME)
+        # Extract net_id from host string      
+        host_str = my_conf.get("host", "")
+        match = re.search(r'host-(\d+)', host_str)
         if match:
-            node_num = int(match.group(1))
-            sys_id_val = (200 + node_num) if (SAT_NAME.startswith("ground") or SAT_NAME.startswith("user")) else node_num
-        else:
-            sys_id_val = 9999
-        sys_id = f"{sys_id_val:04d}"
+            # We use the host number as the Area ID
+            net_id = f"{int(match.group(1)):04d}"
+        # net_id =  host index + 10
+        elif re.match(r'^\d+$', host_str):
+            net_id = f"{int(match.group(1)) + 10:04d}"
+
+        # Extract sys_id from subnet_ip Allocation
+        subnet_cidr = my_conf.get("subnet_ip","")
+        ip_part = subnet_cidr.split("/")[0] 
+        octets = ip_part.split(".")
+        # sys_id = last two octets zero-padded to 8 digits 
+        sys_id = f"{int(octets[2]):04d}{int(octets[3]):04d}"
         
-        raw_cidr = my_conf.get("antennas_ip")
-        base_prefix = raw_cidr[0].split('/')[0].rsplit('.', 1)[0] if isinstance(raw_cidr, list) and raw_cidr else f"192.168.{sys_id_val}"
-        subnet_cidr = f"{base_prefix}.0/24"
         n_ant = int(my_conf.get("n_antennas", 1))
         antennas = [str(i) for i in range(1, n_ant + 1)]
         
@@ -182,6 +194,27 @@ def process_initial_topology(cli):
     if val:
         log.info("▶️  Executing pending runtime commands after initial setup...")
         execute_commands(val.decode())
+    
+    ## Configure /etc/hosts entries for all known satellites/users
+    log.info("📝 Updating /etc/hosts with known satellites and users...")
+    prefix = "/config/etchosts/"
+    for value, meta in cli.get_prefix(prefix):
+        node_name = meta.key.decode().split('/')[-1]
+        ip_addr = value.decode().strip()
+        if ip_addr:
+            try:
+                # Check if entry already exists
+                with open("/etc/hosts", "r") as f:
+                    hosts_content = f.read()
+                pattern = re.compile(rf"^{re.escape(ip_addr)}\s+{re.escape(node_name)}$", re.MULTILINE)
+                if pattern.search(hosts_content):
+                    continue
+                # Append to /etc/hosts
+                with open("/etc/hosts", "a") as f:
+                    f.write(f"{ip_addr}\t{node_name}\n")
+                log.info(f"✅ Added /etc/hosts entry: {ip_addr} {node_name}")
+            except Exception as e:
+                log.error(f"❌ Failed to update /etc/hosts for {node_name}: {e}")
 
 # ----------------------------
 #   PART 2: DYNAMIC ACTIONS (Epoch 1+)
@@ -325,6 +358,49 @@ def watch_command_loop():
                 if e.value: execute_commands(e.value.decode())
         except: time.sleep(5)
 
+def watch_etchosts_loop():
+    log.info("👀 Watching /config/etchosts (Dynamic Events)...")
+    cli = get_etcd_client()
+    events_iterator, cancel = cli.watch_prefix("/config/etchosts/")
+    for event in events_iterator:
+        # If the event is a PutEvent, update /etc/hosts, otherwise if it is a delete event remove from /etc/hosts
+        try:
+            if isinstance(event, etcd3.events.PutEvent):
+                node_name = event.key.decode().split('/')[-1]
+                ip_addr = event.value.decode().strip()
+                if ip_addr:
+                    try:
+                        # Check if entry already exists, in case remove and reinsert with current value
+                        with open("/etc/hosts", "r") as f:
+                            hosts_content = f.read()
+                        pattern = re.compile(rf"^{re.escape(ip_addr)}\s+{re.escape(node_name)}$", re.MULTILINE)
+                        if not pattern.search(hosts_content):
+                            # Remove any existing entry for this node_name
+                            hosts_content = re.sub(rf"^.*\s+{re.escape(node_name)}$\n", "", hosts_content, flags=re.MULTILINE)
+                            # Append to /etc/hosts
+                            with open("/etc/hosts", "w") as f:
+                                f.write(hosts_content)
+                                f.write(f"{ip_addr}\t{node_name}\n")
+                            log.info(f"✅ Updated /etc/hosts entry: {ip_addr} {node_name}")
+                    except Exception as e:
+                        log.error(f"❌ Failed to update /etc/hosts for {node_name}: {e}")
+            elif isinstance(event, etcd3.events.DeleteEvent):
+                node_name = event.key.decode().split('/')[-1]
+                try:
+                    # Remove any existing entry for this node_name
+                    with open("/etc/hosts", "r") as f:
+                        hosts_content = f.read()
+                    new_content = re.sub(rf"^.*\s+{re.escape(node_name)}$\n", "", hosts_content, flags=re.MULTILINE)
+                    with open("/etc/hosts", "w") as f:
+                        f.write(new_content)
+                    log.info(f"✅ Removed /etc/hosts entry for: {node_name}")
+                except Exception as e:
+                    log.error(f"❌ Failed to remove /etc/hosts entry for {node_name}: {e}")
+        except: 
+            log.error("❌ Failed to process /config/etchosts event.")
+            continue
+        
+
 def execute_commands(commands_raw_str):
     global last_executed_cmd_raw
     if not commands_raw_str or commands_raw_str == last_executed_cmd_raw: return
@@ -374,16 +450,26 @@ def prepare_bridges(cli):
     if not val: val, _ = cli.get(f"/config/grounds/{SAT_NAME}")
     if not val: return
     my_config = json.loads(val.decode())
-    
+    available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
     n_ant = int(my_config.get("n_antennas", 5))
-    ip_addr = my_config.get("antennas_ip",[])
+    
+    ## safety check, len of available_ips should be >= n_ant + 1 (the  last one is for the loopback used by routing protocols)
+    if len(available_ips) < n_ant + 1:
+        log.info(f"❌ Not enough IPs in subnet {my_config.get('subnet_ip','')} for {n_ant} antennas. No IPs will be assigned to bridges.")
+        available_ips = []
     for i in range(1, n_ant + 1):
         br = f"br{i}"
-        subprocess.run(f"ip link add name {br} type bridge 2>/dev/null; ip link set dev {br} up", shell=True)
-        if isinstance(ip_addr, list) and len(ip_addr) >= i:
-            ip = ip_addr[i - 1]
-            subprocess.run(f"ip addr add {ip} dev {br}", shell=True)
-    subprocess.run("ip link set dev lo up", shell=True)
+
+        subprocess.run(f"ip link add {br} type bridge 2>/dev/null", shell=True)
+        subprocess.run(f"ip link set {br} up", shell=True)
+        
+        if len(available_ips) >= i + 1:
+            ip_addr = str(available_ips[i-1]) + "/32"
+            subprocess.run(f"ip addr add {ip_addr} dev {br}", shell=True)
+            log.info(f"✅ Bridge {br} created with IP {ip_addr}.")
+            if i == 1:
+                # Register last assigned IP in Etcd for this satellite/user
+                cli.put(f"/config/etchosts/{SAT_NAME}", str(available_ips[i-1]))
 
 def main():
     log.info(f"🚀 Sat Agent Starting for {SAT_NAME}")
@@ -409,6 +495,7 @@ def main():
     threads = [
         threading.Thread(target=watch_link_actions_loop, daemon=True), # Dynamic
         threading.Thread(target=watch_command_loop, daemon=True)
+        ,threading.Thread(target=watch_etchosts_loop, daemon=True)
     ]
     for t in threads: t.start()
     

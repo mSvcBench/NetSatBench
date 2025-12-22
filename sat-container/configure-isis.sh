@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: ./configure-isis.sh <NET_ID> <SYS_ID> <antennas_ip> <ANTENNAS...>
+# Usage: ./configure-isis.sh <NET_ID> <SYS_ID> <subnet_ip> <ANTENNAS...>
 
 NET_ID="$1"
 SYS_ID="$2"
@@ -14,7 +14,7 @@ done
 
 # Validation
 if [[ -z "$NET_ID" || -z "$SYS_ID" || -z "$SAT_NET" ]]; then
-    echo "Usage: $0 <NET_ID> <SYS_ID> <antennas_ip> <ANTENNAS...>"
+    echo "Usage: $0 <NET_ID> <SYS_ID> <subnet_ip> <ANTENNAS...>"
     echo "Got: $@"
     exit 1
 fi
@@ -22,14 +22,20 @@ fi
 # Extract Area id from NET_ID (assuming NET_ID is the Area id part)
 AREA_ID="$NET_ID"
 
-# Extract subnet and loopback IP
+# Extract subnet and loopback IP from SAT_NET
 CIDR_MASK="${SAT_NET##*/}"
 BASE_IP="${SAT_NET%%/*}"
 IFS='.' read -r o1 o2 o3 o4 <<< "$BASE_IP"
-NET_PREFIX="$o1.$o2.$o3.0/$CIDR_MASK"
-LO_IP="$o1.$o2.$o3.254/24"
+NET_PREFIX="$o1.$o2.$o3.$o4/$CIDR_MASK"
+# Assign loopback IP as the last IP in the subnet
+LO_IP_SUFFIX=$((2**(32 - CIDR_MASK) - 2))
+LO_IP="$o1.$o2.$o3.$((o4 + LO_IP_SUFFIX))/$CIDR_MASK"
+
 LO_IFACE="lo"
 ISIS_NAME="CORE"
+
+PART1="${SYS_ID:0:4}"
+PART2="${SYS_ID:4:4}"
 
 echo "⚙️  Configuring FRR for Area $AREA_ID, SysID $SYS_ID, Subnet $NET_PREFIX"
 
@@ -67,7 +73,7 @@ exit
 ip protocol isis route-map RM-ISIS-KERNEL
 !
 router isis $ISIS_NAME
- net 49.$AREA_ID.0000.0000.$SYS_ID.00
+ net 49.$AREA_ID.0000.0000.$PART1.$PART2.00
  is-type level-2
  log-adjacency-changes
 !

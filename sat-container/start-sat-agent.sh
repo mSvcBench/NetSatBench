@@ -32,5 +32,6 @@ done
 # ======================
 echo " 🚀 Launching sat-agent.py ..."
 /usr/bin/screen -S APP -s /bin/bash -t win0 -A -d -m
+sleep 1
 screen -S APP -p win0 -X stuff $'python3 -u /app/sat-agent.py \n'
 sleep infinity
