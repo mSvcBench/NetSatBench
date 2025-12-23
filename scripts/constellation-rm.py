@@ -122,7 +122,7 @@ for name, node in all_nodes.items():
 # CLEAN ETCD ENTRIES
 # ==========================================
 print("\n🧼 Cleaning up Etcd entries...")
-prefixes = ['/config/links', '/config/run/', 'config/etchosts']
+prefixes = ['/config/links/', '/config/run/', 'config/etchosts/', '/config/satellites/', '/config/users/', '/config/grounds/']
 for prefix in prefixes:
     print(f"   ➞ Deleting keys with prefix {prefix} ...")
     etcd.delete_prefix(prefix)

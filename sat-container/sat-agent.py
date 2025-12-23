@@ -23,9 +23,9 @@ else:
 SAT_NAME = os.getenv("SAT_NAME")
 
 # KEYS
-KEY_LINKS = f"/config/links/{SAT_NAME}"
+KEY_LINKS = f"/config/links/{SAT_NAME}_"
 KEY_L3 = "/config/L3-config"
-KEY_RUN = f"/config/run/{SAT_NAME}"
+KEY_RUN = f"/config/run/{SAT_NAME}_"
 
 LINK_ACTIONS_SH = "/app/link-actions.sh"
 CONFIGURE_ISIS_SH = "/app/configure-isis.sh"
@@ -106,6 +106,51 @@ def run(cmd):
         log.warning(f"⚠️ Command failed: {' '.join(cmd)}")
         log.warning(result.stderr.strip())
 
+def build_netem_opts(l):
+    """
+    Build netem options dictionary from link descriptor `l`,
+    including only non-empty values.
+    """
+    netem_opts = {}
+
+    # One-argument netem options
+    for key in [
+        "rate",
+        "loss",
+        "duplicate",
+        "corrupt",
+    ]:
+        val = l.get(key)
+        if val not in (None, "", []):
+            netem_opts[key] = val
+
+    # Delay can be multi-argument (delay + jitter + distribution)
+    delay = l.get("delay")
+    if delay not in (None, "", []):
+        delay_opts = [delay]
+
+        jitter = l.get("jitter")
+        if jitter not in (None, "", []):
+            delay_opts.append(jitter)
+
+            distribution = l.get("distribution")
+            if distribution not in (None, "", []):
+                delay_opts.extend(["distribution", distribution])
+
+        netem_opts["delay"] = delay_opts
+
+    # Reordering can be multi-argument
+    reorder = l.get("reorder")
+    if reorder not in (None, "", []):
+        gap = l.get("gap")
+        if gap not in (None, "", []):
+            netem_opts["reorder"] = [reorder, gap]
+        else:
+            netem_opts["reorder"] = reorder
+
+    return netem_opts
+
+
 # ----------------------------
 #   PART 1: INITIAL SETUP (Epoch 0)
 # ----------------------------
@@ -145,11 +190,7 @@ def process_initial_topology(cli):
             continue
         
         if tc_flag:
-            bw = str(l.get("bw", ""))
-            burst = str(l.get("burst", ""))
-            latency = str(l.get("latency", ""))
-        else:
-            bw = burst = latency = ""
+            netem_opts = build_netem_opts(l)
 
         # Just call ADD for everything in Epoch 0
         if ep1 == SAT_NAME:
@@ -161,12 +202,13 @@ def process_initial_topology(cli):
                 target_bridge=f"br{l['endpoint1_antenna']}",
             ) 
             if tc_flag:
-                apply_tc_settings(
-                    vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}",
-                    bw=bw,
-                    burst=burst,
-                    latency=latency
-                )
+                if netem_opts:
+                    apply_tc_settings(
+                        vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}",
+                        netem_opts=netem_opts
+                    )
+                else:
+                    log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
         elif ep2 == SAT_NAME:
             create_vxlan_link(
                 vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}",
@@ -176,12 +218,12 @@ def process_initial_topology(cli):
                 target_bridge=f"br{l['endpoint2_antenna']}",
             )
             if tc_flag:
-                apply_tc_settings(
-                    vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}",
-                    bw=bw,
-                    burst=burst,
-                    latency=latency
-                )
+                if netem_opts:
+                    apply_tc_settings(
+                        vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}", 
+                        netem_opts=netem_opts)
+                else:
+                    log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
     
     ## Execute any pending runtime commands
     val, _ = cli.get(KEY_RUN)
@@ -257,29 +299,44 @@ def delete_vxlan_link(
         "ip", "link", "del", vxlan_if
     ])
 
-def apply_tc_settings(
-    vxlan_if,
-    bw,
-    burst,
-    latency):
-    log.info(f"🎛️  Applying TC Settings on {vxlan_if}: BW={bw}, BURST={burst}, LATENCY={latency}"
-    )
-    # Clear existing qdisc
+def apply_tc_settings(vxlan_if, netem_opts):
+    """
+    Apply tc netem settings to an interface.
+
+    Parameters
+    ----------
+    vxlan_if : str
+        Interface name (e.g., vxlan100)
+    netem_opts : dict
+        Dictionary of netem options, e.g.:
+        {
+            "delay": "50ms",
+            "loss": "1%",
+            "rate": "10mbit",
+            "duplicate": "0.1%",
+            "reorder": "25% 50%",
+            "corrupt": "0.01%"
+        }
+    """
+    log.info(f"🎛️  Applying TC netem on {vxlan_if}: {netem_opts}")
+
+    # Remove existing qdisc (ignore errors)
     run(["tc", "qdisc", "del", "dev", vxlan_if, "root"])
-    # Apply new settings
-    cmd = [
-        "tc", "qdisc", "add", "dev", vxlan_if, "root", "tbf",
-        "rate", f"{bw}",
-        "burst", f"{burst}",
-        "latency", f"{latency}"
-    ]
+
+    cmd = ["tc", "qdisc", "add", "dev", vxlan_if, "root", "netem"]
+
+    for key, value in netem_opts.items():
+        if value is None:
+            continue
+
+        # Allow both scalar and multi-argument options
+        if isinstance(value, (list, tuple)):
+            cmd.append(key)
+            cmd.extend(str(v) for v in value)
+        else:
+            cmd.extend([key, str(value)])
+
     run(cmd)
-def clean_tc_settings(
-    vxlan_if):
-    log.info(f"🎛️  Cleaning TC Settings on {vxlan_if}"
-    )
-    # Clear existing qdisc
-    run(["tc", "qdisc", "del", "dev", vxlan_if, "root"])
 
 def process_link_action(cli, event):
     try:
@@ -314,12 +371,15 @@ def process_link_action(cli, event):
                         target_bridge=f"br{l['endpoint2_antenna']}",
                     )
                 if tc_flag:
-                    apply_tc_settings(
-                        vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}" if ep1 == SAT_NAME else f"{ep1}_a{l['endpoint1_antenna']}",
-                        bw=str(l.get("bw", "")),
-                        burst=str(l.get("burst", "")),
-                        latency=str(l.get("latency", ""))
-                    )
+                    netem_opts=build_netem_opts(l)
+                    vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}" if ep1 == SAT_NAME else f"{ep1}_a{l['endpoint1_antenna']}"
+                    if netem_opts:
+                        apply_tc_settings(
+                            vxlan_if=vxlan_if,
+                            netem_opts=netem_opts
+                    ) 
+                    else:
+                        log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
 
         elif isinstance(event, etcd3.events.DeleteEvent):
                 key_str = event.key.decode()

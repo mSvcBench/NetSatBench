@@ -13,7 +13,7 @@
         "endpoint2_antenna": 2,
         "rate": "10mbit",
         "loss":0,
-        "latency": "1ms"
+        "delay": "1ms"
       },
       {
         "endpoint1": "sat4",
@@ -22,7 +22,7 @@
         "endpoint2_antenna": 1,
         "rate": "10mbit",
         "loss":0,
-        "latency": "1ms"
+        "delay": "1ms"
       },
       {
         "endpoint1": "sat5",
@@ -31,7 +31,7 @@
         "endpoint2_antenna": 2,
         "rate": "10mbit",
         "loss":0,
-        "latency": "1ms"
+        "delay": "1ms"
       },
       {
 
@@ -41,7 +41,7 @@
         "endpoint2_antenna": 3,
         "rate": "10mbit",
         "loss":0,
-        "latency": "1ms"
+        "delay": "1ms"
       },
       {
 
@@ -52,7 +52,7 @@
 
         "rate": "10mbit",
         "loss":0,
-        "latency": "1ms"
+        "delay": "1ms"
       },
       {
         "endpoint1": "sat8",
@@ -61,7 +61,7 @@
         "endpoint2_antenna": 1,
         "rate": "10mbit",
         "loss":0,
-        "latency": "1ms"
+        "delay": "1ms"
       },
       {
         "endpoint1": "ground1",
@@ -70,7 +70,7 @@
         "endpoint2_antenna": 5,
         "rate": "10mbit",
         "loss":0,
-        "latency": "1ms"
+        "delay": "1ms"
       }
     ],
   "run": {
