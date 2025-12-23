@@ -73,7 +73,7 @@ exit
 ip protocol isis route-map RM-ISIS-KERNEL
 !
 router isis $ISIS_NAME
- net 49.$AREA_ID.0000.0000.$PART1.$PART2.00
+ net $AREA_ID.0000.0000.$PART1.$PART2.00
  is-type level-2
  log-adjacency-changes
 !

@@ -82,7 +82,7 @@ for name, node in all_nodes.items():
     # Bash Equivalent: docker ps -a --format '{{.Names}}' | grep -Fxq "$SAT_NAME"
     check_cmd = f"docker ps -a --format '{{{{.Names}}}}' | grep -Fxq '{name}'"
     
-    print(f"   🔍 Checking if container '{name}' exists with command {check_cmd}...")
+    print(f"   🔍 Checking if container '{name}' exists...")
     check_proc = subprocess.run(
         ["ssh", "-i", ssh_key, f"{ssh_user}@{ssh_ip}", "-C", check_cmd],
         capture_output=True,

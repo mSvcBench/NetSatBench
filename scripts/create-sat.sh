@@ -33,6 +33,7 @@ ssh -i $SSH_KEY_PATH "$SSH_USERNAME@$SAT_HOST" docker run -d \
   --hostname "$SAT_NAME" \
   --net "$SAT_HOST_BRIDGE_NAME" \
   --privileged \
+  --pull=always \
   -e SAT_NAME="$SAT_NAME" \
   -e ETCD_ENDPOINT="$ETCD_HOST:$ETCD_PORT" \
   "$CONTAINER_IMAGE"

@@ -4,6 +4,7 @@ import subprocess
 import json
 import os
 import sys
+import re
 
 # ==========================================
 # 🚩 CONFIGURATION
@@ -21,6 +22,34 @@ except Exception as e:
 # ==========================================
 # HELPERS
 # ==========================================
+
+
+def interface_from_ip_ssh(ssh_user, ssh_ip, ssh_key, target_ip):
+    cmd = (
+        f"ssh -o StrictHostKeyChecking=no "
+        f"-i {ssh_key} "
+        f"{ssh_user}@{ssh_ip} "
+        f"'ip -o -4 addr show'"
+    )
+
+    result = subprocess.run(
+        cmd,
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip())
+
+    for line in result.stdout.splitlines():
+        # Example:
+        # 2: eth0    inet 192.168.1.10/24 brd ...
+        if target_ip in line:
+            return line.split()[1]
+
+    return None
+
 def get_prefix_data(prefix) -> dict:
     data = {}
     for value, metadata in etcd.get_prefix(prefix):
@@ -30,7 +59,6 @@ def get_prefix_data(prefix) -> dict:
         except json.JSONDecodeError:
             print(f"⚠️ Warning: Could not parse JSON for key {key}")
     return data
-
 
 def run(cmd: str) -> subprocess.CompletedProcess:
     """
@@ -59,7 +87,7 @@ try:
         file_modified = False
 
         # --- 3. ETCD SYNC ---
-        allowed_keys = ["L3-config", "hosts", "epoch-config","satellites", "users", "grounds"]
+        allowed_keys = ["satellites", "users", "grounds", "L3-config", "hosts", "epoch-config"]
 
         # A. Push General Config & Inventory
         for key, value in config.items():
@@ -72,7 +100,7 @@ try:
                     etcd.put(f"/config/L3-config/{k}", str(v).strip().replace('"', ''))
             elif key in ["epoch-config"]:
                     etcd.put(f"/config/{key}", json.dumps(value))
-            elif key in ["hosts", "satellites", "users", "grounds"]:
+            elif key in ["hosts"]:
                 for k, v in value.items():
                     etcd.put(f"/config/{key}/{k}", json.dumps(v))
 
@@ -97,6 +125,8 @@ for host_name, host in hosts.items():
     ssh_user = host.get('ssh_user', 'ubuntu')
     ssh_ip = host.get('ip', host_name)
     ssh_key = host.get('ssh_key', '~/.ssh/id_rsa')
+    ssh_interface_name = interface_from_ip_ssh(ssh_user, ssh_ip, ssh_key, host.get('ip', host_name))
+
     # Example: You could run a remote command to verify connectivity
     try:
         subprocess.run(f"ssh -o StrictHostKeyChecking=no -i {ssh_key} {ssh_user}@{ssh_ip} 'echo Host {host_name} is reachable'", 
@@ -116,25 +146,63 @@ for host_name, host in hosts.items():
     inspect = run(inspect_cmd)
 
     if inspect.returncode == 0:
-        print(f"✔️  Docker network '{sat_vnet}' already exists on {host_ip}.")
-    else:
-        print(f"🧱 Creating Docker network '{sat_vnet}' on {host_ip} ...")
-        create_cmd = (
-            f"ssh {remote} docker network create --driver=bridge"
-            f" --subnet={sat_vnet_cidr}"
-            f" -o com.docker.network.bridge.enable_ip_masquerade=false {sat_vnet}"
-        )
-        
-        created = run(create_cmd)
-        if created.returncode != 0:
+        print(f"✔️  Docker network '{sat_vnet}' already exists on {host_ip}, remove it.")
+        remove_cmd = f"ssh {remote} docker network rm {sat_vnet}"
+        removed = run(remove_cmd)
+        if removed.returncode != 0:
             raise RuntimeError(
-                "Failed to create remote docker network.\n"
-                f"CMD: {create_cmd}\n"
-                f"STDOUT:\n{created.stdout}\n"
-                f"STDERR:\n{created.stderr}"
+                "Failed to remove existing remote docker network.\n"
+                f"CMD: {remove_cmd}\n"
+                f"STDOUT:\n{removed.stdout}\n"
+                f"STDERR:\n{removed.stderr}"
             )
+    print(f"🧱 Creating Docker network '{sat_vnet}' on {host_ip} ...")
+    create_cmd = (
+        f"ssh {remote} docker network create --driver=bridge"
+        f" --subnet={sat_vnet_cidr}"
+        f" -o com.docker.network.bridge.enable_ip_masquerade=false"
+        f" -o com.docker.network.bridge.trusted_host_interfaces=\"{ssh_interface_name}\""
+        f" {sat_vnet}"
+    )
+    
+    created = run(create_cmd)
+    if created.returncode != 0:
+        raise RuntimeError(
+            "Failed to create remote docker network.\n"
+            f"CMD: {create_cmd}\n"
+            f"STDOUT:\n{created.stdout}\n"
+            f"STDERR:\n{created.stderr}"
+        )
+    
+    # === enable container to container input forwarding among hosts === 
+    sat_vnet_supercidr = host.get('SAT-VNET-SUPERNET', '172.0.0.0/8')
+    print(f"➞ Enabling container-to-container forwarding on host: {host_name}")
+    # Add iptables rule to allow forwarding from {host_name2} to {host_name}
+    check_forward_cmd = (
+            f"ssh {remote} sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr}"
+            f" -d {sat_vnet_supercidr}"
+            f" -j ACCEPT"
+    )
+    check_forwarded = run(check_forward_cmd)
+    if check_forwarded.returncode == 0:
+        print(f"✅ Container-to-container forwarding on {host_name} already enabled, skipping.")
+    else:    
+        forward_cmd = (
+            f"ssh {remote} sudo iptables -I DOCKER-USER -s {sat_vnet_supercidr}"
+            f" -d {sat_vnet_supercidr}"
+            f" -j ACCEPT"
+        )
+        forwarded = run(forward_cmd)
+        if forwarded.returncode != 0:
+            print(f"❌ Failed to enable container-to-container forwarding on {host_name}.\n"
+                f"CMD: {forward_cmd}\n"
+                f"STDOUT:\n{forwarded.stdout}\n"
+                f"STDERR:\n{forwarded.stderr}")
+        else:
+            print(f"✅ Container-to-container forwarding enabled successfully on {host_name}.")
 
-        print(f"✅ Docker network '{sat_vnet}' created successfully on {host_ip}.")
+    print(f"✅ Docker network '{sat_vnet}' created successfully on {host_ip}.")
+
 
 # ==========================================
 # CONFIGURE ALL TO ALL ROUTES AMONG SAT-VNET

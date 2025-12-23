@@ -81,15 +81,9 @@ def apply_isis_config(cli):
             log.info(f"❌ Not enough IPs in subnet {my_conf.get('subnet_ip','')} for {n_ant} antennas. No ISIS will be configured.")
             return
         
-        # Extract net_id from host string      
-        host_str = my_conf.get("host", "")
-        match = re.search(r'host-(\d+)', host_str)
-        if match:
-            # We use the host number as the Area ID
-            net_id = f"{int(match.group(1)):04d}"
-        # net_id =  host index + 10
-        elif re.match(r'^\d+$', host_str):
-            net_id = f"{int(match.group(1)) + 10:04d}"
+        # Extract net_id from etcd key
+        area_id = my_conf.get("/config/ISIS_AREA_ID","49.0001")   
+        
 
         # Extract sys_id from subnet_ip Allocation
         subnet_cidr = my_conf.get("subnet_ip","")
@@ -101,7 +95,7 @@ def apply_isis_config(cli):
         n_ant = int(my_conf.get("n_antennas", 1))
         antennas = [str(i) for i in range(1, n_ant + 1)]
         
-        cmd = [CONFIGURE_ISIS_SH, net_id, sys_id, subnet_cidr] + antennas
+        cmd = [CONFIGURE_ISIS_SH, area_id, sys_id, subnet_cidr] + antennas
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         log.error(f"❌ Exception triggering IS-IS: {e}")
