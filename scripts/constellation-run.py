@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import sys
 import time
 import glob
 import re
@@ -52,14 +53,14 @@ def smart_wait(target_virtual_time_str, filename: str, enable_wait: bool = True)
         # Initialize baseline on the first epoch
         if TIME_OFFSET is None:
             TIME_OFFSET = current_real_time - virtual_time
-            print(f"⏱️  [{filename}] Baseline set. Virtual Time: {virtual_time}")
+            print(f"⏱️  [{filename}] Baseline set. Virtual Epoch Time: {virtual_time}")
             return
 
         target_real_time = virtual_time + TIME_OFFSET
         delay = target_real_time - time.time()
 
         if delay > 0:
-            print(f"⏳ [{filename}] Waiting {delay:.1f}s to sync epoch...")
+            #print(f"⏳ [{filename}] Waiting {delay:.1f}s to sync epoch...")
             time.sleep(delay)
 
     except ValueError:
@@ -110,6 +111,15 @@ def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
     files = sorted(glob.glob(search_path), key=epoch_number)
     return files
 
+def convert_time_epoch_to_timestamp(time_str: str) -> float:
+    """
+    Converts a time string in "YYYY-MM-DD HH:MM:SS" format to a Unix timestamp.
+    """
+    try:
+        struct_time = time.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+        return time.mktime(struct_time)
+    except ValueError:
+        raise ValueError(f"❌  Invalid time format: {time_str}. Expected 'YYYY-MM-DD HH:MM:SS'.")
 
 # ==========================================
 # 🚀 CORE LOGIC
@@ -122,8 +132,9 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             config = json.load(f)
 
         # WAIT FOR SCHEDULED TIME (virtual -> real time sync)
-        smart_wait(config.get("epoch-time"), filename, enable_wait=enable_wait)
-
+        epoch_time = config.get("epoch-time") if config.get("epoch-time") else convert_time_epoch_to_timestamp(config.get("time"))
+        smart_wait(epoch_time, filename, enable_wait=enable_wait)
+        print(f"🚩 [{filename}] Applying epoch configuration at virtual epoch time {epoch_time}...")
         # Allowed keys in epoch file
         allowed_keys = [
             "epoch-time",
@@ -157,8 +168,8 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
         update = config.get("links-update", [])       # fixed key name vs your current "link-update"
 
         for l in add:
-            vxlan_iface_name1 = f"{l['endpoint2']}_a{l['endpoint2_antenna']}"
-            vxlan_iface_name2 = f"{l['endpoint1']}_a{l['endpoint1_antenna']}"
+            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{l['endpoint2_antenna']}"
+            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{l['endpoint1_antenna']}"
             etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
             etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
 
@@ -173,8 +184,8 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             etcd.put(etcd_key2, json.dumps(l))
 
         for l in delete:
-            vxlan_iface_name1 = f"{l['endpoint2']}_a{l['endpoint2_antenna']}"
-            vxlan_iface_name2 = f"{l['endpoint1']}_a{l['endpoint1_antenna']}"
+            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{l['endpoint2_antenna']}"
+            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{l['endpoint1_antenna']}"
             etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
             etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
 
@@ -188,8 +199,8 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             etcd.delete(etcd_key2)
 
         for l in update:
-            vxlan_iface_name1 = f"{l['endpoint2']}_a{l['endpoint2_antenna']}"
-            vxlan_iface_name2 = f"{l['endpoint1']}_a{l['endpoint1_antenna']}"
+            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{l['endpoint2_antenna']}"
+            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{l['endpoint1_antenna']}"
             etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
             etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
 

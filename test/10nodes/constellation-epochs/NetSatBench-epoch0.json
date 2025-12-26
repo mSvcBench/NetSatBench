@@ -7,6 +7,33 @@
   ],
   "links-add": [
       {
+        "endpoint1": "sat1",
+        "endpoint2": "sat2",
+        "endpoint1_antenna": 1,
+        "endpoint2_antenna": 1,
+        "rate": "10mbit",
+        "loss":0,
+        "delay": "1ms"
+      },
+      {
+        "endpoint1": "sat1",
+        "endpoint2": "sat3",
+        "endpoint1_antenna": 2,
+        "endpoint2_antenna": 2,
+        "rate": "10mbit",
+        "loss":0,
+        "delay": "1ms"
+      },
+      {
+        "endpoint1": "sat2",
+        "endpoint2": "sat4",
+        "endpoint1_antenna": 2,
+        "endpoint2_antenna": 1,
+        "rate": "10mbit",
+        "loss":0,
+        "delay": "1ms"
+      },
+      {
         "endpoint1": "sat3",
         "endpoint2": "sat4",
         "endpoint1_antenna": 1,
@@ -34,7 +61,6 @@
         "delay": "1ms"
       },
       {
-
         "endpoint1": "sat6",
         "endpoint2": "sat7",
         "endpoint1_antenna": 1,
@@ -64,7 +90,7 @@
         "delay": "1ms"
       },
       {
-        "endpoint1": "ground1",
+        "endpoint1": "grd1",
         "endpoint2": "sat9",
         "endpoint1_antenna": 1,
         "endpoint2_antenna": 5,
@@ -74,13 +100,9 @@
       }
     ],
   "run": {
-    "sat1": [
+    "sat3": [
       "sleep 10",
-      "ping -c 192.168.8.1"
-    ],
-    "ground1": [
-      "sleep 20",
-      "ping -c 5 192.168.10.1"
+      "screen -dmS ping_test ping grd1"
     ]
   }
 }

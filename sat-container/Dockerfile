@@ -18,7 +18,7 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       iputils-ping iproute2 net-tools tcpdump bridge-utils \
-      iperf3 jq \
+      iperf3 jq nftables\
       frr frr-pythontools screen procps vim && \
     pip3 install --no-cache-dir protobuf==3.20.* etcd3==0.12.0 && \
     mkdir -p /var/log/frr && \

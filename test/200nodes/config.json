@@ -74,7 +74,7 @@
   "L3-config": {
     "ENABLE_TC"  : "True" ,
     "ENABLE_ISIS" : "True",
-    "ISIS_AREA_ID": "49.0001",
+    "ISIS_AREA_ID": "0001",
     "SAT-VNET-SUPERNET": "172.0.0.0/8"
   },
   "epoch-config": {
@@ -283,7 +283,7 @@
     "sat199": { "id": 199, "host": "host-a-7", "image": "msvcbench/sat-container:latest", "subnet_ip": "192.168.6.48/29", "n_antennas": 5 },
     "sat200": { "id": 200, "host": "host-a-7", "image": "msvcbench/sat-container:latest", "subnet_ip": "192.168.6.56/29", "n_antennas": 5 },
 
-  "ground1": {
+  "grd1": {
     "id": 10,
     "host": "host-2",
     "image": "msvcbench/sat-container:latest",

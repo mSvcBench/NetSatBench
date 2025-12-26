@@ -389,13 +389,9 @@
   
     ],
   "run": {
-    "sat1": [
+    "sat3": [
       "sleep 10",
-      "ping -c 192.168.8.1"
-    ],
-    "ground1": [
-      "sleep 20",
-      "ping -c 5 192.168.10.1"
+      "screen -dmS ping_test ping -c sat30"
     ]
   }
 }

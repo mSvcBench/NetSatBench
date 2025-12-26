@@ -59,11 +59,10 @@ def get_remote_ip(cli, node_name):
     return None
 
 def get_l3_flags_values(cli):
-    def _chk(k):
-        val, _ = cli.get(f"{KEY_L3}/{k}")
-        if not val: return True
-        return val.decode().strip().replace('"', '').replace("'", "").lower() == "true"
-    return _chk("ENABLE_TC"), _chk("ENABLE_ISIS")
+    val, _ = cli.get(KEY_L3)
+    if val is None:
+        return {}
+    return json.loads(val.decode("utf-8"))
 
 def apply_isis_config(cli):
 
@@ -82,15 +81,12 @@ def apply_isis_config(cli):
             return
         
         # Extract net_id from etcd key
-        area_id = my_conf.get("/config/ISIS_AREA_ID","49.0001")   
-        
+        l3_flags = get_l3_flags_values(cli)
+        area_id = l3_flags.get("ISIS_AREA_ID", "0001")
 
-        # Extract sys_id from subnet_ip Allocation
+        # Extract sys_id from node name 
         subnet_cidr = my_conf.get("subnet_ip","")
-        ip_part = subnet_cidr.split("/")[0] 
-        octets = ip_part.split(".")
-        # sys_id = last two octets zero-padded to 8 digits 
-        sys_id = f"{int(octets[2]):04d}{int(octets[3]):04d}"
+        sys_id = derive_sysid_from_string(SAT_NAME)
         
         n_ant = int(my_conf.get("n_antennas", 1))
         antennas = [str(i) for i in range(1, n_ant + 1)]
@@ -100,11 +96,12 @@ def apply_isis_config(cli):
     except Exception as e:
         log.error(f"❌ Exception triggering IS-IS: {e}")
 
-def run(cmd):
+def run(cmd, log_errors=True):
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
+    if result.returncode != 0 and log_errors:
         log.warning(f"⚠️ Command failed: {' '.join(cmd)}")
         log.warning(result.stderr.strip())
+    return result
 
 def build_netem_opts(l):
     """
@@ -150,6 +147,17 @@ def build_netem_opts(l):
 
     return netem_opts
 
+import hashlib
+
+def derive_sysid_from_string(value: str) -> str:
+    """
+    Derive an 8-digit IS-IS system-id from an arbitrary string
+    using a cryptographic hash (deterministic, stable).
+    """
+    digest = hashlib.sha256(value.encode("utf-8")).digest()
+    num = int.from_bytes(digest[:4], byteorder="big")  # 32 bits
+    return f"{num % 10**8:08d}"
+
 
 # ----------------------------
 #   PART 1: INITIAL SETUP (Epoch 0)
@@ -162,7 +170,8 @@ def process_initial_topology(cli):
     log.info("🏗️  Processing Initial Topology (Epoch 0)...")
     
     ## Process links add
-    tc_flag, _ = get_l3_flags_values(cli)
+    l3_flag = get_l3_flags_values(cli)
+    tc_flag = l3_flag.get("ENABLE_TC", True)
     for value, meta in cli.get_prefix(KEY_LINKS):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -194,8 +203,9 @@ def process_initial_topology(cli):
 
         # Just call ADD for everything in Epoch 0
         if ep1 == SAT_NAME:
+            vxlan_if=f"vl_{ep2}_{l['endpoint2_antenna']}"
             create_vxlan_link(
-                vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}",
+                vxlan_if=vxlan_if,
                 target_vni=vni,
                 remote_ip=ip2,
                 local_ip=ip1,
@@ -204,14 +214,15 @@ def process_initial_topology(cli):
             if tc_flag:
                 if netem_opts:
                     apply_tc_settings(
-                        vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}",
+                        vxlan_if=vxlan_if,
                         netem_opts=netem_opts
                     )
                 else:
                     log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
         elif ep2 == SAT_NAME:
+            vxlan_if=f"vl_{ep1}_{l['endpoint1_antenna']}"
             create_vxlan_link(
-                vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}",
+                vxlan_if=vxlan_if,
                 target_vni=vni,
                 remote_ip=ip1,
                 local_ip=ip2,
@@ -220,7 +231,7 @@ def process_initial_topology(cli):
             if tc_flag:
                 if netem_opts:
                     apply_tc_settings(
-                        vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}", 
+                        vxlan_if=vxlan_if, 
                         netem_opts=netem_opts)
                 else:
                     log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
@@ -321,7 +332,7 @@ def apply_tc_settings(vxlan_if, netem_opts):
     log.info(f"🎛️  Applying TC netem on {vxlan_if}: {netem_opts}")
 
     # Remove existing qdisc (ignore errors)
-    run(["tc", "qdisc", "del", "dev", vxlan_if, "root"])
+    run(["tc", "qdisc", "del", "dev", vxlan_if, "root"], log_errors=False)
 
     cmd = ["tc", "qdisc", "add", "dev", vxlan_if, "root", "netem"]
 
@@ -340,7 +351,8 @@ def apply_tc_settings(vxlan_if, netem_opts):
 
 def process_link_action(cli, event):
     try:
-        tc_flag, _ = get_l3_flags_values(cli)
+        l3_flag = get_l3_flags_values(cli)
+        tc_flag = l3_flag.get("ENABLE_TC", True)
         if isinstance(event, etcd3.events.PutEvent):
                 l = json.loads(event.value.decode())
                 ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -356,7 +368,7 @@ def process_link_action(cli, event):
                 vni = str(l.get("vni", "0"))
                 if ep1 == SAT_NAME:
                     create_vxlan_link(
-                    vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}",
+                    vxlan_if=f"vl_{ep2}_{l['endpoint2_antenna']}",
                     target_vni=vni,
                     remote_ip=ip2,
                     local_ip=ip1,
@@ -364,7 +376,7 @@ def process_link_action(cli, event):
                 ) 
                 elif ep2 == SAT_NAME:
                     create_vxlan_link(
-                        vxlan_if=f"{ep1}_a{l['endpoint1_antenna']}",
+                        vxlan_if=f"vl_{ep1}_{l['endpoint1_antenna']}",
                         target_vni=vni,
                         remote_ip=ip1,
                         local_ip=ip2,
@@ -372,7 +384,7 @@ def process_link_action(cli, event):
                     )
                 if tc_flag:
                     netem_opts=build_netem_opts(l)
-                    vxlan_if=f"{ep2}_a{l['endpoint2_antenna']}" if ep1 == SAT_NAME else f"{ep1}_a{l['endpoint1_antenna']}"
+                    vxlan_if=f"vl_{ep2}_{l['endpoint2_antenna']}" if ep1 == SAT_NAME else f"vl_{ep1}_{l['endpoint1_antenna']}"
                     if netem_opts:
                         apply_tc_settings(
                             vxlan_if=vxlan_if,
@@ -385,8 +397,6 @@ def process_link_action(cli, event):
                 key_str = event.key.decode()
                 # Extract link info from the key, it is the last parto of the key after /
                 iface = key_str.split('/')[-1]
-                if tc_flag:
-                    clean_tc_settings(iface)
                 delete_vxlan_link(iface)
     except: 
         log.error("❌ Failed to parse link action.")
@@ -542,7 +552,8 @@ def main():
     process_initial_topology(cli)
     
     # 3. L3 Routing Init
-    _, isis_flag = get_l3_flags_values(cli)
+    l3_flag = get_l3_flags_values(cli)
+    isis_flag = l3_flag.get("ENABLE_ISIS", True)
     if isis_flag: apply_isis_config(cli)
 
     # 4. Start Event Loops

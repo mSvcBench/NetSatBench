@@ -1,9 +1,10 @@
 #!/bin/bash
-# Usage: ./configure-isis.sh <NET_ID> <SYS_ID> <subnet_ip> <ANTENNAS...>
+# Usage: ./configure-isis.sh <AREA_ID> <SYS_ID> <subnet_ip> <ANTENNAS...>
 
-NET_ID="$1"
+AREA_ID="$1"
 SYS_ID="$2"
 SAT_NET="$3"
+AFI="49"
 shift 3
 
 ANTENNAS=()
@@ -13,14 +14,11 @@ while [[ "$1" =~ ^[0-9]+$ ]]; do
 done
 
 # Validation
-if [[ -z "$NET_ID" || -z "$SYS_ID" || -z "$SAT_NET" ]]; then
-    echo "Usage: $0 <NET_ID> <SYS_ID> <subnet_ip> <ANTENNAS...>"
+if [[ -z "$AREA_ID" || -z "$SYS_ID" || -z "$SAT_NET" ]]; then
+    echo "Usage: $0 <AREA_ID> <SYS_ID> <subnet_ip> <ANTENNAS...>"
     echo "Got: $@"
     exit 1
 fi
-
-# Extract Area id from NET_ID (assuming NET_ID is the Area id part)
-AREA_ID="$NET_ID"
 
 # Extract subnet and loopback IP from SAT_NET
 CIDR_MASK="${SAT_NET##*/}"
@@ -73,7 +71,7 @@ exit
 ip protocol isis route-map RM-ISIS-KERNEL
 !
 router isis $ISIS_NAME
- net $AREA_ID.0000.0000.$PART1.$PART2.00
+ net 49.$AREA_ID.$PART1.$PART2.00
  is-type level-2
  log-adjacency-changes
 !
@@ -90,8 +88,8 @@ for antenna in "${ANTENNAS[@]}"; do
 done
 
 # Add static route for redistribution
-echo "ip route $NET_PREFIX Null0" >> /etc/frr/frr.conf
-echo "!" >> /etc/frr/frr.conf
+# echo "ip route $NET_PREFIX Null0" >> /etc/frr/frr.conf
+# echo "!" >> /etc/frr/frr.conf
 
 # 3. Apply Permissions
 ip link set $LO_IFACE up || true

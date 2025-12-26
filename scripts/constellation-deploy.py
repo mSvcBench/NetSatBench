@@ -114,8 +114,8 @@ def create_one_node(
         )
         # Keep messages compact; include stderr only if non-empty.
         msg = f"✅ Created on host={node_host}"
-        if res.stderr.strip():
-            msg += f" (stderr: {res.stderr.strip()})"
+        # if res.stderr.strip():
+        #     msg += f" (stderr: {res.stderr.strip()})"
         return name, True, msg
     except subprocess.CalledProcessError as e:
         out = (e.stdout or "").strip()
