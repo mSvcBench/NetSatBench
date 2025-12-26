@@ -534,6 +534,14 @@ def prepare_bridges(cli):
             if i == 1:
                 # Register last assigned IP in Etcd for this satellite/user
                 cli.put(f"/config/etchosts/{SAT_NAME}", str(available_ips[i-1]))
+    
+    ## Avoid vxlan-to-vxlan l2 forwarding with following sequence of commands
+    cmd = 'nft add table bridge brfilter 2>/dev/null || true; ' + \
+          'nft add chain bridge brfilter forward \'{ type filter hook forward priority 0; policy accept; }\' 2>/dev/null || true; ' + \
+          'nft list chain bridge brfilter forward | grep -q \'iifname "vl*" oifname "vl*" drop\' || ' + \
+          'nft add rule bridge brfilter forward iifname "vl*" oifname "vl*" drop'
+    log.info("🔒 Applying vxlan-to-vxlan forwarding prevention rules...")
+    subprocess.run(cmd, shell=True)
 
 def main():
     log.info(f"🚀 Sat Agent Starting for {SAT_NAME}")
