@@ -37,6 +37,7 @@ log = logging.getLogger("sat-agent")
 last_executed_cmd_raw = None
 LINK_STATE_CACHE = {} # Only used for the initial sync
 l3_flags = None
+my_config = None
 
 # ----------------------------
 #   HELPERS
@@ -164,14 +165,14 @@ def derive_sysid_from_string(value: str) -> str:
 
 
 # ----------------------------
-#   PART 1: INITIAL SETUP (Epoch 0)
+#   PART 1: INITIAL SETUP
 # ----------------------------
 def process_initial_topology(cli):
     """
     Reads /config/links and builds the initial world state.
     Uses 'add' action for everything found.
     """
-    log.info("🏗️  Processing Initial Topology (Epoch 0)...")
+    log.info("🏗️  Processing Initial Topology ...")
     
     ## Process links add
     tc_flag = l3_flags.get("ENABLE_TC", True)
@@ -211,8 +212,7 @@ def process_initial_topology(cli):
                 vxlan_if=vxlan_if,
                 target_vni=vni,
                 remote_ip=ip2,
-                local_ip=ip1,
-                target_bridge=f"br{l['endpoint1_antenna']}",
+                local_ip=ip1
             ) 
             if tc_flag:
                 if netem_opts:
@@ -229,7 +229,6 @@ def process_initial_topology(cli):
                 target_vni=vni,
                 remote_ip=ip1,
                 local_ip=ip2,
-                target_bridge=f"br{l['endpoint2_antenna']}",
             )
             if tc_flag:
                 if netem_opts:
@@ -280,8 +279,7 @@ def create_vxlan_link(
     vxlan_if,
     target_vni,
     remote_ip,
-    local_ip,
-    target_bridge,
+    local_ip
     ):
 
         # ⛔ If already exists, do nothing
@@ -302,10 +300,23 @@ def create_vxlan_link(
     ])
 
     run(["ip", "link", "set", vxlan_if, "mtu", "1350"])
-    run(["ip", "link", "set", vxlan_if, "master", target_bridge])
     run(["ip", "link", "set", "dev", vxlan_if, "up"])
-    run(["bridge", "link", "set", "dev", vxlan_if, "isolated", "on"])
-
+    available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
+    if len(available_ips) > 0:
+        ip_addr = str(available_ips[-1]) + "/32"
+        run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
+        log.info(f"✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
+        if l3_flags.get("ENABLE_ISIS", False):
+            log.info(f"🔸 Configuring IS-IS on {vxlan_if}...")
+            run([
+                "vtysh",
+                "-c", "conf t",
+                "-c", f"interface {vxlan_if}",
+                "-c", "ip router isis CORE",
+                "-c", "isis network point-to-point",
+                "-c", "end",
+                "-c", "write"
+            ])
 
 def delete_vxlan_link(
     vxlan_if):
@@ -376,7 +387,6 @@ def process_link_action(cli, event):
                     target_vni=vni,
                     remote_ip=ip2,
                     local_ip=ip1,
-                    target_bridge=f"br{l['endpoint1_antenna']}",
                 ) 
                 elif ep2 == SAT_NAME:
                     create_vxlan_link(
@@ -384,7 +394,6 @@ def process_link_action(cli, event):
                         target_vni=vni,
                         remote_ip=ip1,
                         local_ip=ip2,
-                        target_bridge=f"br{l['endpoint2_antenna']}",
                     )
                 if tc_flag:
                     netem_opts=build_netem_opts(l)
@@ -512,64 +521,37 @@ def register_my_ip(cli):
         return (sat_found or user_found)
     except: return False
 
-def prepare_bridges(cli):
+def get_config(cli):
+    
     val, _ = cli.get(f"/config/satellites/{SAT_NAME}")
     if not val: val, _ = cli.get(f"/config/users/{SAT_NAME}")
     if not val: val, _ = cli.get(f"/config/grounds/{SAT_NAME}")
     if not val: return
-    my_config = json.loads(val.decode())
-    available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
-    n_ant = int(my_config.get("n_antennas", 5))
-    
-    ## safety check, len of available_ips should be >= n_ant + 1 (the  last one is for the loopback used by routing protocols)
-    
-    if (len(available_ips) < n_ant + 1 and my_config.get("COMMON-BRIDGE-ADDRESS", False)==False) or \
-       (len(available_ips) < 1 and my_config.get("COMMON-BRIDGE-ADDRESS", False)==True):
-        log.info(f"❌ Not enough IPs in subnet {my_config.get('subnet_ip','')} for {n_ant} antennas and loopback. No IPs will be assigned to bridges.")
-        available_ips = []
-    elif l3_flags.get("COMMON-BRIDGE-ADDRESS", False)==True:
-        available_ips = [available_ips[-1]] * n_ant  # Only one bridge will be created
-
-    for i in range(0, n_ant):
-        br = f"br{i+1}"
-        subprocess.run(f"ip link add {br} type bridge 2>/dev/null", shell=True)
-        subprocess.run(f"ip link set {br} up", shell=True)
-        if len(available_ips) > i:
-            if i == 0:
-                # Register first assigned IP in Etcd for this satellite/user
-                cli.put(f"/config/etchosts/{SAT_NAME}", str(available_ips[i]))  
-            ip_addr = str(available_ips[i]) + "/32"
-            subprocess.run(f"ip addr add {ip_addr} dev {br}", shell=True)
-            log.info(f"✅ Bridge {br} created with IP {ip_addr}.")
-
-    
-    ## Avoid vxlan-to-vxlan l2 forwarding with following sequence of commands
-    # cmd = 'nft add table bridge brfilter 2>/dev/null || true; ' + \
-    #       'nft add chain bridge brfilter forward \'{ type filter hook forward priority 0; policy accept; }\' 2>/dev/null || true; ' + \
-    #       'nft list chain bridge brfilter forward | grep -q \'iifname "vl_*" oifname "vl_*" drop\' || ' + \
-    #       'nft add rule bridge brfilter forward iifname "vl_*" oifname "vl_*" drop'
-    # log.info("🔒 Applying vxlan-to-vxlan forwarding prevention rules...")
-    # subprocess.run(cmd, shell=True)
+    return json.loads(val.decode())
 
 def main():
-    global l3_flags
+    global my_config, l3_flags
     log.info(f"🚀 Sat Agent Starting for {SAT_NAME}")
     cli = get_etcd_client()
     l3_flags = get_l3_flags_values(cli)
+    my_config = get_config(cli)
     
     # Bootstrapping
     ## Register my IP address in Etcd
     while True:
         if register_my_ip(cli): break
         time.sleep(2)
-    
-    ## Prepare internal bridges, one bridge for sat antenna, and possibly assign IP addresses
-    prepare_bridges(cli)
-    
-    # 2. Initial Setup (Epoch 0)
+
+
+    # Initial Setup
     process_initial_topology(cli)
+
+    ## Publish node IP for etc hosts usage 
+    available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
+    if len(available_ips) > 0:
+        cli.put(f"/config/etchosts/{SAT_NAME}", str(available_ips[-1]))
     
-    # 3. L3 Routing Init
+    # L3 Routing Init
     isis_flags = l3_flags.get("ENABLE_ISIS", True)
     if isis_flags: apply_isis_config(cli)
 

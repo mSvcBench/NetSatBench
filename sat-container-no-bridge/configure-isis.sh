@@ -77,15 +77,6 @@ router isis $ISIS_NAME
 !
 EOF
 
-# Add bridge interfaces
-for antenna in "${ANTENNAS[@]}"; do
-    br="br$antenna"
-    echo "interface $br" >> /etc/frr/frr.conf
-    echo " ip router isis $ISIS_NAME" >> /etc/frr/frr.conf
-    echo " isis network point-to-point" >> /etc/frr/frr.conf
-    echo " isis metric 10" >> /etc/frr/frr.conf
-    echo "!" >> /etc/frr/frr.conf
-done
 
 # Add static route for redistribution
 # echo "ip route $NET_PREFIX Null0" >> /etc/frr/frr.conf
