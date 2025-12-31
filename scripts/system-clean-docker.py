@@ -204,8 +204,6 @@ def main():
 
     # 4) Remove ETCD keys that your script created/overwrote
     # Your script wrote:
-    #   /config/L3-config/<k>
-    #   /config/epoch-config
     #   /config/hosts/<host>
     #
     # We remove those prefixes/keys. (If you want to also wipe satellites/users/grounds,
@@ -213,12 +211,8 @@ def main():
     print("➞ Removing ETCD configuration keys created by the setup script")
 
     if args.dry_run:
-        print("[DRY-RUN] etcd.delete_prefix('/config/L3-config/')")
-        print("[DRY-RUN] etcd.delete('/config/epoch-config')")
         print("[DRY-RUN] etcd.delete_prefix('/config/hosts/')")
     else:
-        etcd.delete_prefix("/config/L3-config/")
-        etcd.delete("/config/epoch-config")
         etcd.delete_prefix("/config/hosts/")
 
         # OPTIONAL (more destructive): wipe inventory too

@@ -36,6 +36,7 @@ log = logging.getLogger("sat-agent")
 # GLOBAL STATE
 last_executed_cmd_raw = None
 LINK_STATE_CACHE = {} # Only used for the initial sync
+l3_flags = None
 
 # ----------------------------
 #   HELPERS
@@ -59,10 +60,14 @@ def get_remote_ip(cli, node_name):
     return None
 
 def get_l3_flags_values(cli):
+    l3_flags={}
     val, _ = cli.get(KEY_L3)
-    if val is None:
-        return {}
-    return json.loads(val.decode("utf-8"))
+    if val:
+        try:
+            l3_flags = json.loads(val.decode())
+        except:
+            log.error("❌ Failed to parse L3 flags from Etcd.")
+    return l3_flags
 
 def apply_isis_config(cli):
 
@@ -81,7 +86,6 @@ def apply_isis_config(cli):
             return
         
         # Extract net_id from etcd key
-        l3_flags = get_l3_flags_values(cli)
         area_id = l3_flags.get("ISIS_AREA_ID", "0001")
 
         # Extract sys_id from node name 
@@ -170,8 +174,7 @@ def process_initial_topology(cli):
     log.info("🏗️  Processing Initial Topology (Epoch 0)...")
     
     ## Process links add
-    l3_flag = get_l3_flags_values(cli)
-    tc_flag = l3_flag.get("ENABLE_TC", True)
+    tc_flag = l3_flags.get("ENABLE_TC", True)
     for value, meta in cli.get_prefix(KEY_LINKS):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -351,8 +354,7 @@ def apply_tc_settings(vxlan_if, netem_opts):
 
 def process_link_action(cli, event):
     try:
-        l3_flag = get_l3_flags_values(cli)
-        tc_flag = l3_flag.get("ENABLE_TC", True)
+        tc_flag = l3_flags.get("ENABLE_TC", True)
         if isinstance(event, etcd3.events.PutEvent):
                 l = json.loads(event.value.decode())
                 ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -519,33 +521,35 @@ def prepare_bridges(cli):
     
     ## safety check, len of available_ips should be >= n_ant + 1 (the  last one is for the loopback used by routing protocols)
     if len(available_ips) < n_ant + 1:
-        log.info(f"❌ Not enough IPs in subnet {my_config.get('subnet_ip','')} for {n_ant} antennas. No IPs will be assigned to bridges.")
+        log.info(f"❌ Not enough IPs in subnet {my_config.get('subnet_ip','')} for {n_ant} antennas and loopback. No IPs will be assigned to bridges.")
         available_ips = []
-    for i in range(1, n_ant + 1):
-        br = f"br{i}"
-
+    
+    for i in range(0, n_ant):
+        br = f"br{i+1}"
         subprocess.run(f"ip link add {br} type bridge 2>/dev/null", shell=True)
         subprocess.run(f"ip link set {br} up", shell=True)
-        
-        if len(available_ips) >= i + 1:
-            ip_addr = str(available_ips[i-1]) + "/32"
+        if len(available_ips) > i:
+            if i == 0:
+                # Register first assigned IP in Etcd for this satellite/user
+                cli.put(f"/config/etchosts/{SAT_NAME}", str(available_ips[i]))  
+            ip_addr = str(available_ips[i]) + "/32"
             subprocess.run(f"ip addr add {ip_addr} dev {br}", shell=True)
             log.info(f"✅ Bridge {br} created with IP {ip_addr}.")
-            if i == 1:
-                # Register last assigned IP in Etcd for this satellite/user
-                cli.put(f"/config/etchosts/{SAT_NAME}", str(available_ips[i-1]))
+
     
     ## Avoid vxlan-to-vxlan l2 forwarding with following sequence of commands
     cmd = 'nft add table bridge brfilter 2>/dev/null || true; ' + \
           'nft add chain bridge brfilter forward \'{ type filter hook forward priority 0; policy accept; }\' 2>/dev/null || true; ' + \
-          'nft list chain bridge brfilter forward | grep -q \'iifname "vl*" oifname "vl*" drop\' || ' + \
-          'nft add rule bridge brfilter forward iifname "vl*" oifname "vl*" drop'
+          'nft list chain bridge brfilter forward | grep -q \'iifname "vl_*" oifname "vl_*" drop\' || ' + \
+          'nft add rule bridge brfilter forward iifname "vl_*" oifname "vl_*" drop'
     log.info("🔒 Applying vxlan-to-vxlan forwarding prevention rules...")
     subprocess.run(cmd, shell=True)
 
 def main():
+    global l3_flags
     log.info(f"🚀 Sat Agent Starting for {SAT_NAME}")
     cli = get_etcd_client()
+    l3_flags = get_l3_flags_values(cli)
     
     # Bootstrapping
     ## Register my IP address in Etcd
@@ -560,9 +564,8 @@ def main():
     process_initial_topology(cli)
     
     # 3. L3 Routing Init
-    l3_flag = get_l3_flags_values(cli)
-    isis_flag = l3_flag.get("ENABLE_ISIS", True)
-    if isis_flag: apply_isis_config(cli)
+    isis_flags = l3_flags.get("ENABLE_ISIS", True)
+    if isis_flags: apply_isis_config(cli)
 
     # 4. Start Event Loops
     threads = [

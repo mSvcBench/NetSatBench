@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+import calendar
 import glob
 import re
 import etcd3
@@ -102,24 +103,38 @@ def load_epoch_dir_and_pattern_from_etcd(etcd) -> Tuple[str, str]:
 
 
 def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
+    if not epoch_dir or not file_pattern:
+        return []
+
     search_path = os.path.join(epoch_dir, file_pattern)
 
-    def epoch_number(path: str) -> int:
-        m = re.search(r"epoch(\d+)", path)
-        return int(m.group(1)) if m else 0
+    def last_numeric_suffix(path: str) -> int:
+        """
+        Extracts the last contiguous sequence of digits from the filename
+        and returns it as an integer.
+        If no digits are found, returns -1.
+        """
+        basename = os.path.basename(path)
+        matches = re.findall(r"(\d+)", basename)
+        return int(matches[-1]) if matches else -1
 
-    files = sorted(glob.glob(search_path), key=epoch_number)
+    files = sorted(glob.glob(search_path), key=last_numeric_suffix)
     return files
 
 def convert_time_epoch_to_timestamp(time_str: str) -> float:
     """
-    Converts a time string in "YYYY-MM-DD HH:MM:SS" format to a Unix timestamp.
+    Converts an ISO-8601 UTC time string
+    'YYYY-MM-DDTHH:MM:SSZ'
+    to a Unix timestamp (seconds since epoch).
     """
     try:
-        struct_time = time.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-        return time.mktime(struct_time)
+        struct_time = time.strptime(time_str, "%Y-%m-%dT%H:%M:%SZ")
+        return calendar.timegm(struct_time)  # UTC-safe
     except ValueError:
-        raise ValueError(f"❌  Invalid time format: {time_str}. Expected 'YYYY-MM-DD HH:MM:SS'.")
+        raise ValueError(
+            f"❌ Invalid time format: {time_str}. "
+            "Expected 'YYYY-MM-DDTHH:MM:SSZ'."
+        )
 
 # ==========================================
 # 🚀 CORE LOGIC
