@@ -520,10 +520,14 @@ def prepare_bridges(cli):
     n_ant = int(my_config.get("n_antennas", 5))
     
     ## safety check, len of available_ips should be >= n_ant + 1 (the  last one is for the loopback used by routing protocols)
-    if len(available_ips) < n_ant + 1:
+    
+    if (len(available_ips) < n_ant + 1 and my_config.get("COMMON-BRIDGE-ADDRESS", False)==False) or \
+       (len(available_ips) < 1 and my_config.get("COMMON-BRIDGE-ADDRESS", False)==True):
         log.info(f"❌ Not enough IPs in subnet {my_config.get('subnet_ip','')} for {n_ant} antennas and loopback. No IPs will be assigned to bridges.")
         available_ips = []
-    
+    elif l3_flags.get("COMMON-BRIDGE-ADDRESS", False)==True:
+        available_ips = [available_ips[-1]] * n_ant  # Only one bridge will be created
+
     for i in range(0, n_ant):
         br = f"br{i+1}"
         subprocess.run(f"ip link add {br} type bridge 2>/dev/null", shell=True)
