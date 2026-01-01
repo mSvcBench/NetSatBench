@@ -55,6 +55,7 @@ def get_etcd_client():
 def get_remote_ip(cli, node_name):
     val, _ = cli.get(f"/config/satellites/{node_name}")
     if not val: val, _ = cli.get(f"/config/users/{node_name}")
+    if not val: val, _ = cli.get(f"/config/grounds/{node_name}")
     if val:
         try: return json.loads(val.decode()).get("eth0_ip")
         except: pass
@@ -234,8 +235,8 @@ def process_initial_topology(cli):
         log.info("▶️  Executing pending runtime commands after initial setup...")
         execute_commands(val.decode())
     
-    ## Configure /etc/hosts entries for all known satellites/users
-    log.info("📝 Updating /etc/hosts with known satellites and users...")
+    ## Configure /etc/hosts entries for all known satellites/grounds/users
+    log.info("📝 Updating /etc/hosts with known satellites, grounds and users...")
     prefix = "/config/etchosts/"
     for value, meta in cli.get_prefix(prefix):
         node_name = meta.key.decode().split('/')[-1]
@@ -516,11 +517,11 @@ def register_my_ip(cli):
 
         sat_found = update_key(f"/config/satellites/{SAT_NAME}")
         user_found = update_key(f"/config/users/{SAT_NAME}")
-        return (sat_found or user_found)
+        ground_found = update_key(f"/config/grounds/{SAT_NAME}")
+        return (sat_found or user_found or ground_found)
     except: return False
 
 def get_config(cli):
-    
     val, _ = cli.get(f"/config/satellites/{SAT_NAME}")
     if not val: val, _ = cli.get(f"/config/users/{SAT_NAME}")
     if not val: val, _ = cli.get(f"/config/grounds/{SAT_NAME}")

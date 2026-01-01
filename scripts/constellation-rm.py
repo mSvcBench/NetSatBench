@@ -231,9 +231,9 @@ def main():
 
             # Print per-node result
             if node_name in satellites:
-                prefix = "🛰️ "
+                prefix = "🛰️"
             elif node_name in users:
-                prefix = "👤 "
+                prefix = "👤"
             elif node_name in grounds:
                 prefix = "📡"
             
