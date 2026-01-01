@@ -39,38 +39,132 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
     return data
 
 
-def build_create_cmd(
-    name: str,
-    node_host: str,
-    ssh_user: str,
-    ssh_key: str,
-    sat_bridge: str,
-    image: str,
-    etcd_host: str,
-    etcd_port: int,
-) -> list:
-    # Usage: ./create-sat.sh <SAT_NAME> [SAT_HOST] [SSH_USERNAME] [SSH_KEY_PATH]
-    #                         [ETCD_HOST] [ETCD_PORT] [SAT_HOST_BRIDGE_NAME] [CONTAINER_IMAGE]
-    return [
-        'scripts/create-sat.sh',
-        name,
-        node_host,
-        ssh_user,
-        ssh_key,
-        etcd_host,
-        str(etcd_port),
-        sat_bridge,
-        image,
+class SshError(RuntimeError):
+    pass
+
+class RemoteCommandError(RuntimeError):
+    pass
+
+def run_ssh(
+    *,
+    ssh_username: str,
+    sat_host: str,
+    ssh_key_path: str,
+    remote_args: list[str],
+    check: bool = False,
+    quiet: bool = False,
+    timeout: int = 30,
+) -> subprocess.CompletedProcess:
+    """
+    Run: ssh -i <key> user@host <remote_args...>
+
+    - Raises SshError on SSH transport problems
+    - Raises RemoteCommandError if check=True and remote command fails
+    - Error messages are concise (only stderr summary)
+    """
+    cmd = [
+        "ssh",
+        "-i", ssh_key_path,
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", f"ConnectTimeout={timeout}",
+        f"{ssh_username}@{sat_host}",
+        "--",
+        *remote_args,
     ]
 
+    try:
+        cp = subprocess.run(
+            cmd,
+            text=True,
+            stdout=(subprocess.DEVNULL if quiet else subprocess.PIPE),
+            stderr=(subprocess.DEVNULL if quiet else subprocess.PIPE),
+            timeout=timeout + 5,
+        )
+    except subprocess.TimeoutExpired:
+        raise SshError(f"SSH timeout connecting to {ssh_username}@{sat_host}")
+
+    stderr = (cp.stderr or "").strip()
+
+    # SSH transport failures are typically exit code 255
+    if cp.returncode == 255:
+        msg = stderr.splitlines()[0] if stderr else "SSH transport error"
+        raise SshError(msg)
+
+    if check and cp.returncode != 0:
+        msg = stderr.splitlines()[0] if stderr else "Remote command failed"
+        raise RemoteCommandError(msg)
+
+    return cp
+
+def recreate_and_run_container(
+    *,
+    sat_name: str,
+    sat_host: str,
+    ssh_username: str,
+    ssh_key_path: str,
+    sat_host_bridge_name: str,
+    container_image: str,
+    etcd_host: str,
+    etcd_port: int,
+) -> None:
+
+    try:
+        # --- Check if container exists ---
+        ps = run_ssh(
+            ssh_username=ssh_username,
+            sat_host=sat_host,
+            ssh_key_path=ssh_key_path,
+            remote_args=["docker", "ps", "-a", "--format", "{{.Names}}"],
+            check=True,  # if docker command fails, raise RemoteCommandError
+        )
+
+        names = ps.stdout.splitlines() if ps.stdout else []
+        exists = sat_name in names
+
+        # --- Remove existing container (ignore errors, but still raise SSH transport errors) ---
+        if exists:
+            run_ssh(
+                ssh_username=ssh_username,
+                sat_host=sat_host,
+                ssh_key_path=ssh_key_path,
+                remote_args=["docker", "rm", "-f", sat_name],
+                check=False,   # ignore non-zero from docker rm
+                quiet=True,
+            )
+        # --- Run new container ---
+        run_cmd = [
+            "docker", "run", "-d",
+            "--name", sat_name,
+            "--hostname", sat_name,
+            "--net", sat_host_bridge_name,
+            "--privileged",
+            "--pull=always",
+            "-e", f"SAT_NAME={sat_name}",
+            "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}",
+            container_image,
+        ]
+        run_ssh(
+            ssh_username=ssh_username,
+            sat_host=sat_host,
+            ssh_key_path=ssh_key_path,
+            remote_args=run_cmd,
+            check=True,
+        )
+    
+    except SshError as e:
+        print(f"    ❌ SSH failure: {e}")
+        raise RuntimeError({e})
+    except RemoteCommandError as e:
+        print(f"    ❌ Remote command failed: {e}")
+        raise RuntimeError({e})
 
 def create_one_node(
     name: str,
     node: Dict[str, Any],
     hosts: Dict[str, Any],
     etcd_host: str,
-    etcd_port: int,
-    dry_run: bool = False,
+    etcd_port: int
 ) -> Tuple[str, bool, str]:
     """
     Returns: (name, success, message)
@@ -88,45 +182,22 @@ def create_one_node(
     sat_bridge = host_info.get('sat-vnet', 'sat-vnet')
     image = node.get('image', 'msvcbench/sat-container:latest')
 
-    cmd = build_create_cmd(
-        name=name,
-        node_host=node_host,
-        ssh_user=ssh_user,
-        ssh_key=ssh_key,
-        sat_bridge=sat_bridge,
-        image=image,
-        etcd_host=etcd_host,
-        etcd_port=etcd_port,
-    )
-
-    pretty = " ".join(shlex.quote(x) for x in cmd)
-
-    if dry_run:
-        return name, True, f"🧪 DRY-RUN: {pretty}"
-
     try:
-        res = subprocess.run(
-            cmd,
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+        cmd = recreate_and_run_container(
+            sat_name=name,
+            sat_host=node_host,
+            ssh_username=ssh_user,
+            ssh_key_path=ssh_key,
+            sat_host_bridge_name=sat_bridge,
+            container_image=image,
+            etcd_host=etcd_host,
+            etcd_port=etcd_port,
         )
-        # Keep messages compact; include stderr only if non-empty.
-        msg = f"✅ Created on host={node_host}"
-        # if res.stderr.strip():
-        #     msg += f" (stderr: {res.stderr.strip()})"
+        msg = f" Created on host={node_host}"
         return name, True, msg
-    except subprocess.CalledProcessError as e:
-        out = (e.stdout or "").strip()
-        err = (e.stderr or "").strip()
-        msg = f"❌ Failed (exit {e.returncode})"
-        if out:
-            msg += f"\nSTDOUT:\n{out}"
-        if err:
-            msg += f"\nSTDERR:\n{err}"
-        return name, False, msg
-
+    except Exception as e:
+        return name, False, f"❌ Deployment failed: {e}"
+    
 
 # ==========================================
 # MAIN
@@ -140,11 +211,6 @@ def main() -> int:
         type=int,
         default=max(1, (os.cpu_count() or 4)),
         help="Number of worker threads for parallel container creation (default: CPU count).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Do not execute create-sat.sh, only print the commands that would be run.",
     )
     parser.add_argument(
         "--only",
@@ -187,7 +253,7 @@ def main() -> int:
         all_nodes = grounds
     else:
         all_nodes = {**satellites, **users, **grounds}
-
+    
     if not all_nodes:
         print("⚠️ Warning: No nodes found. Run 'init.py' to populate Etcd first.")
         return 1
@@ -197,7 +263,7 @@ def main() -> int:
         return 1
 
     # 2) CREATE CONTAINERS IN PARALLEL
-    print(f"🚀 Deploying {len(all_nodes)} nodes using {args.threads} thread(s)...")
+    print(f"🚀 Deploying {args.only} nodes using {args.threads} threads...")
 
     ok = 0
     fail = 0
@@ -213,8 +279,7 @@ def main() -> int:
                 node,
                 hosts,
                 ETCD_HOST,
-                ETCD_PORT,
-                args.dry_run,
+                ETCD_PORT
             )
             futures[future] = name
 
@@ -228,7 +293,13 @@ def main() -> int:
                 node_name = name
 
             # Print per-node result
-            prefix = "🛰️"
+            if node_name in satellites:
+                prefix = "🛰️"
+            elif node_name in users:
+                prefix = "👤"
+            elif node_name in grounds:
+                prefix = "📡"
+            
             print(f"{prefix} {node_name}: {msg}")
 
             if success:
