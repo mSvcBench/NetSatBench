@@ -9,6 +9,8 @@ import etcd3
 import threading
 import sys
 import re
+import hashlib
+from extra.isis_routing import routing_init, routing_link_add, routing_link_del   
 
 # ----------------------------
 #   CONFIGURATION
@@ -26,9 +28,6 @@ SAT_NAME = os.getenv("SAT_NAME")
 KEY_LINKS = f"/config/links/{SAT_NAME}_"
 KEY_L3 = "/config/L3-config"
 KEY_RUN = f"/config/run/{SAT_NAME}_"
-
-LINK_ACTIONS_SH = "/app/link-actions.sh"
-CONFIGURE_ISIS_SH = "/app/configure-isis.sh"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("sat-agent")
@@ -70,35 +69,6 @@ def get_l3_flags_values(cli):
         except:
             log.error("❌ Failed to parse L3 flags from Etcd.")
     return l3_flags
-
-def apply_isis_config(cli):
-    try:
-        val, _ = cli.get(f"/config/satellites/{SAT_NAME}")
-        if not val: val, _ = cli.get(f"/config/users/{SAT_NAME}")
-        if not val: val, _ = cli.get(f"/config/grounds/{SAT_NAME}")
-        if not val: return
-        my_conf = json.loads(val.decode())  
-        available_ips = list(ipaddress.ip_network(my_conf.get("subnet_ip","")).hosts())
-        n_ant = int(my_conf.get("n_antennas", 1))
-    
-        ## safety check, len of available_ips should be >= n_ant + 1 (the last one is for the loopback)
-        if len(available_ips) < n_ant + 1:
-            log.info(f"❌ Not enough IPs in subnet {my_conf.get('subnet_ip','')} for {n_ant} antennas. No ISIS will be configured.")
-            return
-        
-        # Extract net_id from etcd key
-        area_id = l3_flags.get("ISIS_AREA_ID", "0001")
-
-        # Extract sys_id from node name 
-        subnet_cidr = my_conf.get("subnet_ip","")
-        sys_id = derive_sysid_from_string(SAT_NAME)
-        
-        antennas = [str(i) for i in range(1, n_ant + 1)]
-        
-        cmd = [CONFIGURE_ISIS_SH, area_id, sys_id, subnet_cidr] + antennas
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:
-        log.error(f"❌ Exception triggering IS-IS: {e}")
 
 def run(cmd, log_errors=True):
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -151,7 +121,7 @@ def build_netem_opts(l):
 
     return netem_opts
 
-import hashlib
+
 
 def derive_sysid_from_string(value: str) -> str:
     """
@@ -292,21 +262,22 @@ def create_vxlan_link(
 
     run(["ip", "link", "set", vxlan_if, "mtu", "1350"])
     run(["ip", "link", "set", "dev", vxlan_if, "up"])
+    
+    ## Assign IP from my_config subnet, if available. Last IP in subnet assigned to all vxlan interfaces
     available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
     if len(available_ips) > 0:
         ip_addr = str(available_ips[-1]) + "/32"
         run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
         log.info(f"✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
         if l3_flags.get("ENABLE_ISIS", False):
-            log.info(f"🔸 Configuring IS-IS on {vxlan_if}...")
-            run([
-                "vtysh",
-                "-c", "conf t",
-                "-c", f"interface {vxlan_if}",
-                "-c", "ip router isis CORE",
-                "-c", "isis network point-to-point",
-                "-c", "end"
-            ])
+            isis_data = {
+                "interface": vxlan_if
+            }
+            msg, success = routing_link_add(None, isis_data)
+            if success:
+                log.info(msg)
+            else:
+                log.error(msg)
 
 def delete_vxlan_link(
     vxlan_if):
@@ -316,13 +287,14 @@ def delete_vxlan_link(
         "ip", "link", "del", vxlan_if
     ])
     if l3_flags.get("ENABLE_ISIS", False):
-        log.info(f"🔸 Removing IS-IS config from {vxlan_if}...")
-        run([
-            "vtysh",
-            "-c", "conf t",
-            "-c", f"no interface {vxlan_if}",
-            "-c", "end"
-        ])
+        isis_data = {
+            "interface": vxlan_if
+        }
+        msg, success = routing_link_del(None, isis_data)
+        if success:
+            log.info(msg)
+        else:
+            log.error(msg)
 
 def apply_tc_settings(vxlan_if, netem_opts):
     """
@@ -547,14 +519,25 @@ def main():
 
     ## Publish node IP for etc hosts usage 
     available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
+    ips_mask = my_config.get("subnet_ip","").split('/')[1]
     if len(available_ips) > 0:
         cli.put(f"/config/etchosts/{SAT_NAME}", str(available_ips[-1]))
     
     # L3 Routing Init
     isis_flags = l3_flags.get("ENABLE_ISIS", True)
-    if isis_flags: apply_isis_config(cli)
+    if isis_flags:
+        isis_data = {
+            "node_name": SAT_NAME,
+            "area_id": l3_flags.get("ISIS_AREA_ID", "0001"),
+            "loopback_ip_mask": f"{available_ips[-1]}/{ips_mask}"
+        }
+        msg, success = routing_init(cli, isis_data)
+        if success:
+            log.info(msg)
+        else:
+            log.error(msg)
 
-    # 4. Start Event Loops
+    # Start Event Loops
     threads = [
         threading.Thread(target=watch_link_actions_loop, daemon=True), # Dynamic
         threading.Thread(target=watch_command_loop, daemon=True)

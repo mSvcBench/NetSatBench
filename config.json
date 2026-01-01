@@ -72,8 +72,8 @@
     }
   },
   "L3-config": {
-    "ENABLE_TC"  : "True" ,
-    "ENABLE_ISIS" : "True",
+    "ENABLE_TC"  : true ,
+    "ENABLE_ISIS" : true,
     "ISIS_AREA_ID": "0001",
     "SAT-VNET-SUPERNET": "172.0.0.0/8"
   },
@@ -82,7 +82,6 @@
     "FILE_PATTERN": "NetSatBench-epoch*.json"
   },
   "satellites": {
-
     "sat1": {
       "id":1,
       "host": "host-1",
@@ -145,7 +144,9 @@
       "image": "msvcbench/sat-container:latest",
       "subnet_ip": "192.168.0.64/29",
       "n_antennas": 5
-    },
+    }
+  },
+  "grounds": {
     "ground1": {
       "id": 10,
       "host": "host-2",

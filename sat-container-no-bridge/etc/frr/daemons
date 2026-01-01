@@ -1,0 +1,5 @@
+zebra=yes
+isisd=yes
+staticd=yes
+# Pass ECMP limit to Zebra (Kernel route installation)
+zebra_options=" -A 127.0.0.1 -e 64 --limit-fds 100000"

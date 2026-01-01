@@ -32,7 +32,8 @@ WORKDIR /app
 COPY start-sat-agent.sh /app/start-sat-agent.sh
 COPY sat-agent.py /app/sat-agent.py
 # COPY link-actions.sh /app/link-actions.sh
-COPY configure-isis.sh /app/configure-isis.sh
+COPY extra /app/extra
+COPY etc/frr /etc/frr
 
 RUN chmod +x /app/start-sat-agent.sh && chmod +x /app/*.sh
 HEALTHCHECK --interval=30s --timeout=5s --retries=5 CMD \

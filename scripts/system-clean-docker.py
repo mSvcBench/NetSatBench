@@ -203,22 +203,12 @@ def main():
             best_effort(remote, f"docker network rm {sat_vnet}", args.dry_run)
 
     # 4) Remove ETCD keys that your script created/overwrote
-    # Your script wrote:
-    #   /config/hosts/<host>
-    #
-    # We remove those prefixes/keys. (If you want to also wipe satellites/users/grounds,
-    # uncomment the delete_prefix lines below.)
     print("➞ Removing ETCD configuration keys created by the setup script")
 
     if args.dry_run:
         print("[DRY-RUN] etcd.delete_prefix('/config/hosts/')")
     else:
         etcd.delete_prefix("/config/hosts/")
-
-        # OPTIONAL (more destructive): wipe inventory too
-        # etcd.delete_prefix("/config/satellites/")
-        # etcd.delete_prefix("/config/users/")
-        # etcd.delete_prefix("/config/grounds/")
 
     print("✅ Teardown completed.")
 

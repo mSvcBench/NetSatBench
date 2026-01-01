@@ -110,7 +110,7 @@ def main():
         sys.exit(1)
     
     try:
-        etcd = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
+        etcd = etcd3.client(host=args.etcd_host, port=args.etcd_port)
     except Exception as e:
         print(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
@@ -195,7 +195,7 @@ def main():
                 f"STDERR:\n{created.stderr}"
             )
         
-        # === enable container to container input forwarding among hosts === 
+        # === enable container to container forwarding among hosts === 
         sat_vnet_supercidr = host.get('SAT-VNET-SUPERNET', '172.0.0.0/8')
         print(f"➞ Enabling container-to-container forwarding on host: {host_name}")
         # Add iptables rule to allow forwarding from {host_name2} to {host_name}
