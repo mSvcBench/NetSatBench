@@ -17,8 +17,8 @@ RUN apt-get update && \
     echo "deb https://deb.frrouting.org/frr $(lsb_release -cs) frr-stable" > /etc/apt/sources.list.d/frr.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-      iputils-ping iproute2 net-tools tcpdump bridge-utils \
-      iperf3 jq nftables\
+      iputils-ping iproute2 net-tools tcpdump \
+      iperf3 jq \
       frr frr-pythontools screen procps vim && \
     pip3 install --no-cache-dir protobuf==3.20.* etcd3==0.12.0 && \
     mkdir -p /var/log/frr && \
@@ -36,7 +36,7 @@ COPY configure-isis.sh /app/configure-isis.sh
 
 RUN chmod +x /app/start-sat-agent.sh && chmod +x /app/*.sh
 HEALTHCHECK --interval=30s --timeout=5s --retries=5 CMD \
-  bash -lc 'ip link show br1 >/dev/null 2>&1 && pgrep -f "/app/sat-agent.py" >/dev/null 2>&1 || exit 1'
+  bash -lc 'pgrep -f "/app/sat-agent.py" >/dev/null 2>&1 || exit 1'
 
 CMD ["/app/start-sat-agent.sh"]  
 # ================================

@@ -71,7 +71,6 @@ def get_l3_flags_values(cli):
     return l3_flags
 
 def apply_isis_config(cli):
-
     try:
         val, _ = cli.get(f"/config/satellites/{SAT_NAME}")
         if not val: val, _ = cli.get(f"/config/users/{SAT_NAME}")
@@ -79,7 +78,7 @@ def apply_isis_config(cli):
         if not val: return
         my_conf = json.loads(val.decode())  
         available_ips = list(ipaddress.ip_network(my_conf.get("subnet_ip","")).hosts())
-        n_ant = int(my_conf.get("n_antennas", 5))
+        n_ant = int(my_conf.get("n_antennas", 1))
     
         ## safety check, len of available_ips should be >= n_ant + 1 (the last one is for the loopback)
         if len(available_ips) < n_ant + 1:
@@ -93,7 +92,6 @@ def apply_isis_config(cli):
         subnet_cidr = my_conf.get("subnet_ip","")
         sys_id = derive_sysid_from_string(SAT_NAME)
         
-        n_ant = int(my_conf.get("n_antennas", 1))
         antennas = [str(i) for i in range(1, n_ant + 1)]
         
         cmd = [CONFIGURE_ISIS_SH, area_id, sys_id, subnet_cidr] + antennas
@@ -205,38 +203,30 @@ def process_initial_topology(cli):
         if tc_flag:
             netem_opts = build_netem_opts(l)
 
-        # Just call ADD for everything in Epoch 0
+        key_str = meta.key.decode()
+        # Extract interface name from the key, it is the last part of the key after /
+        vxlan_if = key_str.split('/')[-1]
+        # ADD for found link
         if ep1 == SAT_NAME:
-            vxlan_if=f"vl_{ep2}_{l['endpoint2_antenna']}"
-            create_vxlan_link(
-                vxlan_if=vxlan_if,
-                target_vni=vni,
-                remote_ip=ip2,
-                local_ip=ip1
-            ) 
-            if tc_flag:
-                if netem_opts:
-                    apply_tc_settings(
-                        vxlan_if=vxlan_if,
-                        netem_opts=netem_opts
-                    )
-                else:
-                    log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
-        elif ep2 == SAT_NAME:
-            vxlan_if=f"vl_{ep1}_{l['endpoint1_antenna']}"
-            create_vxlan_link(
-                vxlan_if=vxlan_if,
-                target_vni=vni,
-                remote_ip=ip1,
-                local_ip=ip2,
-            )
-            if tc_flag:
-                if netem_opts:
-                    apply_tc_settings(
-                        vxlan_if=vxlan_if, 
-                        netem_opts=netem_opts)
-                else:
-                    log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
+            remote_ip = ip2
+            local_ip = ip1
+        else:
+            remote_ip = ip1
+            local_ip = ip2
+        create_vxlan_link(
+            vxlan_if=vxlan_if,
+            target_vni=vni,
+            remote_ip=remote_ip,
+            local_ip=local_ip,
+        ) 
+        if tc_flag:
+            if netem_opts:
+                apply_tc_settings(
+                    vxlan_if=vxlan_if,
+                    netem_opts=netem_opts
+                )
+            else:
+                log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
     
     ## Execute any pending runtime commands
     val, _ = cli.get(KEY_RUN)
@@ -282,7 +272,7 @@ def create_vxlan_link(
     local_ip
     ):
 
-        # ⛔ If already exists, do nothing
+    # ⛔ If already exists, do nothing
     if link_exists(vxlan_if):
         log.info(f"♻️  Link {vxlan_if} already exists, updating...")
         return
@@ -314,8 +304,7 @@ def create_vxlan_link(
                 "-c", f"interface {vxlan_if}",
                 "-c", "ip router isis CORE",
                 "-c", "isis network point-to-point",
-                "-c", "end",
-                "-c", "write"
+                "-c", "end"
             ])
 
 def delete_vxlan_link(
@@ -325,6 +314,14 @@ def delete_vxlan_link(
     run([
         "ip", "link", "del", vxlan_if
     ])
+    if l3_flags.get("ENABLE_ISIS", False):
+        log.info(f"🔸 Removing IS-IS config from {vxlan_if}...")
+        run([
+            "vtysh",
+            "-c", "conf t",
+            "-c", f"no interface {vxlan_if}",
+            "-c", "end"
+        ])
 
 def apply_tc_settings(vxlan_if, netem_opts):
     """
@@ -350,12 +347,11 @@ def apply_tc_settings(vxlan_if, netem_opts):
     # Remove existing qdisc (ignore errors)
     run(["tc", "qdisc", "del", "dev", vxlan_if, "root"], log_errors=False)
 
+    # Add new netem qdisc with specified options
     cmd = ["tc", "qdisc", "add", "dev", vxlan_if, "root", "netem"]
-
     for key, value in netem_opts.items():
         if value is None:
             continue
-
         # Allow both scalar and multi-argument options
         if isinstance(value, (list, tuple)):
             cmd.append(key)
@@ -368,6 +364,11 @@ def apply_tc_settings(vxlan_if, netem_opts):
 def process_link_action(cli, event):
     try:
         tc_flag = l3_flags.get("ENABLE_TC", True)
+        key_str = event.key.decode()
+        # Extract interface name, it is the last part of the key after /
+        vxlan_if = key_str.split('/')[-1]
+
+        ## Process PutEvent (Add/Update)
         if isinstance(event, etcd3.events.PutEvent):
                 l = json.loads(event.value.decode())
                 ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -380,24 +381,22 @@ def process_link_action(cli, event):
                 if not ip1 or not ip2:
                     log.error(f"❌ Missing IPs for link action {ep1}<->{ep2}.")
                     return
+                
                 vni = str(l.get("vni", "0"))
                 if ep1 == SAT_NAME:
-                    create_vxlan_link(
-                    vxlan_if=f"vl_{ep2}_{l['endpoint2_antenna']}",
+                    remote_ip = ip2
+                    local_ip = ip1
+                else:
+                    remote_ip = ip1
+                    local_ip = ip2
+                create_vxlan_link(
+                    vxlan_if=vxlan_if,
                     target_vni=vni,
-                    remote_ip=ip2,
-                    local_ip=ip1,
-                ) 
-                elif ep2 == SAT_NAME:
-                    create_vxlan_link(
-                        vxlan_if=f"vl_{ep1}_{l['endpoint1_antenna']}",
-                        target_vni=vni,
-                        remote_ip=ip1,
-                        local_ip=ip2,
-                    )
+                    remote_ip=remote_ip,
+                    local_ip=local_ip,
+                )
                 if tc_flag:
                     netem_opts=build_netem_opts(l)
-                    vxlan_if=f"vl_{ep2}_{l['endpoint2_antenna']}" if ep1 == SAT_NAME else f"vl_{ep1}_{l['endpoint1_antenna']}"
                     if netem_opts:
                         apply_tc_settings(
                             vxlan_if=vxlan_if,
@@ -405,12 +404,11 @@ def process_link_action(cli, event):
                     ) 
                     else:
                         log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
-
+        
+        ## Process DeleteEvent
         elif isinstance(event, etcd3.events.DeleteEvent):
-                key_str = event.key.decode()
-                # Extract link info from the key, it is the last parto of the key after /
-                iface = key_str.split('/')[-1]
-                delete_vxlan_link(iface)
+                # interface delete removes possible TC automatically 
+                delete_vxlan_link(vxlan_if)
     except: 
         log.error("❌ Failed to parse link action.")
         return

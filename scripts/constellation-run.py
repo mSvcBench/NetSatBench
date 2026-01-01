@@ -183,14 +183,16 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
         update = config.get("links-update", [])       # fixed key name vs your current "link-update"
 
         for l in add:
-            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{l['endpoint2_antenna']}"
-            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{l['endpoint1_antenna']}"
+            ep2_antenna = l.get("endpoint2_antenna", 1)
+            ep1_antenna = l.get("endpoint1_antenna", 1)
+            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
+            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
             etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
             etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
 
             vni = calculate_vni(
-                l["endpoint1"], l["endpoint1_antenna"],
-                l["endpoint2"], l["endpoint2_antenna"],
+                l["endpoint1"], ep1_antenna,
+                l["endpoint2"], ep2_antenna,
             )
             l["vni"] = vni
             print(f"🪢  [{filename}] Syncing link-add {l['endpoint1']} - {l['endpoint2']} with VNI {vni}")
@@ -199,14 +201,16 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             etcd.put(etcd_key2, json.dumps(l))
 
         for l in delete:
-            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{l['endpoint2_antenna']}"
-            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{l['endpoint1_antenna']}"
+            ep2_antenna = l.get("endpoint2_antenna", 1)
+            ep1_antenna = l.get("endpoint1_antenna", 1)
+            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
+            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
             etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
             etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
 
             vni = calculate_vni(
-                l["endpoint1"], l["endpoint1_antenna"],
-                l["endpoint2"], l["endpoint2_antenna"],
+                l["endpoint1"], ep1_antenna,
+                l["endpoint2"], ep2_antenna,
             )
             print(f"✂️  [{filename}] Syncing link-del {l['endpoint1']} - {l['endpoint2']} (VNI {vni})")
 
@@ -214,8 +218,10 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             etcd.delete(etcd_key2)
 
         for l in update:
-            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{l['endpoint2_antenna']}"
-            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{l['endpoint1_antenna']}"
+            ep2_antenna = l.get("endpoint2_antenna", 1)
+            ep1_antenna = l.get("endpoint1_antenna", 1)
+            vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
+            vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
             etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
             etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
 
@@ -227,8 +233,8 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
                 continue
 
             vni = calculate_vni(
-                l["endpoint1"], l["endpoint1_antenna"],
-                l["endpoint2"], l["endpoint2_antenna"],
+                l["endpoint1"], ep1_antenna,
+                l["endpoint2"], ep2_antenna,
             )
             l["vni"] = vni
 

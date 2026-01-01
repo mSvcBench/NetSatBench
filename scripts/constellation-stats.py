@@ -11,6 +11,7 @@ import numpy as np
 import argparse
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timezone
+from collections import deque, defaultdict
 
 # ==========================================
 # GLOBALS
@@ -99,7 +100,51 @@ def load_json_file_or_report(path: str) -> dict:
 # ==========================================
 # 2. STREAMING STATS FUNCTION
 # ==========================================
- 
+
+def connected_components(
+    num_nodes: int,
+    active_links: Set[Tuple[int, int]],
+    inv_node_map: Dict[int, str],
+) -> List[Dict[str, List[str]]]:
+    """
+    Returns a list of connected components.
+    Each component is represented as a dict:
+        {
+          "size": int,
+          "nodes": [node_name_1, node_name_2, ...]
+        }
+    """
+    adj = [[] for _ in range(num_nodes)]
+    for a, b in active_links:
+        adj[a].append(b)
+        adj[b].append(a)
+
+    visited = [False] * num_nodes
+    components = []
+
+    for s in range(num_nodes):
+        if visited[s]:
+            continue
+
+        q = deque([s])
+        visited[s] = True
+        comp_nodes = []
+
+        while q:
+            u = q.popleft()
+            comp_nodes.append(inv_node_map[u])
+            for v in adj[u]:
+                if not visited[v]:
+                    visited[v] = True
+                    q.append(v)
+
+        components.append({
+            "size": len(comp_nodes),
+            "nodes": comp_nodes
+        })
+
+    return components
+
 def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str) -> None:
     # Load configuration and build node_map (same logic you already have)
     with open(config_file, "r", encoding="utf-8") as f:
@@ -112,6 +157,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
     print("📁 Loading configuration from file...")
     print(f"🔎 Found {len(satellites)} satellites, {len(users)} users, {len(grounds)} ground stations in configuration.")
 
+    node_map = {}
     node_map.clear()
     idx = 0
     for name in satellites.keys():
@@ -121,6 +167,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
     for name in grounds.keys():
         node_map[name] = idx; idx += 1
 
+    inv_node_map = {i: name for name, i in node_map.items()}
     num_nodes = len(node_map)
     if num_nodes == 0:
         raise ValueError("Configuration has 0 nodes.")
@@ -149,6 +196,10 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
     duration_count = 0
     duration_min = None
     duration_max = None
+    partition_epochs = 0
+    worst_components = 1
+    worst_largest_cc = num_nodes
+    partition_log: List[Dict] = []
 
     for path in epoch_files:
         epoch_data = load_json_file_or_report(path)
@@ -213,9 +264,27 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
         total_links_over_time += float(len(active_links))
         total_churn += float(adds + dels)
 
+        # --- Connectivity check ---
+        components = connected_components(num_nodes, active_links, inv_node_map)
+        if len(components) > 1:
+            partition_log.append({
+                "time_iso": ts_raw,
+                "time_sec": ts,
+                "n_components": len(components),
+                "components": components
+            })
+            print(
+                f"❌ PARTITION at {ts_raw}: "
+                f"{len(components)} components "
+                f"(largest={max(c['size'] for c in components)}/{num_nodes})"
+                # print each component dict separated by "----"
+                f"; details: \n----\n----\n" + "\n----\n".join(
+                    f"size={c['size']}, nodes={c['nodes']} \n----" for c in components
+                )
+            )
         if num_epochs % 2000 == 0:
             print(f"… processed {num_epochs}/{len(epoch_files)} epochs; active_links={len(active_links)}")
-
+        
     # Close durations for links still active at the end
     if last_ts is not None:
         for key, start in link_start_time.items():
@@ -235,14 +304,14 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
     avg_degree = (2.0 * avg_links_per_epoch) / num_nodes
     avg_churn = total_churn / num_epochs
 
-    print("\n📊 Basic Statistics (streaming):")
+    print("\n📊 Basic Statistics:")
     print(f"   - Number of epochs: {num_epochs}")
     print(f"   - Number of nodes: {num_nodes}")
     print(f"   - Average links per epoch: {avg_links_per_epoch:.2f}")
     print(f"   - Average degree: {avg_degree:.2f}")
     print(f"   - Average link churn (add+del per epoch): {avg_churn:.2f}")
 
-    print("\n📊 Link Duration Statistics (seconds, streaming):")
+    print("\n📊 Link Duration Statistics")
     if duration_count == 0:
         print("   - No link durations measured.")
     else:
@@ -252,9 +321,16 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
         print(f"   - Min duration: {duration_min:.2f} s")
         print(f"   - Max duration: {duration_max:.2f} s")
 
+    print("\n🧩 Connectivity Statistics:")
+    if not partition_log:
+        print("   - Constellation never partitioned.")
+    else:
+        print(f"   - Partitioned epochs: {len(partition_log)}/{num_epochs}")
+        worst = max(partition_log, key=lambda e: e["n_components"])
+        print(f"   - Maximum components observed: {worst['n_components']}")
+
 def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
-
     # --- load config + build node_map (same as your logic) ---
     with open(config_file, "r", encoding="utf-8") as f:
         cfg = json.load(f)
@@ -318,6 +394,7 @@ def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, ou
                             l.get("rate", ""), l.get("delay", ""), l.get("loss", "")])
 
     print(f"✅ Exported:\n  - {nodes_path}\n  - {events_path}")
+
 # ==========================================
 # MAIN
 # ==========================================
