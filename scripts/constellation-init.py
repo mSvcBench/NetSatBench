@@ -25,7 +25,7 @@ def apply_config_to_etcd(etcd, filename: str):
         "satellites",
         "users",
         "grounds",
-        "L3-config",
+        "L3-config-common",
         "hosts",
         "epoch-config",
     ]
@@ -38,7 +38,7 @@ def apply_config_to_etcd(etcd, filename: str):
             if key not in allowed_keys:
                 print(f"❌ [{filename}] Unexpected key '{key}', skipping...")
                 continue
-            if key == "L3-config":
+            if key == "L3-config-common":
                 etcd.put(f"/config/{key}", json.dumps(value))
             elif key in ["epoch-config"]:
                 etcd.put(f"/config/{key}", json.dumps(value))

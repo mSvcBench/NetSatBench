@@ -24,7 +24,7 @@ SAT_NAME = os.getenv("SAT_NAME")
 
 # KEYS
 KEY_LINKS = f"/config/links/{SAT_NAME}_"
-KEY_L3 = "/config/L3-config"
+KEY_L3 = "/config/L3-config-common"
 KEY_RUN = f"/config/run/{SAT_NAME}_"
 
 LINK_ACTIONS_SH = "/app/link-actions.sh"

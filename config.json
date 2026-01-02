@@ -71,7 +71,7 @@
       "sat-vnet-cidr":"172.109.0.0/16"
     }
   },
-  "L3-config": {
+  "L3-config-common": {
     "enable-netem"  : true ,
     "enable-routing" : true,
     "isis-area-id": "0001",

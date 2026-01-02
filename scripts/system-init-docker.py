@@ -120,7 +120,7 @@ def main():
     # ==========================================
     ## load json from file host-config.json and apply to Etcd
 
-    allowed_keys = ["satellites", "users", "grounds", "L3-config", "hosts", "epoch-config"]
+    allowed_keys = ["satellites", "users", "grounds", "L3-config-common", "hosts", "epoch-config"]
 
     # A. Push General Config & Inventory
     for key, value in config.items():

@@ -26,7 +26,7 @@ my_node_name = os.getenv("SAT_NAME")
 
 # KEYS
 KEY_LINKS = f"/config/links/{my_node_name}_"
-KEY_L3 = "/config/L3-config"
+KEY_L3 = "/config/L3-config-common"
 KEY_RUN = f"/config/run/{my_node_name}_"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
