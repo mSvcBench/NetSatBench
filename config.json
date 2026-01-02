@@ -78,8 +78,8 @@
     "sat-vnet-supernet": "172.0.0.0/8"
   },
   "epoch-config": {
-    "EPOCH_DIR": "constellation-epochs",
-    "FILE_PATTERN": "NetSatBench-epoch*.json"
+    "epoch-dir": "constellation-epochs",
+    "file-pattern": "NetSatBench-epoch*.json"
   },
   "satellites": {
     "sat1": {

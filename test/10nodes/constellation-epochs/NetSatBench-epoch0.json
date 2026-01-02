@@ -9,8 +9,6 @@
       {
         "endpoint1": "sat1",
         "endpoint2": "sat2",
-        "endpoint1_antenna": 1,
-        "endpoint2_antenna": 1,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -18,8 +16,6 @@
       {
         "endpoint1": "sat1",
         "endpoint2": "sat3",
-        "endpoint1_antenna": 2,
-        "endpoint2_antenna": 2,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -27,8 +23,6 @@
       {
         "endpoint1": "sat2",
         "endpoint2": "sat4",
-        "endpoint1_antenna": 2,
-        "endpoint2_antenna": 1,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -36,8 +30,6 @@
       {
         "endpoint1": "sat3",
         "endpoint2": "sat4",
-        "endpoint1_antenna": 1,
-        "endpoint2_antenna": 2,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -45,8 +37,6 @@
       {
         "endpoint1": "sat4",
         "endpoint2": "sat5",
-        "endpoint1_antenna": 3,
-        "endpoint2_antenna": 1,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -54,8 +44,6 @@
       {
         "endpoint1": "sat5",
         "endpoint2": "sat6",
-        "endpoint1_antenna": 4,
-        "endpoint2_antenna": 2,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -63,8 +51,6 @@
       {
         "endpoint1": "sat6",
         "endpoint2": "sat7",
-        "endpoint1_antenna": 1,
-        "endpoint2_antenna": 3,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -73,9 +59,6 @@
 
         "endpoint1": "sat7",
         "endpoint2": "sat8",
-        "endpoint1_antenna": 2,
-        "endpoint2_antenna": 1,
-
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -83,8 +66,6 @@
       {
         "endpoint1": "sat8",
         "endpoint2": "sat9",
-        "endpoint1_antenna": 2,
-        "endpoint2_antenna": 1,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -92,8 +73,6 @@
       {
         "endpoint1": "grd1",
         "endpoint2": "sat9",
-        "endpoint1_antenna": 1,
-        "endpoint2_antenna": 5,
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"

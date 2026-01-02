@@ -93,8 +93,8 @@ def load_epoch_dir_and_pattern_from_etcd(etcd) -> Tuple[str, str]:
             return default_dir, default_pattern
 
         epoch_config = json.loads(epoch_config_value.decode("utf-8"))
-        epoch_dir = epoch_config.get("EPOCH_DIR", default_dir)
-        file_pattern = epoch_config.get("FILE_PATTERN", default_pattern)
+        epoch_dir = epoch_config.get("epoch-dir", default_dir)
+        file_pattern = epoch_config.get("file-pattern", default_pattern)
         return epoch_dir, file_pattern
 
     except Exception as e:
@@ -331,8 +331,8 @@ def main() -> int:
         try:
             with open(args.epoch_config, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            epoch_dir = epoch_dir or cfg.get("EPOCH_DIR")
-            file_pattern = file_pattern or cfg.get("FILE_PATTERN")
+            epoch_dir = epoch_dir or cfg.get("epoch-dir")
+            file_pattern = file_pattern or cfg.get("file-pattern")
         except FileNotFoundError:
             print(f"❌ Error: epoch-config file '{args.epoch_config}' not found.")
             return 2

@@ -88,8 +88,8 @@
     "isis-area-id": "0001"
   },
   "epoch-config": {
-    "EPOCH_DIR": "test/200nodes/constellation-epochs",
-    "FILE_PATTERN": "NetSatBench-epoch*.json"
+    "epoch-dir": "test/200nodes/constellation-epochs",
+    "file-pattern": "NetSatBench-epoch*.json"
   },
   "satellites": {
     "sat1": { "id": 1, "host": "host-1", "image": "msvcbench/sat-container:latest", "subnet_ip": "192.168.0.0/29", "n_antennas": 5 },
