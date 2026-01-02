@@ -5,43 +5,32 @@
 
 <div align="center">
 
+<img src="docs/images/netsatbench_logo.png" alt="NetSatBench Logo" width="300"/>
+
 # **NetSatBench**  
 ## *Large-Scale Satellite Network Benchmarking System*  
-### High-Scale • Distributed • Application-Agnostic
 
 </div>
 
 **NetSatBench** is a distributed emulation framework for evaluating communication and application workloads across large-scale satellite constellations. It provides a scalable Layer 2 (L2) network substrate on which arbitrary routing protocols and applications can be deployed without modification.
 
----
+Emulated satellite systems are made of satellites, ground stations and user terminals, whose nodes are implemented as **Linux containers**, across a cluster of machines, enabling high degrees of parallelism and scalability.  
+VXLAN tunnels form a dynamic **L2 network fabric** interconnecting emulated nodes with specific link characteristics (e.g., latency, bandwidth, delay) to mimic real-world satellite network behavior.
 
-## 🚀 Core Innovation
-
-Unlike single-host emulators, **NetSatBench** distributes emulated satellites—implemented as Linux containers—across a cluster of machines, enabling high degrees of parallelism and scalability.  
-VXLAN tunnels form a dynamic **L2 network fabric** interconnecting satellite antennas and ground terminals, while link characteristics (e.g., latency, bandwidth) follow a **physics-driven model of orbital dynamics**, closely reflecting real-world satellite network behavior.
+NetSatBench is **L3- and application-agnostic**. Any routing protocol (e.g., OSPF, BGP, IS-IS) or user-defined application (e.g., iperf, traffic generators, analytics workloads) can run directly over the emulated constellation. IS-IS routing is supported out-of-the-box via FRR.
 
 ---
 
-## 🛰️ Applications
-
-NetSatBench is **L3- and application-agnostic**. Any routing protocol (e.g., OSPF, BGP, IS-IS, FRR) or user-defined application (e.g., iperf, traffic generators, analytics workloads) can run directly over the emulated constellation.
-
----
-
-## 🏗️ Core Architecture
-
-NetSatBench separates **emulation logic** from **physical execution**, enabling flexible deployment across clusters of heterogeneous hosts.
-
-### **Four Architectural Pillars**
+## Core Architecture
 
 1. **Distributed Execution and Control**  
-   Satellite nodes are instantiated across a cluster (bare metal or VMs). Each satellite node manages its own lifecycle and networking logic—no run-time central controller is required.
+   Emulated nodes are instantiated across a cluster (bare metal or VMs). Each emulated node manages its own lifecycle and configuration via an internal agent, coordinated through a distributed key-value store (Etcd).
 
 2. **Dynamic L2 Fabric**  
-   VXLAN tunnels encapsulate inter-satellite and satellite–ground links, ensuring seamless L2 connectivity regardless of container placement on physical hosts.
+   VXLAN tunnels encapsulate node-to-node links, ensuring seamless L2 connectivity regardless of container placement on physical hosts.
 
 3. **Scalability Through Distribution**  
-   By spreading containers across multiple machines, the emulation scales to thousands of satellites without saturating the resources of a single host.
+   By spreading containers across multiple machines, the emulation can scale to thousands of satellites without overwhelming a single host.
 
 4. **Physics-Driven Networking**  
    Link parameters are derived from orbital mechanics and line-of-sight geometry, ensuring realistic performance evaluation.
