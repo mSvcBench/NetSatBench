@@ -22,12 +22,12 @@ if ":" in ETCD_ENDPOINT:
 else:
     ETCD_HOST, ETCD_PORT = ETCD_ENDPOINT, 2379
 
-SAT_NAME = os.getenv("SAT_NAME")
+node_name = os.getenv("SAT_NAME")
 
 # KEYS
-KEY_LINKS = f"/config/links/{SAT_NAME}_"
+KEY_LINKS = f"/config/links/{node_name}_"
 KEY_L3 = "/config/L3-config"
-KEY_RUN = f"/config/run/{SAT_NAME}_"
+KEY_RUN = f"/config/run/{node_name}_"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("sat-agent")
@@ -37,6 +37,7 @@ last_executed_cmd_raw = None
 LINK_STATE_CACHE = {} # Only used for the initial sync
 l3_flags = None
 my_config = None
+cli = None
 
 # ----------------------------
 #   HELPERS
@@ -149,7 +150,7 @@ def process_initial_topology(cli):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
         
-        if ep1 != SAT_NAME and ep2 != SAT_NAME: 
+        if ep1 != node_name and ep2 != node_name: 
             log.info(f"⚠️  Skipping initial link {ep1}<->{ep2} not relevant to this node.")
             continue
 
@@ -178,7 +179,7 @@ def process_initial_topology(cli):
         # Extract interface name from the key, it is the last part of the key after /
         vxlan_if = key_str.split('/')[-1]
         # ADD for found link
-        if ep1 == SAT_NAME:
+        if ep1 == node_name:
             remote_ip = ip2
             local_ip = ip1
         else:
@@ -270,10 +271,7 @@ def create_vxlan_link(
         run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
         log.info(f"✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
         if l3_flags.get("ENABLE_ISIS", False):
-            isis_data = {
-                "interface": vxlan_if
-            }
-            msg, success = routing_link_add(None, isis_data)
+            msg, success = routing_link_add(cli, node_name, vxlan_if)
             if success:
                 log.info(msg)
             else:
@@ -287,10 +285,7 @@ def delete_vxlan_link(
         "ip", "link", "del", vxlan_if
     ])
     if l3_flags.get("ENABLE_ISIS", False):
-        isis_data = {
-            "interface": vxlan_if
-        }
-        msg, success = routing_link_del(None, isis_data)
+        msg, success = routing_link_del(cli, node_name, vxlan_if)
         if success:
             log.info(msg)
         else:
@@ -345,7 +340,7 @@ def process_link_action(cli, event):
         if isinstance(event, etcd3.events.PutEvent):
                 l = json.loads(event.value.decode())
                 ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
-                if ep1 != SAT_NAME and ep2 != SAT_NAME:
+                if ep1 != node_name and ep2 != node_name:
                     log.error(f"❌ Link action {ep1}<->{ep2} not relevant to this node.")
                     return
 
@@ -356,7 +351,7 @@ def process_link_action(cli, event):
                     return
                 
                 vni = str(l.get("vni", "0"))
-                if ep1 == SAT_NAME:
+                if ep1 == node_name:
                     remote_ip = ip2
                     local_ip = ip1
                 else:
@@ -391,7 +386,6 @@ def process_link_action(cli, event):
 # ----------------------------
 def watch_link_actions_loop():
     log.info("👀 Watching /config/links (Dynamic Events)...")
-    cli = get_etcd_client()
     events_iterator, cancel = cli.watch_prefix(KEY_LINKS)
     for event in events_iterator:
         process_link_action(cli, event)
@@ -400,7 +394,6 @@ def watch_command_loop():
     log.info("👀 Watching Runtime Commands...")
     while True:
         try:
-            cli = get_etcd_client()
             events, _ = cli.watch(KEY_RUN)
             for e in events:
                 if e.value: execute_commands(e.value.decode())
@@ -408,7 +401,6 @@ def watch_command_loop():
 
 def watch_etchosts_loop():
     log.info("👀 Watching /config/etchosts (Dynamic Events)...")
-    cli = get_etcd_client()
     events_iterator, cancel = cli.watch_prefix("/config/etchosts/")
     for event in events_iterator:
         # If the event is a PutEvent, update /etc/hosts, otherwise if it is a delete event remove from /etc/hosts
@@ -487,22 +479,22 @@ def register_my_ip(cli):
                 return True
             except: return False
 
-        sat_found = update_key(f"/config/satellites/{SAT_NAME}")
-        user_found = update_key(f"/config/users/{SAT_NAME}")
-        ground_found = update_key(f"/config/grounds/{SAT_NAME}")
+        sat_found = update_key(f"/config/satellites/{node_name}")
+        user_found = update_key(f"/config/users/{node_name}")
+        ground_found = update_key(f"/config/grounds/{node_name}")
         return (sat_found or user_found or ground_found)
     except: return False
 
 def get_config(cli):
-    val, _ = cli.get(f"/config/satellites/{SAT_NAME}")
-    if not val: val, _ = cli.get(f"/config/users/{SAT_NAME}")
-    if not val: val, _ = cli.get(f"/config/grounds/{SAT_NAME}")
+    val, _ = cli.get(f"/config/satellites/{node_name}")
+    if not val: val, _ = cli.get(f"/config/users/{node_name}")
+    if not val: val, _ = cli.get(f"/config/grounds/{node_name}")
     if not val: return
     return json.loads(val.decode())
 
 def main():
-    global my_config, l3_flags
-    log.info(f"🚀 Sat Agent Starting for {SAT_NAME}")
+    global my_config, l3_flags, cli
+    log.info(f"🚀 Sat Agent Starting for {node_name}")
     cli = get_etcd_client()
     l3_flags = get_l3_flags_values(cli)
     my_config = get_config(cli)
@@ -521,17 +513,12 @@ def main():
     available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
     ips_mask = my_config.get("subnet_ip","").split('/')[1]
     if len(available_ips) > 0:
-        cli.put(f"/config/etchosts/{SAT_NAME}", str(available_ips[-1]))
+        cli.put(f"/config/etchosts/{node_name}", str(available_ips[-1]))
     
     # L3 Routing Init
     isis_flags = l3_flags.get("ENABLE_ISIS", True)
     if isis_flags:
-        isis_data = {
-            "node_name": SAT_NAME,
-            "area_id": l3_flags.get("ISIS_AREA_ID", "0001"),
-            "loopback_ip_mask": f"{available_ips[-1]}/{ips_mask}"
-        }
-        msg, success = routing_init(cli, isis_data)
+        msg, success = routing_init(cli, node_name)
         if success:
             log.info(msg)
         else:
