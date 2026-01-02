@@ -21,13 +21,13 @@ NetSatBench is **L3- and application-agnostic**. Any routing protocol (e.g., OSP
 
 ---
 
-## Core Architecture
+## <img src="docs/images/netsatbench_logo.png" alt="NetSatBench Logo" width="18"/> Core Architecture
 
 1. **Distributed Execution and Control**  
-   Emulated nodes are instantiated across a cluster (bare metal or VMs). Each emulated node manages its own lifecycle and configuration via an internal agent, coordinated through a distributed key-value store (Etcd).
+   Emulated nodes are instantiated across a cluster (bare metal or VMs). Each emulated node manages its own lifecycle and configuration via an internal control-plane agent, coordinated through a distributed key-value store (Etcd).
 
 2. **Dynamic L2 Fabric**  
-   VXLAN tunnels encapsulate node-to-node links, ensuring seamless L2 connectivity regardless of container placement on physical hosts.
+   VXLAN tunnels encapsulate data-plane node-to-node traffic, ensuring seamless L2 connectivity regardless of container placement on physical hosts.
 
 3. **Scalability Through Distribution**  
    By spreading containers across multiple machines, the emulation can scale to thousands of satellites without overwhelming a single host.
