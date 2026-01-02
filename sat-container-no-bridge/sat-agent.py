@@ -24,9 +24,6 @@ else:
 
 my_node_name = os.getenv("SAT_NAME")
 
-routing_mod_name = "extra.isis_routing"
-routing = __import__(routing_mod_name, fromlist=[''])
-
 # KEYS
 KEY_LINKS = f"/config/links/{my_node_name}_"
 KEY_L3 = "/config/L3-config"
@@ -41,6 +38,7 @@ LINK_STATE_CACHE = {} # Only used for the initial sync
 l3_flags = None
 my_config = None
 cli = None
+routing = None
 
 # ----------------------------
 #   HELPERS
@@ -148,7 +146,7 @@ def process_initial_topology(cli):
     log.info("🏗️  Processing Initial Topology ...")
     
     ## Process links add
-    tc_flag = l3_flags.get("ENABLE_TC", True)
+    tc_flag = l3_flags.get("enable-netem", True)
     for value, meta in cli.get_prefix(KEY_LINKS):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -273,7 +271,7 @@ def create_vxlan_link(
         ip_addr = str(available_ips[-1]) + "/32"
         run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
         log.info(f"  ✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
-        if l3_flags.get("ENABLE_ISIS", False):
+        if l3_flags.get("enable-routing", False):
             msg, success = routing.link_add(cli, my_node_name, vxlan_if)
             if success:
                 log.info(msg)
@@ -288,7 +286,7 @@ def delete_vxlan_link(
         "ip", "link", "del", vxlan_if
     ])
     log.info(f"  ✅ VXLAN {vxlan_if} deleted.")
-    if l3_flags.get("ENABLE_ISIS", False):
+    if l3_flags.get("enable-routing", False):
         msg, success = routing.link_del(cli, my_node_name, vxlan_if)
         if success:
             log.info(msg)
@@ -335,7 +333,7 @@ def apply_tc_settings(vxlan_if, netem_opts):
 
 def process_link_action(cli, event):
     try:
-        tc_flag = l3_flags.get("ENABLE_TC", True)
+        tc_flag = l3_flags.get("enable-netem", True)
         key_str = event.key.decode()
         # Extract interface name, it is the last part of the key after /
         vxlan_if = key_str.split('/')[-1]
@@ -497,7 +495,7 @@ def get_config(cli):
     return json.loads(val.decode())
 
 def main():
-    global my_config, l3_flags, cli
+    global my_config, l3_flags, cli, routing
     log.info(f"🚀 Sat Agent Starting for {my_node_name}")
     cli = get_etcd_client()
     l3_flags = get_l3_flags_values(cli)
@@ -510,8 +508,10 @@ def main():
         time.sleep(2)
 
     # L3 Routing Init
-    isis_flags = l3_flags.get("ENABLE_ISIS", True)
+    isis_flags = l3_flags.get("enable-routing", True)
     if isis_flags:
+        routing_mod_name = l3_flags.get("routing-module", "extra.isis")
+        routing = __import__(routing_mod_name, fromlist=[''])
         msg, success = routing.init(cli, my_node_name)
         if success:
             log.info(msg)
@@ -526,8 +526,6 @@ def main():
     ips_mask = my_config.get("subnet_ip","").split('/')[1]
     if len(available_ips) > 0:
         cli.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
-    
-
 
     # Start Event Loops
     threads = [

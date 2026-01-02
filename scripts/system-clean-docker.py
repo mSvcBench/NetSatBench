@@ -180,7 +180,7 @@ def main():
             ssh_key = host.get("ssh_key", "~/.ssh/id_rsa")
             remote = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
 
-            sat_vnet_supercidr = host.get("SAT-VNET-SUPERNET", "172.0.0.0/8")
+            sat_vnet_supercidr = host.get("sat-vnet-supernet", "172.0.0.0/8")
 
             print(f"➞ Removing DOCKER-USER forwarding rule on host: {host_name} ({ssh_ip})")
             # inserted rule was: -I DOCKER-USER -s super -d super -j ACCEPT

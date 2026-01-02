@@ -86,7 +86,7 @@ def apply_isis_config(cli):
             return
         
         # Extract net_id from etcd key
-        area_id = l3_flags.get("ISIS_AREA_ID", "0001")
+        area_id = l3_flags.get("isis-area-id", "0001")
 
         # Extract sys_id from node name 
         subnet_cidr = my_conf.get("subnet_ip","")
@@ -174,7 +174,7 @@ def process_initial_topology(cli):
     log.info("🏗️  Processing Initial Topology (Epoch 0)...")
     
     ## Process links add
-    tc_flag = l3_flags.get("ENABLE_TC", True)
+    tc_flag = l3_flags.get("enable-netem", True)
     for value, meta in cli.get_prefix(KEY_LINKS):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -356,7 +356,7 @@ def apply_tc_settings(vxlan_if, netem_opts):
 
 def process_link_action(cli, event):
     try:
-        tc_flag = l3_flags.get("ENABLE_TC", True)
+        tc_flag = l3_flags.get("enable-netem", True)
         if isinstance(event, etcd3.events.PutEvent):
                 l = json.loads(event.value.decode())
                 ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -523,11 +523,11 @@ def prepare_bridges(cli):
     
     ## safety check, len of available_ips should be >= n_ant + 1 (the  last one is for the loopback used by routing protocols)
     
-    if (len(available_ips) < n_ant + 1 and my_config.get("COMMON-BRIDGE-ADDRESS", False)==False) or \
-       (len(available_ips) < 1 and my_config.get("COMMON-BRIDGE-ADDRESS", False)==True):
+    if (len(available_ips) < n_ant + 1 and my_config.get("common-bridge-address", False)==False) or \
+       (len(available_ips) < 1 and my_config.get("common-bridge-address", False)==True):
         log.info(f"❌ Not enough IPs in subnet {my_config.get('subnet_ip','')} for {n_ant} antennas and loopback. No IPs will be assigned to bridges.")
         available_ips = []
-    elif l3_flags.get("COMMON-BRIDGE-ADDRESS", False)==True:
+    elif l3_flags.get("common-bridge-address", False)==True:
         available_ips = [available_ips[-1]] * n_ant  # Only one bridge will be created
 
     for i in range(0, n_ant):
@@ -570,7 +570,7 @@ def main():
     process_initial_topology(cli)
     
     # 3. L3 Routing Init
-    isis_flags = l3_flags.get("ENABLE_ISIS", True)
+    isis_flags = l3_flags.get("enable-routing", True)
     if isis_flags: apply_isis_config(cli)
 
     # 4. Start Event Loops

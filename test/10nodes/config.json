@@ -72,18 +72,18 @@
     }
   },
   "L3-config": {
-    "ENABLE_TC"  : true ,
-    "ENABLE_ISIS" : true,
-    "ISIS_AREA_ID": "0001",
-    "SAT-VNET-SUPERNET": "172.0.0.0/8",
-    "COMMON-BRIDGE-ADDRESS": true
+    "enable-netem"  : true,
+    "enable-routing" : true,
+    "routing-module": "extra.isis",
+    "isis-area-id": "0001",
+    "sat-vnet-supernet": "172.0.0.0/8",
+    "common-bridge-address": true
   },
   "epoch-config": {
     "EPOCH_DIR": "test/10nodes/constellation-epochs",
     "FILE_PATTERN": "NetSatBench-epoch*.json"
   },
   "satellites": {
-
     "sat1": {
       "id":1,
       "host": "host-1",

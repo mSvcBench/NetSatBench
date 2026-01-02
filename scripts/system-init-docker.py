@@ -196,7 +196,7 @@ def main():
             )
         
         # === enable container to container forwarding among hosts === 
-        sat_vnet_supercidr = host.get('SAT-VNET-SUPERNET', '172.0.0.0/8')
+        sat_vnet_supercidr = host.get('sat-vnet-supernet', '172.0.0.0/8')
         print(f"➞ Enabling container-to-container forwarding on host: {host_name}")
         # Add iptables rule to allow forwarding from {host_name2} to {host_name}
         check_forward_cmd = (

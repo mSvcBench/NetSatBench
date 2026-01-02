@@ -29,7 +29,7 @@ def derive_sysid_from_string(value: str) -> str:
 def init(cli, node_name) -> tuple[str, bool]:
     try:
         l3_config = json.loads(cli.get(f"/config/L3-config")[0].decode())
-        area_id = l3_config.get("ISIS_AREA_ID", "0001")
+        area_id = l3_config.get("isis-area-id", "0001")
         val, _ = cli.get(f"/config/satellites/{node_name}")
         if not val: val, _ = cli.get(f"/config/users/{node_name}")
         if not val: val, _ = cli.get(f"/config/grounds/{node_name}")

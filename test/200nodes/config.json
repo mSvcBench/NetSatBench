@@ -72,10 +72,10 @@
     }
   },
   "L3-config": {
-    "ENABLE_TC"  : "True" ,
-    "ENABLE_ISIS" : "True",
-    "ISIS_AREA_ID": "0001",
-    "SAT-VNET-SUPERNET": "172.0.0.0/8"
+    "enable-netem"  : true ,
+    "enable-routing" : true,
+    "isis-area-id": "0001",
+    "sat-vnet-supernet": "172.0.0.0/8"
   },
   "epoch-config": {
     "EPOCH_DIR": "test/200nodes/constellation-epochs",
