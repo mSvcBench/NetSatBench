@@ -21,7 +21,7 @@ NetSatBench is **L3- and application-agnostic**. Any routing protocol (e.g., OSP
 
 ---
 
-## <img src="docs/images/netsatbench_logo.png" alt="NetSatBench Logo" width="18"/> Core Architecture
+## <img src="docs/images/arch_core.png" alt="NetSatBench Logo" width="26"/> Core Architecture
 
 1. **Distributed Execution and Control**  
    Emulated nodes are instantiated across a cluster (bare metal or VMs). Each emulated node manages its own lifecycle and configuration via an internal control-plane agent, coordinated through a distributed key-value store (Etcd).
