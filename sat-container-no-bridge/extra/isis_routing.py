@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import time
 import etcd3
 import json
 import ipaddress
@@ -25,7 +26,7 @@ def derive_sysid_from_string(value: str) -> str:
 # ----------------------------
 #   MAIN FUNCTIONS
 # ----------------------------
-def routing_init(cli, node_name) -> tuple[str, bool]:
+def init(cli, node_name) -> tuple[str, bool]:
     try:
         l3_config = json.loads(cli.get(f"/config/L3-config")[0].decode())
         area_id = l3_config.get("ISIS_AREA_ID", "0001")
@@ -54,14 +55,15 @@ def routing_init(cli, node_name) -> tuple[str, bool]:
         )
         cmd = ["service", "frr", "restart"]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        msg=f"✅ IS-IS configured (SysID: {sys_id}, AreaID: {area_id})"
+        time.sleep(1)  # Allow some time for FRR to restart
+        msg=f"  ✅ IS-IS configured (SysID: {sys_id}, AreaID: {area_id})"
         return msg, True 
     
     except Exception as e:
-        msg=f"❌ Exception triggering IS-IS: {e}"
+        msg=f"  ❌ Exception triggering IS-IS: {e}"
         return msg, False 
 
-def routing_link_add(cli, node_name, interface) -> tuple[str, bool]:
+def link_add(cli, node_name, interface) -> tuple[str, bool]:
     cmd = [
             "vtysh",
             "-c", "conf t",
@@ -72,11 +74,11 @@ def routing_link_add(cli, node_name, interface) -> tuple[str, bool]:
     ]
     try:
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return f"✅ IS-IS enabled on {interface}", True 
+        return f"  ✅ IS-IS enabled on {interface}", True 
     except Exception as e:
-        return f"❌ Exception enabling IS-IS on {interface}: {e}", False
+        return f"  ❌ Exception enabling IS-IS on {interface}: {e}", False
     
-def routing_link_del(cli, node_name, interface) -> tuple[str, bool]:
+def link_del(cli, node_name, interface) -> tuple[str, bool]:
     cmd = [
             "vtysh",
             "-c", "conf t",
@@ -85,6 +87,6 @@ def routing_link_del(cli, node_name, interface) -> tuple[str, bool]:
     ]
     try:
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return f"✅ IS-IS disabled on {inferface}", True 
+        return f"  ✅ IS-IS disabled on {interface}", True 
     except Exception as e:
-        return f"❌ Exception disabling IS-IS on {inferface}: {e}", False
+        return f"  ❌ Exception disabling IS-IS on {interface}: {e}", False

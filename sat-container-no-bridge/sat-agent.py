@@ -10,7 +10,7 @@ import threading
 import sys
 import re
 import hashlib
-from extra.isis_routing import routing_init, routing_link_add, routing_link_del   
+#from extra.isis_routing import routing_init, routing_link_add, routing_link_del   
 
 # ----------------------------
 #   CONFIGURATION
@@ -22,12 +22,15 @@ if ":" in ETCD_ENDPOINT:
 else:
     ETCD_HOST, ETCD_PORT = ETCD_ENDPOINT, 2379
 
-node_name = os.getenv("SAT_NAME")
+my_node_name = os.getenv("SAT_NAME")
+
+routing_mod_name = "extra.isis_routing"
+routing = __import__(routing_mod_name, fromlist=[''])
 
 # KEYS
-KEY_LINKS = f"/config/links/{node_name}_"
+KEY_LINKS = f"/config/links/{my_node_name}_"
 KEY_L3 = "/config/L3-config"
-KEY_RUN = f"/config/run/{node_name}_"
+KEY_RUN = f"/config/run/{my_node_name}_"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("sat-agent")
@@ -150,7 +153,7 @@ def process_initial_topology(cli):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
         
-        if ep1 != node_name and ep2 != node_name: 
+        if ep1 != my_node_name and ep2 != my_node_name: 
             log.info(f"⚠️  Skipping initial link {ep1}<->{ep2} not relevant to this node.")
             continue
 
@@ -179,7 +182,7 @@ def process_initial_topology(cli):
         # Extract interface name from the key, it is the last part of the key after /
         vxlan_if = key_str.split('/')[-1]
         # ADD for found link
-        if ep1 == node_name:
+        if ep1 == my_node_name:
             remote_ip = ip2
             local_ip = ip1
         else:
@@ -246,7 +249,7 @@ def create_vxlan_link(
 
     # ⛔ If already exists, do nothing
     if link_exists(vxlan_if):
-        log.info(f"♻️  Link {vxlan_if} already exists, updating...")
+        log.info(f"♻️ Link {vxlan_if} already exists, updating...")
         return
     
     log.info(f"🪢 Creating Link: {vxlan_if} (VNI: {target_vni})")
@@ -269,9 +272,9 @@ def create_vxlan_link(
     if len(available_ips) > 0:
         ip_addr = str(available_ips[-1]) + "/32"
         run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
-        log.info(f"✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
+        log.info(f"  ✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
         if l3_flags.get("ENABLE_ISIS", False):
-            msg, success = routing_link_add(cli, node_name, vxlan_if)
+            msg, success = routing.link_add(cli, my_node_name, vxlan_if)
             if success:
                 log.info(msg)
             else:
@@ -279,13 +282,14 @@ def create_vxlan_link(
 
 def delete_vxlan_link(
     vxlan_if):
-    log.info(f"✂️   Deleteing Link: {vxlan_if}")
+    log.info(f"✂️ Deleting Link: {vxlan_if}")
 
     run([
         "ip", "link", "del", vxlan_if
     ])
+    log.info(f"  ✅ VXLAN {vxlan_if} deleted.")
     if l3_flags.get("ENABLE_ISIS", False):
-        msg, success = routing_link_del(cli, node_name, vxlan_if)
+        msg, success = routing.link_del(cli, my_node_name, vxlan_if)
         if success:
             log.info(msg)
         else:
@@ -310,7 +314,7 @@ def apply_tc_settings(vxlan_if, netem_opts):
             "corrupt": "0.01%"
         }
     """
-    log.info(f"🎛️  Applying TC netem on {vxlan_if}: {netem_opts}")
+    log.info(f"  🎛️ Applying TC netem on {vxlan_if}: {netem_opts}")
 
     # Remove existing qdisc (ignore errors)
     run(["tc", "qdisc", "del", "dev", vxlan_if, "root"], log_errors=False)
@@ -340,7 +344,7 @@ def process_link_action(cli, event):
         if isinstance(event, etcd3.events.PutEvent):
                 l = json.loads(event.value.decode())
                 ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
-                if ep1 != node_name and ep2 != node_name:
+                if ep1 != my_node_name and ep2 != my_node_name:
                     log.error(f"❌ Link action {ep1}<->{ep2} not relevant to this node.")
                     return
 
@@ -351,7 +355,7 @@ def process_link_action(cli, event):
                     return
                 
                 vni = str(l.get("vni", "0"))
-                if ep1 == node_name:
+                if ep1 == my_node_name:
                     remote_ip = ip2
                     local_ip = ip1
                 else:
@@ -371,14 +375,14 @@ def process_link_action(cli, event):
                             netem_opts=netem_opts
                     ) 
                     else:
-                        log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
+                        log.info(f"  🎛️  No netem options defined for {vxlan_if}, skipping tc")
         
         ## Process DeleteEvent
         elif isinstance(event, etcd3.events.DeleteEvent):
                 # interface delete removes possible TC automatically 
                 delete_vxlan_link(vxlan_if)
     except: 
-        log.error("❌ Failed to parse link action.")
+        log.error("  ❌ Failed to parse link action.")
         return
 
 # ----------------------------
@@ -479,22 +483,22 @@ def register_my_ip(cli):
                 return True
             except: return False
 
-        sat_found = update_key(f"/config/satellites/{node_name}")
-        user_found = update_key(f"/config/users/{node_name}")
-        ground_found = update_key(f"/config/grounds/{node_name}")
+        sat_found = update_key(f"/config/satellites/{my_node_name}")
+        user_found = update_key(f"/config/users/{my_node_name}")
+        ground_found = update_key(f"/config/grounds/{my_node_name}")
         return (sat_found or user_found or ground_found)
     except: return False
 
 def get_config(cli):
-    val, _ = cli.get(f"/config/satellites/{node_name}")
-    if not val: val, _ = cli.get(f"/config/users/{node_name}")
-    if not val: val, _ = cli.get(f"/config/grounds/{node_name}")
+    val, _ = cli.get(f"/config/satellites/{my_node_name}")
+    if not val: val, _ = cli.get(f"/config/users/{my_node_name}")
+    if not val: val, _ = cli.get(f"/config/grounds/{my_node_name}")
     if not val: return
     return json.loads(val.decode())
 
 def main():
     global my_config, l3_flags, cli
-    log.info(f"🚀 Sat Agent Starting for {node_name}")
+    log.info(f"🚀 Sat Agent Starting for {my_node_name}")
     cli = get_etcd_client()
     l3_flags = get_l3_flags_values(cli)
     my_config = get_config(cli)
@@ -505,24 +509,25 @@ def main():
         if register_my_ip(cli): break
         time.sleep(2)
 
+    # L3 Routing Init
+    isis_flags = l3_flags.get("ENABLE_ISIS", True)
+    if isis_flags:
+        msg, success = routing.init(cli, my_node_name)
+        if success:
+            log.info(msg)
+        else:
+            log.error(msg)
 
-    # Initial Setup
+    # Initial Links Setup
     process_initial_topology(cli)
 
     ## Publish node IP for etc hosts usage 
     available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
     ips_mask = my_config.get("subnet_ip","").split('/')[1]
     if len(available_ips) > 0:
-        cli.put(f"/config/etchosts/{node_name}", str(available_ips[-1]))
+        cli.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
     
-    # L3 Routing Init
-    isis_flags = l3_flags.get("ENABLE_ISIS", True)
-    if isis_flags:
-        msg, success = routing_init(cli, node_name)
-        if success:
-            log.info(msg)
-        else:
-            log.error(msg)
+
 
     # Start Event Loops
     threads = [
