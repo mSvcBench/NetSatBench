@@ -10,7 +10,7 @@ import re
 # ==========================================
 # 🚩 CONFIGURATION
 # ==========================================
-etcd = None
+etcd_client = None
 
 # ==========================================
 # HELPERS
@@ -35,8 +35,6 @@ def interface_from_ip_ssh(ssh_user, ssh_ip, ssh_key, target_ip):
         raise RuntimeError(result.stderr.strip())
 
     for line in result.stdout.splitlines():
-        # Example:
-        # 2: eth0    inet 192.168.1.10/24 brd ...
         if target_ip in line:
             return line.split()[1]
 
@@ -44,7 +42,7 @@ def interface_from_ip_ssh(ssh_user, ssh_ip, ssh_key, target_ip):
 
 def get_prefix_data(prefix) -> dict:
     data = {}
-    for value, metadata in etcd.get_prefix(prefix):
+    for value, metadata in etcd_client.get_prefix(prefix):
         key = metadata.key.decode('utf-8').split('/')[-1]
         try:
             data[key] = json.loads(value.decode('utf-8'))
@@ -75,7 +73,7 @@ def load_json(path: str) -> dict:
 # ==========================================
 
 def main():
-    global etcd
+    global etcd_client
 
     parser = argparse.ArgumentParser(
         description="Configure hosts of the constellation"
@@ -96,6 +94,16 @@ def main():
         default=int(os.getenv("ETCD_PORT", 2379)),
         help="Etcd port (default: env ETCD_PORT or 2379)",
     )
+    parser.add_argument(
+        "--etcd-user",
+        default=os.getenv("ETCD_USER", None ),
+        help="Etcd user (default: env ETCD_USER or None)",
+    )
+    parser.add_argument(
+        "--etcd-password",
+        default=os.getenv("ETCD_PASSWORD", None ),
+        help="Etcd password (default: env ETCD_PASSWORD or None)",
+    )
 
     args = parser.parse_args()
     
@@ -110,7 +118,10 @@ def main():
         sys.exit(1)
     
     try:
-        etcd = etcd3.client(host=args.etcd_host, port=args.etcd_port)
+        if args.etcd_user and args.etcd_password:
+            etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port, user=args.etcd_user, password=args.etcd_password)
+        else:
+            etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port)
     except Exception as e:
         print(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
@@ -130,7 +141,7 @@ def main():
             continue
         elif key in ["hosts"]:
             for k, v in value.items():
-                etcd.put(f"/config/{key}/{k}", json.dumps(v))
+                etcd_client.put(f"/config/{key}/{k}", json.dumps(v))
 
 
     # ==========================================

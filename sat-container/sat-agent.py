@@ -16,6 +16,10 @@ import hashlib
 #   CONFIGURATION
 # ----------------------------
 ETCD_ENDPOINT = os.getenv("ETCD_ENDPOINT", "127.0.0.1:2379")
+ETCD_USER = os.getenv("ETCD_USER", None)
+ETCD_PASSWORD = os.getenv("ETCD_PASSWORD", None)
+ETCD_CA_CERT = os.getenv("ETCD_CA_CERT", None)
+
 if ":" in ETCD_ENDPOINT:
     h, p = ETCD_ENDPOINT.split(":", 1)
     ETCD_HOST, ETCD_PORT = h, int(p)
@@ -37,7 +41,7 @@ last_executed_cmd_raw = None
 LINK_STATE_CACHE = {} # Only used for the initial sync
 l3_flags = None
 my_config = None
-cli = None
+etcd_client = None
 routing = None
 
 # ----------------------------
@@ -47,24 +51,27 @@ def get_etcd_client():
     log.info(f"📁 Connecting to Etcd at {ETCD_HOST}:{ETCD_PORT}...")
     while True:
         try:
-            cli = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
+            if ETCD_USER and ETCD_PASSWORD:
+                etcd_client = etcd3.client(host=ETCD_HOST, port=ETCD_PORT, user=ETCD_USER, password=ETCD_PASSWORD, ca_cert=ETCD_CA_CERT)
+            else:
+                etcd_client = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
             log.info(f"✅ Connected to Etcd at {ETCD_HOST}:{ETCD_PORT}.")
-            return cli
+            return etcd_client
         except:
             time.sleep(5)
 
-def get_remote_ip(cli, node_name):
-    val, _ = cli.get(f"/config/satellites/{node_name}")
-    if not val: val, _ = cli.get(f"/config/users/{node_name}")
-    if not val: val, _ = cli.get(f"/config/grounds/{node_name}")
+def get_remote_ip(etcd_client, node_name):
+    val, _ = etcd_client.get(f"/config/satellites/{node_name}")
+    if not val: val, _ = etcd_client.get(f"/config/users/{node_name}")
+    if not val: val, _ = etcd_client.get(f"/config/grounds/{node_name}")
     if val:
         try: return json.loads(val.decode()).get("eth0_ip")
         except: pass
     return None
 
-def get_l3_flags_values(cli):
+def get_l3_flags_values(etcd_client):
     l3_flags={}
-    val, _ = cli.get(KEY_L3)
+    val, _ = etcd_client.get(KEY_L3)
     if val:
         try:
             l3_flags = json.loads(val.decode())
@@ -138,7 +145,7 @@ def derive_sysid_from_string(value: str) -> str:
 # ----------------------------
 #   PART 1: INITIAL SETUP
 # ----------------------------
-def process_initial_topology(cli):
+def process_initial_topology(etcd_client):
     """
     Reads /config/links and builds the initial world state.
     Uses 'add' action for everything found.
@@ -147,7 +154,7 @@ def process_initial_topology(cli):
     
     ## Process links add
     tc_flag = l3_flags.get("enable-netem", True)
-    for value, meta in cli.get_prefix(KEY_LINKS):
+    for value, meta in etcd_client.get_prefix(KEY_LINKS):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
         
@@ -159,8 +166,8 @@ def process_initial_topology(cli):
         ip1 = ip2 = None
         counter = 0
         while counter < 10:
-            ip1 = get_remote_ip(cli, ep1)
-            ip2 = get_remote_ip(cli, ep2)
+            ip1 = get_remote_ip(etcd_client, ep1)
+            ip2 = get_remote_ip(etcd_client, ep2)
             if ip1 and ip2: break
             time.sleep(2)
             counter += 1
@@ -202,7 +209,7 @@ def process_initial_topology(cli):
                 log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
     
     ## Execute any pending runtime commands
-    val, _ = cli.get(KEY_RUN)
+    val, _ = etcd_client.get(KEY_RUN)
     if val:
         log.info("▶️  Executing pending runtime commands after initial setup...")
         execute_commands(val.decode())
@@ -210,7 +217,7 @@ def process_initial_topology(cli):
     ## Configure /etc/hosts entries for all known satellites/grounds/users
     log.info("📝 Updating /etc/hosts with known satellites, grounds and users...")
     prefix = "/config/etchosts/"
-    for value, meta in cli.get_prefix(prefix):
+    for value, meta in etcd_client.get_prefix(prefix):
         node_name = meta.key.decode().split('/')[-1]
         ip_addr = value.decode().strip()
         if ip_addr:
@@ -272,7 +279,7 @@ def create_vxlan_link(
         run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
         log.info(f"  ✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
         if l3_flags.get("enable-routing", False):
-            msg, success = routing.link_add(cli, my_node_name, vxlan_if)
+            msg, success = routing.link_add(etcd_client, my_node_name, vxlan_if)
             if success:
                 log.info(msg)
             else:
@@ -287,7 +294,7 @@ def delete_vxlan_link(
     ])
     log.info(f"  ✅ VXLAN {vxlan_if} deleted.")
     if l3_flags.get("enable-routing", False):
-        msg, success = routing.link_del(cli, my_node_name, vxlan_if)
+        msg, success = routing.link_del(etcd_client, my_node_name, vxlan_if)
         if success:
             log.info(msg)
         else:
@@ -331,7 +338,7 @@ def apply_tc_settings(vxlan_if, netem_opts):
 
     run(cmd)
 
-def process_link_action(cli, event):
+def process_link_action(etcd_client, event):
     try:
         tc_flag = l3_flags.get("enable-netem", True)
         key_str = event.key.decode()
@@ -346,8 +353,8 @@ def process_link_action(cli, event):
                     log.error(f"❌ Link action {ep1}<->{ep2} not relevant to this node.")
                     return
 
-                ip1 = get_remote_ip(cli, ep1)
-                ip2 = get_remote_ip(cli, ep2)
+                ip1 = get_remote_ip(etcd_client, ep1)
+                ip2 = get_remote_ip(etcd_client, ep2)
                 if not ip1 or not ip2:
                     log.error(f"❌ Missing IPs for link action {ep1}<->{ep2}.")
                     return
@@ -388,22 +395,22 @@ def process_link_action(cli, event):
 # ----------------------------
 def watch_link_actions_loop():
     log.info("👀 Watching /config/links (Dynamic Events)...")
-    events_iterator, cancel = cli.watch_prefix(KEY_LINKS)
+    events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS)
     for event in events_iterator:
-        process_link_action(cli, event)
+        process_link_action(etcd_client, event)
 
 def watch_command_loop():
     log.info("👀 Watching Runtime Commands...")
     while True:
         try:
-            events, _ = cli.watch(KEY_RUN)
+            events, _ = etcd_client.watch(KEY_RUN)
             for e in events:
                 if e.value: execute_commands(e.value.decode())
         except: time.sleep(5)
 
 def watch_etchosts_loop():
     log.info("👀 Watching /config/etchosts (Dynamic Events)...")
-    events_iterator, cancel = cli.watch_prefix("/config/etchosts/")
+    events_iterator, cancel = etcd_client.watch_prefix("/config/etchosts/")
     for event in events_iterator:
         # If the event is a PutEvent, update /etc/hosts, otherwise if it is a delete event remove from /etc/hosts
         try:
@@ -464,20 +471,20 @@ def watch_users_loop():
 # ----------------------------
 #   INIT & MAIN
 # ----------------------------
-def register_my_ip(cli):
+def register_my_ip(etcd_client):
     try:
         cmd = "ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1"
         my_ip = subprocess.check_output(cmd, shell=True).decode().strip()
         if not my_ip or my_ip.endswith(".0"): return False
         
         def update_key(key):
-            val, _ = cli.get(key)
+            val, _ = etcd_client.get(key)
             if not val: return False
             try:
                 data = json.loads(val.decode())
                 if data.get("eth0_ip") != my_ip:
                     data["eth0_ip"] = my_ip
-                    cli.put(key, json.dumps(data))
+                    etcd_client.put(key, json.dumps(data))
                 return True
             except: return False
 
@@ -487,24 +494,24 @@ def register_my_ip(cli):
         return (sat_found or user_found or ground_found)
     except: return False
 
-def get_config(cli):
-    val, _ = cli.get(f"/config/satellites/{my_node_name}")
-    if not val: val, _ = cli.get(f"/config/users/{my_node_name}")
-    if not val: val, _ = cli.get(f"/config/grounds/{my_node_name}")
+def get_config(etcd_client):
+    val, _ = etcd_client.get(f"/config/satellites/{my_node_name}")
+    if not val: val, _ = etcd_client.get(f"/config/users/{my_node_name}")
+    if not val: val, _ = etcd_client.get(f"/config/grounds/{my_node_name}")
     if not val: return
     return json.loads(val.decode())
 
 def main():
-    global my_config, l3_flags, cli, routing
+    global my_config, l3_flags, etcd_client, routing
     log.info(f"🚀 Sat Agent Starting for {my_node_name}")
-    cli = get_etcd_client()
-    l3_flags = get_l3_flags_values(cli)
-    my_config = get_config(cli)
+    etcd_client = get_etcd_client()
+    l3_flags = get_l3_flags_values(etcd_client)
+    my_config = get_config(etcd_client)
     
     # Bootstrapping
     ## Register my IP address in Etcd
     while True:
-        if register_my_ip(cli): break
+        if register_my_ip(etcd_client): break
         time.sleep(2)
 
     # L3 Routing Init
@@ -512,20 +519,20 @@ def main():
     if isis_flags:
         routing_mod_name = l3_flags.get("routing-module", "extra.isis")
         routing = __import__(routing_mod_name, fromlist=[''])
-        msg, success = routing.init(cli, my_node_name)
+        msg, success = routing.init(etcd_client, my_node_name)
         if success:
             log.info(msg)
         else:
             log.error(msg)
 
     # Initial Links Setup
-    process_initial_topology(cli)
+    process_initial_topology(etcd_client)
 
     ## Publish node IP for etc hosts usage 
     available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
     ips_mask = my_config.get("subnet_ip","").split('/')[1]
     if len(available_ips) > 0:
-        cli.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
+        etcd_client.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
 
     # Start Event Loops
     threads = [

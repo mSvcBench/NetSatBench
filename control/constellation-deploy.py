@@ -10,23 +10,18 @@ import shlex
 from typing import Dict, Any, Tuple, Optional
 
 # ==========================================
-# 🚩 CONFIGURATION
-# ==========================================
-ETCD_HOST = os.getenv('ETCD_HOST', '127.0.0.1')
-ETCD_PORT = int(os.getenv('ETCD_PORT', 2379))
-
-
-# ==========================================
 # HELPERS
 # ==========================================
-def connect_etcd(host: str, port: int):
+def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None):
     try:
-        print(f"📁 Connecting to Etcd at {host}:{port}...")
-        return etcd3.client(host=host, port=port)
+        print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
+        if etcd_user and etcd_password:
+            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password)
+        else:
+            return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
         print(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
-
 
 def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
@@ -107,6 +102,9 @@ def recreate_and_run_container(
     container_image: str,
     etcd_host: str,
     etcd_port: int,
+    etcd_user: str = None,
+    etcd_password: str = None,
+    etcd_ca_cert: str = None,
 ) -> None:
 
     try:
@@ -133,17 +131,33 @@ def recreate_and_run_container(
                 quiet=True,
             )
         # --- Run new container ---
-        run_cmd = [
-            "docker", "run", "-d",
-            "--name", sat_name,
-            "--hostname", sat_name,
-            "--net", sat_host_bridge_name,
-            "--privileged",
-            "--pull=always",
-            "-e", f"SAT_NAME={sat_name}",
-            "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}",
-            container_image,
-        ]
+        if etcd_user and etcd_password and etcd_ca_cert:
+            run_cmd = [
+                "docker", "run", "-d",
+                "--name", sat_name,
+                "--hostname", sat_name,
+                "--net", sat_host_bridge_name,
+                "--privileged",
+                "--pull=always",
+                "-e", f"SAT_NAME={sat_name}",
+                "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}",
+                "-e", f"ETCD_USER={etcd_user}",
+                "-e", f"ETCD_PASSWORD={etcd_password}",
+                "-e", f"ETCD_CA_CERT=/app/etcd-ca.crt",
+                container_image,
+            ]
+        else:
+            run_cmd = [
+                "docker", "run", "-d",
+                "--name", sat_name,
+                "--hostname", sat_name,
+                "--net", sat_host_bridge_name,
+                "--privileged",
+                "--pull=always",
+                "-e", f"SAT_NAME={sat_name}",
+                "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}",
+                container_image,
+            ]
         run_ssh(
             ssh_username=ssh_username,
             sat_host=sat_host,
@@ -151,7 +165,42 @@ def recreate_and_run_container(
             remote_args=run_cmd,
             check=True,
         )
-    
+
+        # copu the CA cert if needed with scp and then and docker cp via ssh
+        if etcd_user and etcd_password and etcd_ca_cert:
+            scp_cmd = [
+                "scp",
+                "-i", ssh_key_path,
+                "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", f"ConnectTimeout=30",
+                etcd_ca_cert,
+                f"{ssh_username}@{sat_host}:/tmp/etcd-ca.crt",
+            ]
+            try:
+                cp = subprocess.run(
+                    scp_cmd,
+                    text=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=35,
+                )
+            except subprocess.TimeoutExpired:
+                raise SshError(f"SCP timeout connecting to {ssh_username}@{sat_host}")
+            
+            stderr = (cp.stderr or "").strip()
+            if cp.returncode != 0:
+                msg = stderr.splitlines()[0] if stderr else "SCP transport error"
+                raise SshError(msg)
+            
+            # now copy into the container
+            run_ssh(
+                ssh_username=ssh_username,
+                sat_host=sat_host,
+                ssh_key_path=ssh_key_path,
+                remote_args=["docker", "cp", "/tmp/etcd-ca.crt", f"{sat_name}:/app/etcd-ca.crt"],
+                check=True,
+            )
     except SshError as e:
         print(f"    ❌ SSH failure: {e}")
         raise RuntimeError({e})
@@ -164,7 +213,10 @@ def create_one_node(
     node: Dict[str, Any],
     hosts: Dict[str, Any],
     etcd_host: str,
-    etcd_port: int
+    etcd_port: int,
+    etcd_user: str = None,
+    etcd_password: str = None,
+    etcd_ca_cert: str = None,    
 ) -> Tuple[str, bool, str]:
     """
     Returns: (name, success, message)
@@ -192,6 +244,9 @@ def create_one_node(
             container_image=image,
             etcd_host=etcd_host,
             etcd_port=etcd_port,
+            etcd_user=etcd_user,
+            etcd_password=etcd_password,
+            etcd_ca_cert=etcd_ca_cert,
         )
         msg = f" Created on host={node_host}"
         return name, True, msg
@@ -229,19 +284,34 @@ def main() -> int:
         default=int(os.getenv("ETCD_PORT", 2379)),
         help="Etcd port (default: env ETCD_PORT or 2379)",
     )
+    parser.add_argument(
+        "--etcd-user",
+        default=os.getenv("ETCD_USER", None ),
+        help="Etcd user (default: env ETCD_USER or None)",
+    )
+    parser.add_argument(
+        "--etcd-password",
+        default=os.getenv("ETCD_PASSWORD", None ),
+        help="Etcd password (default: env ETCD_PASSWORD or None)",
+    )
+    parser.add_argument(
+        "--etcd-ca-cert",
+        default=os.getenv("ETCD_CA_CERT", None ),
+        help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
+    )
     args = parser.parse_args()
 
     if args.threads < 1:
         print("❌ --threads must be >= 1")
         return 2
 
-    etcd = connect_etcd(ETCD_HOST, ETCD_PORT)
+    etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password)
 
     # 1) LOAD CONFIGURATION
-    satellites = get_prefix_data(etcd, '/config/satellites/')
-    users = get_prefix_data(etcd, '/config/users/')
-    grounds = get_prefix_data(etcd, '/config/grounds/')
-    hosts = get_prefix_data(etcd, '/config/hosts/')
+    satellites = get_prefix_data(etcd_client, '/config/satellites/')
+    users = get_prefix_data(etcd_client, '/config/users/')
+    grounds = get_prefix_data(etcd_client, '/config/grounds/')
+    hosts = get_prefix_data(etcd_client, '/config/hosts/')
 
     print(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
 
@@ -278,8 +348,11 @@ def main() -> int:
                 name,
                 node,
                 hosts,
-                ETCD_HOST,
-                ETCD_PORT
+                etcd_host=args.etcd_host,
+                etcd_port=args.etcd_port,
+                etcd_user=args.etcd_user,
+                etcd_password=args.etcd_password,
+                etcd_ca_cert=args.etcd_ca_cert,
             )
             futures[future] = name
 

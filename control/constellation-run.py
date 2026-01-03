@@ -68,17 +68,16 @@ def smart_wait(target_virtual_time_str, filename: str, enable_wait: bool = True)
         print(f"⚠️ [{filename}] Invalid time format: {target_virtual_time_str}")
 
 
-def connect_etcd(etcd_host: str, etcd_port: int):
+def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None):
     try:
         print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
-        client = etcd3.client(host=etcd_host, port=etcd_port)
-        client.status()  # quick sanity check
-        return client
+        if etcd_user and etcd_password:
+            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password)
+        else:
+            return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
-        print(f"❌ Could not connect to Etcd at {etcd_host}:{etcd_port}. Is it running?")
-        print(f"Details: {e}")
+        print(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
-
 
 def load_epoch_dir_and_pattern_from_etcd(etcd) -> Tuple[str, str]:
     """
@@ -293,8 +292,16 @@ def main() -> int:
         default=int(os.getenv("ETCD_PORT", 2379)),
         help="Etcd port (default: env ETCD_PORT or 2379)",
     )
-
-    # “config file at least”: here it is the epoch-config JSON, but we also allow overriding dir/pattern directly.
+    parser.add_argument(
+        "--etcd-user",
+        default=os.getenv("ETCD_USER", None ),
+        help="Etcd user (default: env ETCD_USER or None)",
+    )
+    parser.add_argument(
+        "--etcd-password",
+        default=os.getenv("ETCD_PASSWORD", None ),
+        help="Etcd password (default: env ETCD_PASSWORD or None)",
+    )
     parser.add_argument(
         "-c", "--epoch-config",
         help="Optional path to an epoch-config JSON file (same structure as /config/epoch-config). "

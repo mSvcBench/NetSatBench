@@ -8,14 +8,16 @@ import sys
 # ==========================================
 # ETCD CONNECTION
 # ==========================================
-def connect_etcd(etcd_host: str, etcd_port: int):
+def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None):
     try:
         print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
-        return etcd3.client(host=etcd_host, port=etcd_port)
+        if etcd_user and etcd_password:
+            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password)
+        else:
+            return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
         print(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
-
 
 # ==========================================
 # CONFIG INJECTION LOGIC
@@ -82,10 +84,20 @@ def main() -> int:
         default=int(os.getenv("ETCD_PORT", 2379)),
         help="Etcd port (default: env ETCD_PORT or 2379)",
     )
+    parser.add_argument(
+        "--etcd-user",
+        default=os.getenv("ETCD_USER", None ),
+        help="Etcd user (default: env ETCD_USER or None)",
+    )
+    parser.add_argument(
+        "--etcd-password",
+        default=os.getenv("ETCD_PASSWORD", None ),
+        help="Etcd password (default: env ETCD_PASSWORD or None)",
+    )
 
     args = parser.parse_args()
 
-    etcd = connect_etcd(args.etcd_host, args.etcd_port)
+    etcd = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password)
     apply_config_to_etcd(etcd, args.config)
 
     return 0

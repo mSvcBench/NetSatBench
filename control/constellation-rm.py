@@ -8,28 +8,24 @@ import subprocess
 import json
 import sys
 
-# ==========================================
-# 🚩 CONFIGURATION
-# ==========================================
-ETCD_HOST = os.getenv('ETCD_HOST', '127.0.0.1')
-ETCD_PORT = int(os.getenv('ETCD_PORT', 2379))
-
-
 # ==========================================
 # HELPERS
 # ==========================================
-def connect_etcd(host: str, port: int):
+def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None):
     try:
-        print(f"📁 Connecting to Etcd at {host}:{port}...")
-        return etcd3.client(host=host, port=port)
+        print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
+        if etcd_user and etcd_password:
+            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password)
+        else:
+            return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
         print(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
 
-def get_prefix_data(cli,prefix):
+def get_prefix_data(etcd_client,prefix):
     """Helper to fetch and parse JSON data from Etcd prefixes."""
     data = {}
-    for value, metadata in cli.get_prefix(prefix):
+    for value, metadata in etcd_client.get_prefix(prefix):
         key = metadata.key.decode('utf-8').split('/')[-1]
         try:
             data[key] = json.loads(value.decode('utf-8'))
@@ -162,6 +158,16 @@ def main():
         default=int(os.getenv("ETCD_PORT", 2379)),
         help="Etcd port (default: env ETCD_PORT or 2379)",
     )
+    parser.add_argument(
+        "--etcd-user",
+        default=os.getenv("ETCD_USER", None ),
+        help="Etcd user (default: env ETCD_USER or None)",
+    )
+    parser.add_argument(
+        "--etcd-password",
+        default=os.getenv("ETCD_PASSWORD", None ),
+        help="Etcd password (default: env ETCD_PASSWORD or None)",
+    )
     args = parser.parse_args()
 
     if args.threads < 1:
@@ -172,13 +178,13 @@ def main():
     # ==========================================
     # LOAD CONFIGURATION
     # ==========================================
-    cli = connect_etcd(args.etcd_host, args.etcd_port)
+    etcd_client = connect_etcd(args.etcd_host, args.etcd_port)
 
     # Fetch all relevant configuration
-    satellites = get_prefix_data(cli, '/config/satellites/')
-    users = get_prefix_data(cli, '/config/users/')
-    grounds = get_prefix_data(cli, '/config/grounds/')
-    hosts = get_prefix_data(cli, '/config/hosts/')
+    satellites = get_prefix_data(etcd_client, '/config/satellites/')
+    users = get_prefix_data(etcd_client, '/config/users/')
+    grounds = get_prefix_data(etcd_client, '/config/grounds/')
+    hosts = get_prefix_data(etcd_client, '/config/hosts/')
 
     # Merge satellites and users into one list of nodes to clean up
     print(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
@@ -261,7 +267,7 @@ def main():
     prefixes = ['/']
     for prefix in prefixes:
         print(f"   ➞ Deleting keys with prefix {prefix} ...")
-        cli.delete_prefix(prefix)
+        etcd_client.delete_prefix(prefix)
 
     print("-" * 50)
     print("✅ Global Cleanup Complete.")

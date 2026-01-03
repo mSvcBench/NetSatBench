@@ -26,13 +26,13 @@ def derive_sysid_from_string(value: str) -> str:
 # ----------------------------
 #   MAIN FUNCTIONS
 # ----------------------------
-def init(cli, node_name) -> tuple[str, bool]:
+def init(etcd_client, node_name) -> tuple[str, bool]:
     try:
-        l3_config = json.loads(cli.get(f"/config/L3-config-common")[0].decode())
+        l3_config = json.loads(etcd_client.get(f"/config/L3-config-common")[0].decode())
         area_id = l3_config.get("isis-area-id", "0001")
-        val, _ = cli.get(f"/config/satellites/{node_name}")
-        if not val: val, _ = cli.get(f"/config/users/{node_name}")
-        if not val: val, _ = cli.get(f"/config/grounds/{node_name}")
+        val, _ = etcd_client.get(f"/config/satellites/{node_name}")
+        if not val: val, _ = etcd_client.get(f"/config/users/{node_name}")
+        if not val: val, _ = etcd_client.get(f"/config/grounds/{node_name}")
         my_config = json.loads(val.decode())
         available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
         loopback_ip = available_ips[-1] if available_ips else ipaddress.ip_address("127.0.0.1")
@@ -63,7 +63,7 @@ def init(cli, node_name) -> tuple[str, bool]:
         msg=f"  ❌ Exception triggering IS-IS: {e}"
         return msg, False 
 
-def link_add(cli, node_name, interface) -> tuple[str, bool]:
+def link_add(etcd_client, node_name, interface) -> tuple[str, bool]:
     cmd = [
             "vtysh",
             "-c", "conf t",
@@ -78,7 +78,7 @@ def link_add(cli, node_name, interface) -> tuple[str, bool]:
     except Exception as e:
         return f"  ❌ Exception enabling IS-IS on {interface}: {e}", False
     
-def link_del(cli, node_name, interface) -> tuple[str, bool]:
+def link_del(etcd_client, node_name, interface) -> tuple[str, bool]:
     cmd = [
             "vtysh",
             "-c", "conf t",

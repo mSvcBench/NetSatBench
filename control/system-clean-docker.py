@@ -25,13 +25,6 @@ import sys
 
 
 # --------------------------
-# ETCD
-# --------------------------
-ETCD_HOST = os.getenv("ETCD_HOST", "127.0.0.1")
-ETCD_PORT = int(os.getenv("ETCD_PORT", "2379"))
-
-
-# --------------------------
 # Helpers
 # --------------------------
 def run(cmd: str) -> subprocess.CompletedProcess:
@@ -125,6 +118,16 @@ def main():
         default=int(os.getenv("ETCD_PORT", 2379)),
         help="Etcd port (default: env ETCD_PORT or 2379)",
     )
+    parser.add_argument(
+        "--etcd-user",
+        default=os.getenv("ETCD_USER", None ),
+        help="Etcd user (default: env ETCD_USER or None)",
+    )
+    parser.add_argument(
+        "--etcd-password",
+        default=os.getenv("ETCD_PASSWORD", None ),
+        help="Etcd password (default: env ETCD_PASSWORD or None)",
+    )
 
     args = parser.parse_args()
 
@@ -138,7 +141,10 @@ def main():
         sys.exit(1)
 
     try:
-        etcd = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
+        if args.etcd_user and args.etcd_password:
+            etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port, user=args.etcd_user, password=args.etcd_password)
+        else:
+            etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port)
     except Exception as e:
         print(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)

@@ -21,71 +21,62 @@ NetSatBench is **L3- and application-agnostic**. Any routing protocol (e.g., OSP
 
 ---
 
-## <img src="docs/images/arch_core.png" alt="NetSatBench Logo" width="26"/> Core Architecture
+## <img src="docs/images/arch_core.png" alt="NetSatBench Logo" width="26"/> Emulation Architecture
 
-1. **Distributed Execution and Control**  
+**Distributed Execution and Control**  
    Emulated nodes are instantiated across a cluster (bare metal or VMs). Each emulated node manages its own lifecycle and configuration via an internal control-plane agent, coordinated through a distributed key-value store (Etcd).
 
-2. **Dynamic L2 Fabric**  
+**Dynamic L2 Fabric**  
    VXLAN tunnels encapsulate data-plane node-to-node traffic, ensuring seamless L2 connectivity regardless of container placement on physical hosts.
 
-3. **Scalability Through Distribution**  
+**Scalability Through Distribution**  
    By spreading containers across multiple machines, the emulation can scale to thousands of satellites without overwhelming a single host.
 
-4. **Physics-Driven Networking**  
+**Physics-Driven Networking**  
    Link parameters are derived from orbital mechanics and line-of-sight geometry, ensuring realistic performance evaluation.
 
 ---
 
 ## 📁 Repository Structure
 
-The project is organized into two major domains: the **Infrastructure Domain** and the **Satellite Domain**.
+**Orchestration** - The folder contains Python scripts that manage constellation-wide orchestration tasks.
+Responsible for configuring the cluster of the host and orchestrating the deployment and run-time evolution of the constellation.
 
-### 1. **Infrastructure Domain (`scripts/`)**
+**Satellite Agent** - Contains the software for building the container image of an emulation node.
 
-Responsible for orchestrating the deployment, configuration, and global state management of the constellation.
+**Test** - Contains sample constellation topologies for validation and benchmarking.
 
-- **Constellation Configurator (`constellation-conf.py`)**  
-  Parses declarative JSON topology descriptions and publishes constellation state to an Etcd cluster.
+**Docs** - Contains documentation assets, including images and diagrams.
 
-- **Constellation Builder (`constellation-builder.py`)**  
-  Instantiates satellite containers on distributed hosts over SSH.
+## 🛠️ Cluster Architecture 
+The cluster used for emulation is made of two types of hosts: 
 
-- **Network Configurator (`network-configuration.py`)**  
-  Establishes VXLAN tunnels and configures link properties using Linux Traffic Control (TC).  
-  *Note: marked for future consolidation or removal.*
+- **control host**
+- **workers**
 
-### 2. **Satellite Domain (`sat-container/`)**
+An host of the cluster can act as both control host and worker. 
 
-Defines the Linux container image and internal agents responsible for autonomous satellite behavior.
+Typically, control host and workers are virtual machines or bare-metal servers conected by an 10+ gigabit ethernet.
 
-- **Internal Agent (`sat-agent-internal.py`)**  
-  A persistent daemon that:
-  - Synchronizes with constellation state stored in Etcd.  
-  - Dynamically creates or removes inter-satellite and satellite–ground VXLAN links as topology changes.  
-  - Manages the lifecycle of on-board applications.
+## 📱 Software Requirements
 
----
+### Control host
+The control host should have ssh access to all worker hosts with key-based authentication.
 
-## 🧩 Agnosticism & Workload Support
+It will execute orchestration scripts and run an instance of the **etcd** key-value store used to store the global state of the emulation.
 
-| Feature | Description |
-|--------|-------------|
-| **Routing-Agnostic** | Supports FRR/IS-IS out-of-the-box; compatible with OSPF, BGP, or custom routing modules. |
-| **Net Benchmarking Tools** | Integrates naturally with `iperf`, `ping`, or custom traffic generators. |
-| **Custom Applications** | Any Linux-compatible service or experiment can run inside each emulated satellite. |
+The following software must be installed: 
+- **Etcd** — distributed key-value store for global state coordination. `Etcd Authentication` should be configred so that the user and password used by the orchestration scripts and the satellite agent have read and write permissions to the key-value store.  
+- **Python 3** — with libraries specified in `requirements.txt`  
 
----
+Ensure the following are installed on the `worker hosts` machines where emulated nodes will be instantiated:
 
-## 🛠️ Prerequisites
+### Worker
+A worker should have no-password sudo access fot the ssh user used by the control host to connect to it.
 
-Ensure the following are installed on all worker nodes:
-
-- **Docker** — container runtime for satellite nodes  
-- **Etcd** — distributed key-value store for global state coordination  
-- **Python 3** — with libraries `etcd3` and `protobuf`  
-- **Linux Bridge Utilities** — for VXLAN endpoint and switching configuration  
-
+The following software must be installed:
+- **Docker** — for containerized emulated nodes. The user used by the control host to connect to the worker must have permissions to run docker commands, i.e., sould be added to the docker group. 
+  
 ---
 
 ## ⚡ Quick Start

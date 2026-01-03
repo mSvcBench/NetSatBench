@@ -9,23 +9,32 @@ echo " 🚀 Starting SAT internal agent for ${SAT_NAME:-<unknown>}"
 ulimit -n 1024
 
 # ======================
-# Wait for Etcd
+# Optional: Wait for ETCD CA certificate
 # ======================
+if [[ -n "${ETCD_CA_CERT:-}" ]]; then
+    echo " 🔐 ETCD_CA_CERT defined: waiting for CA file at $ETCD_CA_CERT"
+
+    CA_WAIT_RETRIES="${ETCD_CA_WAIT_RETRIES:-50}"
+    CA_WAIT_DELAY="${ETCD_CA_WAIT_DELAY_SEC:-0.2}"
+
+    for i in $(seq 1 "$CA_WAIT_RETRIES"); do
+        if [[ -s "$ETCD_CA_CERT" ]]; then
+            echo "    ✅ CA certificate found."
+            break
+        fi
+        echo "    ... waiting for CA file ($i/$CA_WAIT_RETRIES)"
+        sleep "$CA_WAIT_DELAY"
+    done
+
+    if [[ ! -s "$ETCD_CA_CERT" ]]; then
+        echo " ❌ ERROR: ETCD CA certificate not found at $ETCD_CA_CERT after waiting."
+        exit 1
+    fi
+fi
+
 export ETCD_HOST="${ETCD_ENDPOINT%%:*}"
 export ETCD_PORT="${ETCD_ENDPOINT##*:}"
 
-WAIT_RETRIES="${ETCD_WAIT_RETRIES:-30}"
-WAIT_DELAY="${ETCD_WAIT_DELAY_SEC:-2}"
-
-echo " ⏳ Waiting for etcd $ETCD_HOST:$ETCD_PORT ..."
-for i in $(seq 1 "$WAIT_RETRIES"); do
-    if timeout 2 bash -lc "echo > /dev/tcp/$ETCD_HOST/$ETCD_PORT" 2>/dev/null; then
-        echo "    ✅ Etcd reachable."
-        break
-    fi
-    echo "    ... retry $i/$WAIT_RETRIES"
-    sleep "$WAIT_DELAY"
-done
 
 # ======================
 # Launch the internal agent
