@@ -8,11 +8,11 @@ import sys
 # ==========================================
 # ETCD CONNECTION
 # ==========================================
-def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None):
+def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None, etcd_ca_cert = None):
     try:
         print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
-            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password)
+            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
         else:
             return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
@@ -94,6 +94,11 @@ def main() -> int:
         "--etcd-password",
         default=os.getenv("ETCD_PASSWORD", None ),
         help="Etcd password (default: env ETCD_PASSWORD or None)",
+    )
+    parser.add_argument(
+        "--etcd-ca-cert",
+        default=os.getenv("ETCD_CA_CERT", None ),
+        help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
     )
 
     args = parser.parse_args()

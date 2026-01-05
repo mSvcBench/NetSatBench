@@ -105,6 +105,11 @@ def main():
         default=os.getenv("ETCD_PASSWORD", None ),
         help="Etcd password (default: env ETCD_PASSWORD or None)",
     )
+    parser.add_argument(
+        "--etcd-ca-cert",
+        default=os.getenv("ETCD_CA_CERT", None ),
+        help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
+    )
 
     args = parser.parse_args()
     
@@ -119,8 +124,8 @@ def main():
         sys.exit(1)
     
     try:
-        if args.etcd_user and args.etcd_password:
-            etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port, user=args.etcd_user, password=args.etcd_password)
+        if args.etcd_user and args.etcd_password and args.etcd_ca_cert:
+            etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port, user=args.etcd_user, password=args.etcd_password, ca_cert=args.etcd_ca_cert)
         else:
             etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port)
     except Exception as e:
