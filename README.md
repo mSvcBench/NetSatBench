@@ -10,10 +10,10 @@
 
 <div align="center">
 
-<img src="docs/images/netsatbench_logo.png" alt="NetSatBench Logo" width="300"/>
+<img src="docs/images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
 # **NetSatBench**  
-## *Large-Scale Satellite Network Benchmarking System*
+## Large-Scale Satellite Network Benchmarking
 
 </div>
 
@@ -25,8 +25,9 @@ VXLAN tunnels dynamically form an **L2 network fabric** interconnecting emulated
 NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g., OSPF, BGP, IS-IS) or user-defined application (e.g., `iperf`, traffic generators, analytics workloads) can run unmodified over the emulated constellation. IS-IS routing is supported out of the box via [FRRouting (FRR)](https://frrouting.org/).
 
 ---
-
-## <img src="docs/images/arch_core.png" alt="Architecture icon" width="26"/> Emulation Architecture
+<div align="center">
+## <img src="docs/images/arch_core.png" alt="Architecture icon" width="300"/> Emulation Architecture
+</div>
 
 <img src="docs/images/netsatbench-arch.png" alt="NetSatBench System Architecture" width="300"/>
 
