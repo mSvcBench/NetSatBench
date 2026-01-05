@@ -12,7 +12,7 @@
 
 </div>
 
-**NetSatBench** is a distributed emulation framework for evaluating communication and application workloads over large-scale satellite constellations. It provides a **dynamic Layer-2 (L2) network substrate** on top of which arbitrary routing protocols and applications can be deployed without modification.
+**NetSatBench** is a distributed emulation framework for evaluating communication and application workloads over large-scale satellite constellations.
 
 Emulated systems consist of satellites, ground stations, and user terminals, each implemented as a **Linux container** and distributed across a cluster of machines. This design enables a high degree of parallelism and scalability.  
 VXLAN tunnels dynamically form an **L2 network fabric** interconnecting emulated nodes, with configurable link characteristics (e.g., latency, bandwidth, loss) to reproduce realistic satellite network behavior.
