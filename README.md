@@ -3,11 +3,6 @@
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Active_Development-orange?style=for-the-badge)
 
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=for-the-badge&logo=python&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-20.10%2B-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-![Status](https://img.shields.io/badge/Status-Active_Development-orange?style=for-the-badge)
-
 <div align="center">
 
 <img src="docs/images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
@@ -25,11 +20,12 @@ VXLAN tunnels dynamically form an **L2 network fabric** interconnecting emulated
 NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g., OSPF, BGP, IS-IS) or user-defined application (e.g., `iperf`, traffic generators, analytics workloads) can run unmodified over the emulated constellation. IS-IS routing is supported out of the box via [FRRouting (FRR)](https://frrouting.org/).
 
 ---
-<div align="center">
-## <img src="docs/images/arch_core.png" alt="Architecture icon" width="300"/> Emulation Architecture
-</div>
 
+## <img src="docs/images/arch_core.png" alt="Architecture icon" width="26"/> Emulation Architecture
+
+<div align="center">
 <img src="docs/images/netsatbench-arch.png" alt="NetSatBench System Architecture" width="300"/>
+</div>
 
 ### Distributed Execution and Control
 Emulated nodes are instantiated across a cluster of hosts (bare metal or virtual machines), referred to as *workers*. Each node manages its own lifecycle and configuration through an internal agent, called `sat-agent`.  
