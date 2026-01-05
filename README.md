@@ -21,7 +21,7 @@ NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g.,
 
 ---
 
-## <img src="docs/images/arch_core.png" alt="Architecture icon" width="26"/> Emulation Architecture
+## 🧩 Emulation Architecture
 
 <div align="center">
 <img src="docs/images/netsatbench-arch.png" alt="NetSatBench System Architecture" width="600"/>
