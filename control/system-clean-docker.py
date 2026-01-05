@@ -2,18 +2,11 @@
 """
 system-clean-docker.py
 
-Undo what your "configure host" script did:
-  1) Remove all-to-all routes among hosts (ip route del ...)
+Undo what "system-init-docker.py" script did:
+  1) Remove all-to-all routes among workers (ip route del ...)
   2) Remove the DOCKER-USER ACCEPT rule you inserted
   3) Remove the remote Docker network (sat-vnet)
   4) Remove the ETCD keys that your script created/overwrote
-
-Linux-only (remote hosts) and uses ssh + subprocess, same style as your script.
-
-Usage:
-  ./teardown_hosts.py                 # uses ./config.json
-  ./teardown_hosts.py --config foo.json
-  ./teardown_hosts.py --dry-run
 """
 
 import argparse
@@ -60,7 +53,7 @@ def get_prefix_data(etcd_client, prefix: str) -> dict:
     return data
 
 
-def iptables_delete_rule_loop(remote: str, rule_check: str, rule_delete: str, dry_run: bool) -> None:
+def iptables_delete_rule_loop(remote: str, rule_check: str, rule_delete: str) -> None:
     """
     Repeatedly delete a rule as long as it exists (covers duplicates).
     rule_check: command used with iptables -C ...
@@ -72,9 +65,6 @@ def iptables_delete_rule_loop(remote: str, rule_check: str, rule_delete: str, dr
         if chk.returncode != 0:
             break  # rule not present
         del_cmd = ssh(remote, rule_delete)
-        if dry_run:
-            print(f"[DRY-RUN] {del_cmd}")
-            break
         out = run(del_cmd)
         if out.returncode != 0:
             # if deletion failed, stop to avoid infinite loop
@@ -82,11 +72,8 @@ def iptables_delete_rule_loop(remote: str, rule_check: str, rule_delete: str, dr
             break
 
 
-def best_effort(remote: str, cmd: str, dry_run: bool) -> None:
+def run_command(remote: str, cmd: str) -> None:
     full = ssh(remote, cmd)
-    if dry_run:
-        print(f"[DRY-RUN] {full}")
-        return
     res = run(full)
     if res.returncode != 0:
         # "best effort": print warning but continue
@@ -104,8 +91,9 @@ def main():
     )
     parser.add_argument(
         "-c", "--config",
-        required=True,
-        help="Path to the JSON configuration file (e.g., config.json)",
+        default=None,
+        help="Path to the JSON worker configuration file (default: None, data from Etcd if not provided)",
+        required=False
     )
     parser.add_argument(
         "--etcd-host",
@@ -131,14 +119,16 @@ def main():
 
     args = parser.parse_args()
 
-    try:
-        cfg = load_json(args.config)
-    except FileNotFoundError:
-        print(f"❌ Error: File {args.config} not found.")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"❌ Error: Failed to parse JSON in {args.config}: {e}")
-        sys.exit(1)
+    cfg = {}
+    if args.config:
+        try:
+            cfg = load_json(args.config)
+        except FileNotFoundError:
+            print(f"❌ Error: File {args.config} not found.")
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(f"❌ Error: Failed to parse JSON in {args.config}: {e}")
+            sys.exit(1)
 
     try:
         if args.etcd_user and args.etcd_password:
@@ -150,73 +140,63 @@ def main():
         sys.exit(1)
 
     # Read hosts from etcd (same as your script)
-    hosts = get_prefix_data(etcd, "/config/hosts/")
-    if not hosts:
-        print("⚠️  No hosts found under /config/hosts/. Nothing to teardown on remote hosts.")
+    if cfg is not None and "workers" in cfg:
+        workers = cfg["workers"]
+    else:
+        workers = get_prefix_data(etcd_client, "/config/workers/")
+    if not workers:
+        print("⚠️  No workers found under /config/workers/. Nothing to teardown on remote workers.")
     else:
         # 1) Remove routes (all-to-all)
-        for host_name, host in hosts.items():
-            ssh_user = host.get("ssh_user", "ubuntu")
-            ssh_ip = host.get("ip", host_name)
-            ssh_key = host.get("ssh_key", "~/.ssh/id_rsa")
-            remote = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
-
-            print(f"➞ Removing routes on host: {host_name} ({ssh_ip})")
-
-            for other_name, other_host in hosts.items():
-                if other_name == host_name:
+        for worker_name, worker in workers.items():
+            ssh_user = worker.get("ssh_user", "ubuntu")
+            ssh_ip = worker.get("ip", worker_name)
+            ssh_key = worker.get("ssh_key", "~/.ssh/id_rsa")
+            remote_str = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
+            sat_vnet = worker.get("sat-vnet", "sat-vnet")
+            sat_vnet_supercidr = worker.get("sat-vnet-supernet", "172.0.0.0/8")
+            print(f"🖥️ Cleaning worker {worker_name} at {ssh_ip}")
+            # Verify connectivity
+            try:
+                subprocess.run(f"ssh -o StrictHostKeyChecking=no -i {ssh_key} {ssh_user}@{ssh_ip} 'echo > /dev/null'", 
+                            shell=True, check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"    ❌ Failed to connect to worker {worker_name} at {ssh_ip}: {e}")
+            
+            for other_name, other_worker in workers.items():
+                if other_name == worker_name:
                     continue
-                other_ip = other_host.get("ip", other_name)
-                other_cidr = other_host.get("sat-vnet-cidr", None)
+                other_ip = other_worker.get("ip", other_name)
+                other_cidr = other_worker.get("sat-vnet-cidr", None)
                 if not other_cidr:
                     continue
 
                 # Your setup used: ip route replace <cidr> via <other_ip>
                 # Teardown: delete that route (best-effort)
-                best_effort(
-                    remote,
-                    f"sudo ip route del {other_cidr} via {other_ip}",
-                    args.dry_run
+                run_command(
+                    remote_str,
+                    f"sudo ip route del {other_cidr} via {other_ip}"
                 )
+                print(f"    ✅ Removed route to {other_name}")
 
-        # 2) Remove iptables DOCKER-USER ACCEPT rule (duplicates-safe)
-        for host_name, host in hosts.items():
-            ssh_user = host.get("ssh_user", "ubuntu")
-            ssh_ip = host.get("ip", host_name)
-            ssh_key = host.get("ssh_key", "~/.ssh/id_rsa")
-            remote = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
+                # inserted rule was: -I DOCKER-USER -s super -d super -j ACCEPT
+                # delete all matches:
+                rule_check = f"sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
+                rule_delete = f"sudo iptables -D DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
+                iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
+                print(f"    ✅ Removed iptables DOCKER-USER forwarding rule on worker: {worker_name} ({ssh_ip})")
 
-            sat_vnet_supercidr = host.get("sat-vnet-supernet", "172.0.0.0/8")
 
-            print(f"➞ Removing DOCKER-USER forwarding rule on host: {host_name} ({ssh_ip})")
-            # inserted rule was: -I DOCKER-USER -s super -d super -j ACCEPT
-            # delete all matches:
-            rule_check = f"sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
-            rule_delete = f"sudo iptables -D DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
-            iptables_delete_rule_loop(remote, rule_check, rule_delete, args.dry_run)
 
-        # 3) Remove docker network on each host
-        for host_name, host in hosts.items():
-            ssh_user = host.get("ssh_user", "ubuntu")
-            ssh_ip = host.get("ip", host_name)
-            ssh_key = host.get("ssh_key", "~/.ssh/id_rsa")
-            remote = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
+                # best-effort: if it doesn't exist, continue
+                run_command(remote_str, f"docker network rm {sat_vnet}")
+                print(f"    ✅ Removed docker network '{sat_vnet}' on worker: {worker_name} ({ssh_ip})")
 
-            sat_vnet = host.get("sat-vnet", "sat-vnet")
-
-            print(f"➞ Removing docker network '{sat_vnet}' on host: {host_name} ({ssh_ip})")
-            # best-effort: if it doesn't exist, continue
-            best_effort(remote, f"docker network rm {sat_vnet}", args.dry_run)
 
     # 4) Remove ETCD keys that your script created/overwrote
-    print("➞ Removing ETCD configuration keys created by the setup script")
-
-    if args.dry_run:
-        print("[DRY-RUN] etcd.delete_prefix('/config/hosts/')")
-    else:
-        etcd.delete_prefix("/config/hosts/")
-
-    print("✅ Teardown completed.")
+    print("✅ Removed /config/workers/ prefix")
+    etcd_client.delete_prefix("/config/workers/")
+    print("👍 Cleaning completed.")
 
 
 if __name__ == "__main__":

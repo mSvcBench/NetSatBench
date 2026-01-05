@@ -76,12 +76,13 @@ def main():
     global etcd_client
 
     parser = argparse.ArgumentParser(
-        description="Configure hosts of the constellation"
+        description="Configure workers of the emulation"
     )
     parser.add_argument(
         "-c", "--config",
-        required=True,
-        help="Path to the JSON configuration file (e.g., config.json)",
+        default="worker-config.json",
+        required=False,
+        help="Path to the JSON worker configuration file (e.g., worker-config.json)",
     )
     parser.add_argument(
         "--etcd-host",
@@ -129,57 +130,55 @@ def main():
     # ==========================================
     # INJECT CONFIGURATION IN ETCD    
     # ==========================================
-    ## load json from file host-config.json and apply to Etcd
+    ## load json from file config.json and apply to Etcd
 
-    allowed_keys = ["satellites", "users", "grounds", "L3-config-common", "hosts", "epoch-config"]
+    allowed_keys = ["satellites", "users", "grounds", "L3-config-common", "workers", "epoch-config"]
 
-    # A. Push General Config & Inventory
+    # A. Push Worker Config to Etcd
     for key, value in config.items():
         if key not in allowed_keys:
             # the key should not be present in epoch file, skip it
             print(f"❌ [{args.config}] Unexpected key '{key}' found in epoch file, skipping...")
             continue
-        elif key in ["hosts"]:
+        elif key in ["workers"]:
             for k, v in value.items():
                 etcd_client.put(f"/config/{key}/{k}", json.dumps(v))
 
 
     # ==========================================
-    # CONFIGURE HOSTS    
+    # CONFIGURE WORKERS    
     # ==========================================
 
-    hosts = get_prefix_data('/config/hosts/')
-    for host_name, host in hosts.items():
-        print(f"➞ Configuring host: {host_name}")
+    workers = get_prefix_data('/config/workers/')
+    for worker_name, worker in workers.items():
+        # print(f"➞ Configuring worker: {worker_name}")
         # Here you can add any host-specific configuration logic if needed
         # For now, we just print the host info
-        print(f"    Host Info: {host}")
-        ssh_user = host.get('ssh_user', 'ubuntu')
-        ssh_ip = host.get('ip', host_name)
-        ssh_key = host.get('ssh_key', '~/.ssh/id_rsa')
-        ssh_interface_name = interface_from_ip_ssh(ssh_user, ssh_ip, ssh_key, host.get('ip', host_name))
-
-        # Example: You could run a remote command to verify connectivity
+        # print(f"    Host Info: {worker}")
+        ssh_user = worker.get('ssh_user', 'ubuntu')
+        ssh_ip = worker.get('ip', worker_name)
+        ssh_key = worker.get('ssh_key', '~/.ssh/id_rsa')
+        ssh_interface_name = interface_from_ip_ssh(ssh_user, ssh_ip, ssh_key, worker.get('ip', worker_name))
+        sat_vnet_cidr = worker.get('sat-vnet-cidr', None)
+        sat_vnet = worker.get('sat-vnet', 'sat-vnet')
+        worker_ip = worker.get('ip', worker_name)
+        remote_str = f"{ssh_user}@{worker_ip} -i {ssh_key}"
+        
+        print(f"🖥️ Configuring worker {worker_name} at {worker_ip}")
+       
+        # Verify connectivity
         try:
-            subprocess.run(f"ssh -o StrictHostKeyChecking=no -i {ssh_key} {ssh_user}@{ssh_ip} 'echo Host {host_name} is reachable'", 
+            subprocess.run(f"ssh -o StrictHostKeyChecking=no -i {ssh_key} {ssh_user}@{ssh_ip} 'echo > /dev/null'", 
                         shell=True, check=True)
         except subprocess.CalledProcessError as e:
-            print(f"❌ Failed to connect to host {host_name} at {ssh_ip}: {e}")
-
-        sat_vnet_cidr = host.get('sat-vnet-cidr', None)
-        sat_vnet = host.get('sat-vnet', 'sat-vnet')
-        host_ip = host.get('ip', host_name)
+            print(f"    ❌ Failed to connect to worker {worker_name} at {ssh_ip}: {e}")
 
         # === Create or verify Docker network remotely ===
-        print(f"🌍 Target host: {host_ip}  →  Configuring Docker Network {sat_vnet} with Subnet {sat_vnet_cidr}")
-        remote = f"{ssh_user}@{host_ip} -i {ssh_key}"
-
-        inspect_cmd = f"ssh {remote} docker network inspect {sat_vnet}"
+        inspect_cmd = f"ssh {remote_str} docker network inspect {sat_vnet}"
         inspect = run(inspect_cmd)
-
         if inspect.returncode == 0:
-            print(f"✔️  Docker network '{sat_vnet}' already exists on {host_ip}, remove it.")
-            remove_cmd = f"ssh {remote} docker network rm {sat_vnet}"
+            # print(f"✔️  Docker network '{sat_vnet}' already exists on {worker_ip}, remove it.")
+            remove_cmd = f"ssh {remote_str} docker network rm {sat_vnet}"
             removed = run(remove_cmd)
             if removed.returncode != 0:
                 raise RuntimeError(
@@ -188,9 +187,8 @@ def main():
                     f"STDOUT:\n{removed.stdout}\n"
                     f"STDERR:\n{removed.stderr}"
                 )
-        print(f"🧱 Creating Docker network '{sat_vnet}' on {host_ip} ...")
         create_cmd = (
-            f"ssh {remote} docker network create --driver=bridge"
+            f"ssh {remote_str} docker network create --driver=bridge"
             f" --subnet={sat_vnet_cidr}"
             f" -o com.docker.network.bridge.enable_ip_masquerade=false"
             f" -o com.docker.network.bridge.trusted_host_interfaces=\"{ssh_interface_name}\""
@@ -200,74 +198,60 @@ def main():
         created = run(create_cmd)
         if created.returncode != 0:
             raise RuntimeError(
-                "Failed to create remote docker network.\n"
+                "   ❌ Failed to create remote docker network.\n"
                 f"CMD: {create_cmd}\n"
                 f"STDOUT:\n{created.stdout}\n"
                 f"STDERR:\n{created.stderr}"
             )
-        
-        # === enable container to container forwarding among hosts === 
-        sat_vnet_supercidr = host.get('sat-vnet-supernet', '172.0.0.0/8')
-        print(f"➞ Enabling container-to-container forwarding on host: {host_name}")
-        # Add iptables rule to allow forwarding from {host_name2} to {host_name}
+        print(f"    ✅ Docker network '{sat_vnet}' created successfully.")
+
+        # Add DOCKER-USER iptables rule to allow forwarding between local and remote containers
+        sat_vnet_supercidr = worker.get('sat-vnet-supernet', '172.0.0.0/8')
         check_forward_cmd = (
-                f"ssh {remote} sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr}"
+                f"ssh {remote_str} sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr}"
                 f" -d {sat_vnet_supercidr}"
                 f" -j ACCEPT"
         )
         check_forwarded = run(check_forward_cmd)
         if check_forwarded.returncode == 0:
-            print(f"✅ Container-to-container forwarding on {host_name} already enabled, skipping.")
+            print(f"    ✅ DOCKER-USER iptables rule enabled successfully.")
         else:    
             forward_cmd = (
-                f"ssh {remote} sudo iptables -I DOCKER-USER -s {sat_vnet_supercidr}"
+                f"ssh {remote_str} sudo iptables -I DOCKER-USER -s {sat_vnet_supercidr}"
                 f" -d {sat_vnet_supercidr}"
                 f" -j ACCEPT"
             )
             forwarded = run(forward_cmd)
             if forwarded.returncode != 0:
-                print(f"❌ Failed to enable container-to-container forwarding on {host_name}.\n"
+                print(f"    ❌ Failed to enable DOCKER-USER iptables rule."
                     f"CMD: {forward_cmd}\n"
                     f"STDOUT:\n{forwarded.stdout}\n"
                     f"STDERR:\n{forwarded.stderr}")
             else:
-                print(f"✅ Container-to-container forwarding enabled successfully on {host_name}.")
+                print(f"    ✅ DOCKER-USER iptables rule enabled successfully.")
 
-        print(f"✅ Docker network '{sat_vnet}' created successfully on {host_ip}.")
-
-
-    # ==========================================
-    # CONFIGURE ALL TO ALL ROUTES AMONG SAT-VNET
-    # ==========================================
-    for host_name, host in hosts.items():
-        print(f"➞ Configuring routes on host: {host_name}")
-        ssh_user = host.get('ssh_user', 'ubuntu')
-        ssh_ip = host.get('ip', host_name)
-        ssh_key = host.get('ssh_key', '~/.ssh/id_rsa')
-        remote = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
-        sat_vnet = host.get('sat-vnet', 'sat-vnet')
-
-        for other_host_name, other_host in hosts.items():
-            if other_host_name == host_name:
+        
+        for other_worker_name, other_worker in workers.items():
+            if other_worker_name == worker_name:
                 continue  # Skip self
-            other_host_ip = other_host.get('ip', other_host_name)
-            other_sat_vnet_cidr = other_host.get('sat-vnet-cidr', None)
+            other_worker_ip = other_worker.get('ip', other_worker_name)
+            other_sat_vnet_cidr = other_worker.get('sat-vnet-cidr', None)
             if not other_sat_vnet_cidr:
-                print(f"⚠️  Skipping route to {other_host_name}: No sat-vnet-cidr defined.")
+                print(f"    ⚠️  Skipping route to {other_worker_name}: No sat-vnet-cidr defined.")
                 continue
-
-            print(f"   ➞ Adding route to {other_host_name} ({other_sat_vnet_cidr}) via {other_host_ip} ...")
             route_cmd = (
-                f"ssh {remote} sudo ip route replace {other_sat_vnet_cidr} via {other_host_ip}"
+                f"ssh {remote_str} sudo ip route replace {other_sat_vnet_cidr} via {other_worker_ip}"
             )
             routed = run(route_cmd)
             if routed.returncode != 0:
-                print(f"❌ Failed to add route to {other_host_name} on {host_name}.\n"
+                print(f"    ❌ Failed to add route to {other_worker_name}."
                     f"CMD: {route_cmd}\n"
                     f"STDOUT:\n{routed.stdout}\n"
                     f"STDERR:\n{routed.stderr}")
             else:
-                print(f"✅ Route to {other_host_name} added successfully on {host_name}.")
+                print(f"    ✅ IP route to {other_worker_name} added successfully")
+    print("👍 All workers configured successfully.")
+        
 
 if __name__ == "__main__":
     main()

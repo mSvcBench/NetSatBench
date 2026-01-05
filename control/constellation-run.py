@@ -194,7 +194,7 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
                 l["endpoint2"], ep2_antenna,
             )
             l["vni"] = vni
-            print(f"🪢  [{filename}] Syncing link-add {l['endpoint1']} - {l['endpoint2']} with VNI {vni}")
+            print(f"🛜  [{filename}] Syncing link-add {l['endpoint1']} - {l['endpoint2']} with VNI {vni}")
 
             etcd.put(etcd_key1, json.dumps(l))
             etcd.put(etcd_key2, json.dumps(l))

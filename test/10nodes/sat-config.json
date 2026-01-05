@@ -1,0 +1,76 @@
+{
+  "L3-config-common": {
+    "enable-netem"  : true,
+    "enable-routing" : true,
+    "routing-module": "extra.isis",
+    "isis-area-id": "0001"
+  },
+  "epoch-config": {
+    "epoch-dir": "test/10nodes/constellation-epochs",
+    "file-pattern": "NetSatBench-epoch*.json"
+  },
+  "satellites": {
+    "sat1": {
+      "id":1,
+      "worker": "host-1",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.0/29"
+        },
+    "sat2": {
+      "id": 2,
+      "worker": "host-1",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.8/29"
+    },
+    "sat3": {
+      "id": 3,
+      "worker": "host-1",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.16/29"
+    },
+    "sat4": {
+      "id": 4,
+      "worker": "host-1",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.24/29"
+    },
+    "sat5": {
+      "id": 5,
+      "worker": "host-1",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.32/29"
+    },
+    "sat6": {
+      "id": 6,
+      "worker": "host-1",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.40/29"
+    },
+    "sat7": {
+      "id": 7,
+      "worker": "host-2",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.48/29"
+    },
+    "sat8": {
+      "id": 8,
+      "worker": "host-2",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.56/29"
+    },
+    "sat9": {
+      "id": 9,
+      "worker": "host-2",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.64/29"
+    }
+  },
+  "grounds": {
+    "grd1": {
+      "id": 10,
+      "worker": "host-2",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.72/29"
+    }
+  }
+}

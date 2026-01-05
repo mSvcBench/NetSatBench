@@ -42,7 +42,7 @@ class RemoteCommandError(RuntimeError):
 def run_ssh(
     *,
     ssh_username: str,
-    sat_host: str,
+    ssh_host: str,
     ssh_key_path: str,
     remote_args: list[str],
     check: bool = False,
@@ -62,7 +62,7 @@ def run_ssh(
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=no",
         "-o", f"ConnectTimeout={timeout}",
-        f"{ssh_username}@{sat_host}",
+        f"{ssh_username}@{ssh_host}",
         "--",
         *remote_args,
     ]
@@ -76,7 +76,7 @@ def run_ssh(
             timeout=timeout + 5,
         )
     except subprocess.TimeoutExpired:
-        raise SshError(f"SSH timeout connecting to {ssh_username}@{sat_host}")
+        raise SshError(f"SSH timeout connecting to {ssh_username}@{ssh_host}")
 
     stderr = (cp.stderr or "").strip()
 
@@ -91,18 +91,18 @@ def run_ssh(
 
     return cp
 
-def node_removal(ssh_user: str, ssh_ip: str, ssh_key: str, name: str, node_host: str)-> tuple[str, bool, str]:
+def node_removal(ssh_user: str, ssh_host: str, ssh_key: str, name: str, worker: str)-> tuple[str, bool, str]:
     try:
             # ----------------------------------------
             # Check if container exists
             # ----------------------------------------
-            ps = run_ssh(
-                    ssh_username=ssh_user,
-                    sat_host=ssh_ip,
-                    ssh_key_path=ssh_key,
-                    remote_args=["docker", "ps", "-a", "--format", "{{.Names}}","|","grep","-Fxq", name],
-                    check=True
-                )
+        ps = run_ssh(
+                ssh_username=ssh_user,
+                ssh_host=ssh_host,
+                ssh_key_path=ssh_key,
+                remote_args=["docker", "ps", "-a", "--format", "{{.Names}}","|","grep","-Fxq", name],
+                check=True
+            )
     except SshError as e:
         msg = f"    ❌ SSH failure: {e}"
         return name, False, msg
@@ -116,7 +116,7 @@ def node_removal(ssh_user: str, ssh_ip: str, ssh_key: str, name: str, node_host:
     try:
         del_proc = run_ssh(
                 ssh_username=ssh_user,
-                sat_host=ssh_ip,
+                ssh_host=ssh_host,
                 ssh_key_path=ssh_key,
                 remote_args=["docker", "rm", "-f", name],
                 check=True
@@ -128,7 +128,7 @@ def node_removal(ssh_user: str, ssh_ip: str, ssh_key: str, name: str, node_host:
         msg = f"    ❌ Remote docker command failed: {e}"
         return name, False, msg
     
-    msg = f" Removed on {node_host}"
+    msg = f" Removed on {worker}"
     return name, True, msg
 
 def main():
@@ -184,7 +184,7 @@ def main():
     satellites = get_prefix_data(etcd_client, '/config/satellites/')
     users = get_prefix_data(etcd_client, '/config/users/')
     grounds = get_prefix_data(etcd_client, '/config/grounds/')
-    hosts = get_prefix_data(etcd_client, '/config/hosts/')
+    workers = get_prefix_data(etcd_client, '/config/workers/')
 
     # Merge satellites and users into one list of nodes to clean up
     print(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
@@ -213,17 +213,17 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = {}
         for name, node in all_nodes.items():
-            node_host = node.get('host')
+            worker = node.get('worker')
             # Validation: Does the host exist in config?
-            if node_host not in hosts:
-                print(f"⚠️  Skipping {name}: Host '{node_host}' not found in /config/hosts")
+            if worker not in workers:
+                print(f"⚠️  Skipping {name}: Worker '{worker}' not found in /config/workers")
                 continue
             future = executor.submit(
                 node_removal,
-                ssh_user=hosts.get(node_host, {}).get('ssh_user', 'ubuntu'),
-                ssh_ip=hosts.get(node_host, {}).get('ip', node_host),
-                ssh_key=hosts.get(node_host, {}).get('ssh_key', '~/.ssh/id_rsa'),
-                name=name, node_host=node_host
+                ssh_user=workers.get(worker, {}).get('ssh_user', 'ubuntu'),
+                ssh_host=workers.get(worker, {}).get('ip', worker),
+                ssh_key=workers.get(worker, {}).get('ssh_key', '~/.ssh/id_rsa'),
+                name=name, worker=worker
             )
             futures[future] = name
         for fut in concurrent.futures.as_completed(futures):
@@ -255,22 +255,20 @@ def main():
     print(f"❌ Failed : {fail}")
     print("==============================")
 
-    if fail == 0:
-        print("\n✅ Constellation Cleaning Complete.")
-    else:
+    if fail != 0:
         print("\n⚠️ Constellation Cleaning Completed with failures.")
         
     # ==========================================
     # CLEAN ETCD ENTRIES
     # ==========================================
     print("\n🧼 Cleaning up Etcd entries...")
-    prefixes = ['/']
+    prefixes = ["/config/L3-config-common", "/config/satellites/", "/config/users/", "/config/grounds/", "/config/epoch-config"]
     for prefix in prefixes:
         print(f"   ➞ Deleting keys with prefix {prefix} ...")
         etcd_client.delete_prefix(prefix)
 
     print("-" * 50)
-    print("✅ Global Cleanup Complete.")
+    print("👍 Global Cleanup Complete.")
     return 0
 
 if __name__ == "__main__":

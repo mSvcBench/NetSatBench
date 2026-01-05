@@ -6,9 +6,7 @@ FROM python:3.11-slim
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     ETCD_ENDPOINT=127.0.0.1:2379 \
-    SAT_NAME="sat" \
-    # Updated Script Name
-    LINK_ACTIONS_SH="/agent/link-actions.sh"
+    NODE_NAME="sat"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -31,11 +29,10 @@ WORKDIR /app
 # Copy Scripts
 COPY start-sat-agent.sh /app/start-sat-agent.sh
 COPY sat-agent.py /app/sat-agent.py
-# COPY link-actions.sh /app/link-actions.sh
 COPY extra /app/extra
 COPY etc/frr /etc/frr
 
-RUN chmod +x /app/start-sat-agent.sh && chmod +x /app/*.sh
+RUN chmod +x /app/start-sat-agent.sh
 HEALTHCHECK --interval=30s --timeout=5s --retries=5 CMD \
   bash -lc 'pgrep -f "/app/sat-agent.py" >/dev/null 2>&1 || exit 1'
 

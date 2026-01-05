@@ -28,7 +28,7 @@ def apply_config_to_etcd(etcd, filename: str):
         "users",
         "grounds",
         "L3-config-common",
-        "hosts",
+        "workers",
         "epoch-config",
     ]
 
@@ -44,7 +44,7 @@ def apply_config_to_etcd(etcd, filename: str):
                 etcd.put(f"/config/{key}", json.dumps(value))
             elif key in ["epoch-config"]:
                 etcd.put(f"/config/{key}", json.dumps(value))
-            elif key in ["satellites", "users", "grounds", "hosts"]:
+            elif key in ["satellites", "users", "grounds"]:
                 for name, node_cfg in value.items():
                     etcd.put(
                         f"/config/{key}/{name}",
@@ -70,8 +70,9 @@ def main() -> int:
     )
     parser.add_argument(
         "-c", "--config",
-        required=True,
-        help="Path to the JSON configuration file (e.g., config.json)",
+        default="sat-config.json",
+        required=False,
+        help="Path to the JSON emulation configuration file (e.g., sat-config.json)",
     )
     parser.add_argument(
         "--etcd-host",

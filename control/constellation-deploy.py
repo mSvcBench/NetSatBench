@@ -43,7 +43,7 @@ class RemoteCommandError(RuntimeError):
 def run_ssh(
     *,
     ssh_username: str,
-    sat_host: str,
+    ssh_host: str,
     ssh_key_path: str,
     remote_args: list[str],
     check: bool = False,
@@ -63,7 +63,7 @@ def run_ssh(
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=no",
         "-o", f"ConnectTimeout={timeout}",
-        f"{ssh_username}@{sat_host}",
+        f"{ssh_username}@{ssh_host}",
         "--",
         *remote_args,
     ]
@@ -77,7 +77,7 @@ def run_ssh(
             timeout=timeout + 5,
         )
     except subprocess.TimeoutExpired:
-        raise SshError(f"SSH timeout connecting to {ssh_username}@{sat_host}")
+        raise SshError(f"SSH timeout connecting to {ssh_username}@{ssh_host}")
 
     stderr = (cp.stderr or "").strip()
 
@@ -94,11 +94,11 @@ def run_ssh(
 
 def recreate_and_run_container(
     *,
-    sat_name: str,
-    sat_host: str,
+    node_name: str,
+    worker: str,
     ssh_username: str,
     ssh_key_path: str,
-    sat_host_bridge_name: str,
+    worker_bridge: str,
     container_image: str,
     etcd_host: str,
     etcd_port: int,
@@ -111,22 +111,22 @@ def recreate_and_run_container(
         # --- Check if container exists ---
         ps = run_ssh(
             ssh_username=ssh_username,
-            sat_host=sat_host,
+            ssh_host=worker,
             ssh_key_path=ssh_key_path,
             remote_args=["docker", "ps", "-a", "--format", "{{.Names}}"],
             check=True,  # if docker command fails, raise RemoteCommandError
         )
 
         names = ps.stdout.splitlines() if ps.stdout else []
-        exists = sat_name in names
+        exists = node_name in names
 
         # --- Remove existing container (ignore errors, but still raise SSH transport errors) ---
         if exists:
             run_ssh(
                 ssh_username=ssh_username,
-                sat_host=sat_host,
+                ssh_host=worker,
                 ssh_key_path=ssh_key_path,
-                remote_args=["docker", "rm", "-f", sat_name],
+                remote_args=["docker", "rm", "-f", node_name],
                 check=False,   # ignore non-zero from docker rm
                 quiet=True,
             )
@@ -134,12 +134,12 @@ def recreate_and_run_container(
         if etcd_user and etcd_password and etcd_ca_cert:
             run_cmd = [
                 "docker", "run", "-d",
-                "--name", sat_name,
-                "--hostname", sat_name,
-                "--net", sat_host_bridge_name,
+                "--name", node_name,
+                "--hostname", node_name,
+                "--net",worker_bridge,
                 "--privileged",
                 "--pull=always",
-                "-e", f"SAT_NAME={sat_name}",
+                "-e", f"NODE_NAME={node_name}",
                 "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}",
                 "-e", f"ETCD_USER={etcd_user}",
                 "-e", f"ETCD_PASSWORD={etcd_password}",
@@ -149,18 +149,18 @@ def recreate_and_run_container(
         else:
             run_cmd = [
                 "docker", "run", "-d",
-                "--name", sat_name,
-                "--hostname", sat_name,
-                "--net", sat_host_bridge_name,
+                "--name", node_name,
+                "--hostname", node_name,
+                "--net", worker_bridge,
                 "--privileged",
                 "--pull=always",
-                "-e", f"SAT_NAME={sat_name}",
+                "-e", f"NODE_NAME={node_name}",
                 "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}",
                 container_image,
             ]
         run_ssh(
             ssh_username=ssh_username,
-            sat_host=sat_host,
+            ssh_host=worker,
             ssh_key_path=ssh_key_path,
             remote_args=run_cmd,
             check=True,
@@ -175,7 +175,7 @@ def recreate_and_run_container(
                 "-o", "StrictHostKeyChecking=no",
                 "-o", f"ConnectTimeout=30",
                 etcd_ca_cert,
-                f"{ssh_username}@{sat_host}:/tmp/etcd-ca.crt",
+                f"{ssh_username}@{worker}:/tmp/etcd-ca.crt",
             ]
             try:
                 cp = subprocess.run(
@@ -186,7 +186,7 @@ def recreate_and_run_container(
                     timeout=35,
                 )
             except subprocess.TimeoutExpired:
-                raise SshError(f"SCP timeout connecting to {ssh_username}@{sat_host}")
+                raise SshError(f"SCP timeout connecting to {ssh_username}@{worker}")
             
             stderr = (cp.stderr or "").strip()
             if cp.returncode != 0:
@@ -196,9 +196,9 @@ def recreate_and_run_container(
             # now copy into the container
             run_ssh(
                 ssh_username=ssh_username,
-                sat_host=sat_host,
+                ssh_host=worker,
                 ssh_key_path=ssh_key_path,
-                remote_args=["docker", "cp", "/tmp/etcd-ca.crt", f"{sat_name}:/app/etcd-ca.crt"],
+                remote_args=["docker", "cp", "/tmp/etcd-ca.crt", f"{node_name}:/app/etcd-ca.crt"],
                 check=True,
             )
     except SshError as e:
@@ -211,7 +211,7 @@ def recreate_and_run_container(
 def create_one_node(
     name: str,
     node: Dict[str, Any],
-    hosts: Dict[str, Any],
+    workers: Dict[str, Any],
     etcd_host: str,
     etcd_port: int,
     etcd_user: str = None,
@@ -221,26 +221,26 @@ def create_one_node(
     """
     Returns: (name, success, message)
     """
-    node_host = node.get('host')
-    if not node_host:
-        return name, False, "❌ Missing 'host' field in node config"
+    worker = node.get('worker', None)
+    if not worker:
+        return name, False, "❌ Missing 'worker' field in node config"
 
-    if node_host not in hosts:
-        return name, False, f"❌ Unknown host '{node_host}' (node assigned to non-existing /config/hosts entry)"
+    if worker not in workers:
+        return name, False, f"❌ Unknown worker '{worker}' (node assigned to non-existing /config/workers entry)"
 
-    host_info = hosts[node_host]
-    ssh_user = host_info.get('ssh_user', 'ubuntu')
-    ssh_key = host_info.get('ssh_key', '~/.ssh/id_rsa')
-    sat_bridge = host_info.get('sat-vnet', 'sat-vnet')
+    worker_info = workers[worker]
+    ssh_user = worker_info.get('ssh_user', 'ubuntu')
+    ssh_key = worker_info.get('ssh_key', '~/.ssh/id_rsa')
+    worker_bridge = worker_info.get('sat-vnet', 'sat-vnet')
     image = node.get('image', 'msvcbench/sat-container:latest')
 
     try:
         cmd = recreate_and_run_container(
-            sat_name=name,
-            sat_host=node_host,
+            node_name=name,
+            worker=worker,
             ssh_username=ssh_user,
             ssh_key_path=ssh_key,
-            sat_host_bridge_name=sat_bridge,
+            worker_bridge=worker_bridge,
             container_image=image,
             etcd_host=etcd_host,
             etcd_port=etcd_port,
@@ -248,7 +248,7 @@ def create_one_node(
             etcd_password=etcd_password,
             etcd_ca_cert=etcd_ca_cert,
         )
-        msg = f" Created on host={node_host}"
+        msg = f" Created on worker={worker}"
         return name, True, msg
     except Exception as e:
         return name, False, f"❌ Deployment failed: {e}"
@@ -311,7 +311,7 @@ def main() -> int:
     satellites = get_prefix_data(etcd_client, '/config/satellites/')
     users = get_prefix_data(etcd_client, '/config/users/')
     grounds = get_prefix_data(etcd_client, '/config/grounds/')
-    hosts = get_prefix_data(etcd_client, '/config/hosts/')
+    workers = get_prefix_data(etcd_client, '/config/workers/')
 
     print(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
 
@@ -328,8 +328,8 @@ def main() -> int:
         print("⚠️ Warning: No nodes found. Run 'init.py' to populate Etcd first.")
         return 1
 
-    if not hosts:
-        print("❌ Error: No hosts found in /config/hosts/. Cannot deploy.")
+    if not workers:
+        print("❌ Error: No workers found in /config/workers/. Cannot deploy.")
         return 1
 
     # 2) CREATE CONTAINERS IN PARALLEL
@@ -338,8 +338,6 @@ def main() -> int:
     ok = 0
     fail = 0
 
-    # If you want to avoid overloading a single remote host, a future enhancement is
-    # to add per-host semaphores. For now, this is global parallelism.
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = {}
         for name, node in all_nodes.items():
@@ -347,7 +345,7 @@ def main() -> int:
                 create_one_node,
                 name,
                 node,
-                hosts,
+                workers,
                 etcd_host=args.etcd_host,
                 etcd_port=args.etcd_port,
                 etcd_user=args.etcd_user,
@@ -386,7 +384,7 @@ def main() -> int:
     print("==============================")
 
     if fail == 0:
-        print("\n✅ Constellation Build Complete.")
+        print("\n👍 Constellation Build Completed.")
         return 0
     else:
         print("\n⚠️ Constellation Build Completed with failures.")

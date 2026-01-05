@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo " 🚀 Starting SAT internal agent for ${SAT_NAME:-<unknown>}"
+echo " 🚀 Starting SAT internal agent for ${NODE_NAME:-<unknown>}"
 
 # ======================
 # Fix Environment

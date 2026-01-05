@@ -26,7 +26,7 @@ if ":" in ETCD_ENDPOINT:
 else:
     ETCD_HOST, ETCD_PORT = ETCD_ENDPOINT, 2379
 
-my_node_name = os.getenv("SAT_NAME")
+my_node_name = os.getenv("NODE_NAME")
 
 # KEYS
 KEY_LINKS = f"/config/links/{my_node_name}_"
@@ -257,7 +257,7 @@ def create_vxlan_link(
         log.info(f"♻️ Link {vxlan_if} already exists, updating...")
         return
     
-    log.info(f"🪢 Creating Link: {vxlan_if} (VNI: {target_vni})")
+    log.info(f"🛜 Creating Link: {vxlan_if} (VNI: {target_vni})")
 
     run([
         "ip", "link", "add", vxlan_if,
