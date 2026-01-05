@@ -28,8 +28,8 @@ NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g.,
 </div>
 
 ### Distributed Execution and Control
-Emulated nodes are instantiated across a cluster of hosts (bare metal or virtual machines), referred to as *workers*. Each node manages its own lifecycle and configuration through an internal agent, called `sat-agent`.  
-The `sat-agent` continuously enforces the desired network and computing state stored in an **Etcd distributed key-value store**, whose contents are updated at run time by a dedicated control host to reflect system dynamics.  
+Emulated nodes are instantiated across a cluster of hosts (bare metal or virtual machines), referred to as *workers*. Each eulated node manages its own lifecycle and configuration through an internal agent, called `sat-agent`.  
+The `sat-agent` continuously enforces the desired network and computing state of the constellation stored in an **Etcd distributed key-value store**, whose contents are updated at run time by a dedicated control host to reflect system dynamics.  
 The format and semantics of the Etcd keys used by NetSatBench are described in the [JSON format documentation](docs/json-format.md).
 
 ### Dynamic L2 Fabric
