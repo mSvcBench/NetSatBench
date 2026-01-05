@@ -256,6 +256,7 @@ def run_all_epochs(
     epoch_dir: Optional[str],
     file_pattern: Optional[str],
     enable_wait: bool = True,
+    loop_delay: Optional[int] = None,
 ) -> int:
     if epoch_dir is None or file_pattern is None:
         epoch_dir_etcd, file_pattern_etcd = load_epoch_dir_and_pattern_from_etcd(etcd)
@@ -268,9 +269,14 @@ def run_all_epochs(
         return 1
 
     print(f"🚀 Starting emulation with {len(files)} epochs found.")
-    for f in files:
-        apply_single_epoch(f, etcd, enable_wait=enable_wait)
-
+    while True:
+        for f in files:
+            apply_single_epoch(f, etcd, enable_wait=enable_wait)
+        if loop_delay is not None:
+            print(f"🔄 Looping emulation after {loop_delay} seconds...")
+            time.sleep(loop_delay)
+        else:
+            break
     return 0
 
 
@@ -303,22 +309,23 @@ def main() -> int:
         help="Etcd password (default: env ETCD_PASSWORD or None)",
     )
     parser.add_argument(
-        "-c", "--epoch-config",
-        help="Optional path to an epoch-config JSON file (same structure as /config/epoch-config). "
-             "If provided, it overrides the Etcd /config/epoch-config values.",
-    )
-    parser.add_argument(
         "--epoch-dir",
-        help="Override epoch directory (takes precedence over Etcd and --epoch-config).",
+        help="Override epoch directory (takes precedence over Etcd).",
     )
     parser.add_argument(
         "--file-pattern",
-        help="Override epoch filename pattern (takes precedence over Etcd and --epoch-config).",
+        help="Override epoch filename pattern (takes precedence over Etcd).",
     )
     parser.add_argument(
         "--no-wait",
         action="store_true",
         help="Disable virtual-time synchronization (do not sleep on epoch-time).",
+    )
+    parser.add_argument(
+        "--loop-delay",
+        default=None,
+        type=int,
+        help="Enable loop repeat with a fixed delay between last and first epochs (in seconds)."
     )
 
     args = parser.parse_args()
@@ -334,21 +341,9 @@ def main() -> int:
     # If an epoch-config file is provided, load it and use it unless user overrides epoch-dir/pattern explicitly.
     epoch_dir = args.epoch_dir
     file_pattern = args.file_pattern
-    if args.epoch_config:
-        try:
-            with open(args.epoch_config, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            epoch_dir = epoch_dir or cfg.get("epoch-dir")
-            file_pattern = file_pattern or cfg.get("file-pattern")
-        except FileNotFoundError:
-            print(f"❌ Error: epoch-config file '{args.epoch_config}' not found.")
-            return 2
-        except json.JSONDecodeError as e:
-            print(f"❌ Error: failed to parse epoch-config JSON '{args.epoch_config}': {e}")
-            return 2
 
     enable_wait = not args.no_wait
-    return run_all_epochs(etcd, epoch_dir, file_pattern, enable_wait=enable_wait)
+    return run_all_epochs(etcd, epoch_dir, file_pattern, enable_wait=enable_wait, loop_delay=args.loop_delay)
 
 
 if __name__ == "__main__":

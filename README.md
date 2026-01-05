@@ -28,25 +28,24 @@ NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g.,
 </div>
 
 ### Distributed Execution and Control
-Emulated nodes are instantiated across a cluster of hosts (bare metal or virtual machines), referred to as *workers*. Each eulated node manages its own lifecycle and configuration through an internal agent, called `sat-agent`.  
+Emulated nodes are instantiated across a cluster of hosts (bare metal or virtual machines), referred to as *workers*. Emulated nodes manage their own lifecycle and configuration through an internal agent, called `sat-agent`.  
 The `sat-agent` continuously enforces the desired network and computing state of the constellation stored in an **Etcd distributed key-value store**, whose contents are updated at run time by a dedicated control host to reflect system dynamics.  
 The format and semantics of the Etcd keys used by NetSatBench are described in the [JSON format documentation](docs/json-format.md).
 
 ### Dynamic L2 Fabric
-Node-to-node links—such as inter-satellite links (ISLs) and satellite-to-ground links (SGLs)—are modeled as VXLAN tunnels dynamically created and managed by each node’s `sat-agent`, based on the global system state stored in Etcd.  
+Node-to-node links, such as inter-satellite links (ISLs) and satellite-to-ground links (SGLs), are modeled as VXLAN tunnels dynamically created and managed by each node’s `sat-agent`, based on the global system state stored in Etcd.  
 This abstraction provides seamless **Layer-2 connectivity**, independent of container placement within the cluster.
 
 ### Scalability Through Distribution
-By distributing containers across multiple hosts and relying on publish–subscribe coordination via Etcd, NetSatBench scales to thousands of emulated nodes without overloading any single machine.  
-Each worker can host multiple containers, each representing a satellite, ground station, or user terminal with its own networking stack and `sat-agent`.
+By distributing containers across multiple hosts and relying on publish–subscribe coordination via Etcd, NetSatBench can scale to thousands of emulated nodes with modest resource requirements per host. 
+Each worker can host multiple containers, each representing a satellite, ground station, or user terminal with its own networking stack, `sat-agent` and `FRR` daemon. A raw emulated node, without user tasks, typically requires less than 50 MB of RAM and minimal CPU resources when idle. We have successfully run emulations with 100 emulated nodes per worker with 8GB of RAM and 4 CPUs.
 
-### Built-in Configurable IP Routing Support
-FRRouting (FRR) running over the L2 VXLAN fabric is natively supported. Upon link creation or removal, each `sat-agent` may invoke a user-provided routing configuration utility to update the routing daemon or perform protocol-specific actions.  
+### Built-in Extensible IP Routing Support
+FRRouting (FRR) running over the L2 VXLAN fabric is natively supported. Upon link creation or removal, each `sat-agent` may invoke a user-provided routing configuration utility to update the routing daemon or perform custom routing actions.  
 A built-in IS-IS configuration utility is provided for FRR; its design and integration with the `sat-agent` are described in the [routing interface documentation](docs/routing-interface.md).
 
-### User Application Lifecycle
-User applications and tasks can be scheduled for execution inside emulated nodes at specific times defined in the Etcd key-value store.  
-Each `sat-agent` continuously monitors a command queue in Etcd and executes user-defined commands inside its container, enabling dynamic application deployment and execution across the emulated satellite system.
+### On-board Tasks and Application Execution 
+Applications and/or tasks can be scheduled for execution inside emulated nodes at specific times. Each `sat-agent` continuously monitors a command to run in Etcd and executes them inside its container, enabling dynamic application deployment and execution across the emulated satellite system.
 
 ### Physics-Driven Networking
 Link parameters are derived from orbital mechanics and line-of-sight geometry, enabling realistic and reproducible performance evaluation.
