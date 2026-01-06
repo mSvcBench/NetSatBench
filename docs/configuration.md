@@ -229,7 +229,7 @@ The value contains the following fields:
 
 ##### `subnet_ip`
 - Type: string (CIDR notation, optional)  
-- Description: Internal IP subnet assigned to the satellite node. If this field is omitted, no internal subnet is assigned.
+- Description: Internal IP subnet assigned to the satellite node. The subnet must be at least a `/30`. The last usable IP address within this subnet is assigned to the node’s loopback interface and is used for routing over the L2/VXLAN network fabric. If this field is omitted, no internal subnet is assigned to the node.
 
 ##### `l3-config`
 - Type: object (optional)  

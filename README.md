@@ -62,6 +62,8 @@ Sample emulated satellite systems used for validation and benchmarking. Configur
 
 **docs/**  
 Documentation assets, including images, diagrams, and architectural descriptions.
+- [Configuration Manual](docs/configuration.md) — how to define and customize emulated satellite systems
+- [Routing Interface](docs/routing-interface.md) — specification of the routing module interface
 
 ---
 
@@ -154,7 +156,7 @@ python3 control/constellation-deploy.py
 Finally, wait a few seconds to ensure that all containers are fully up and running, and then execute the `constellation-run.py` script to start the emulation.
 The system state will evolve over time according to the epoch files:
 ```bash
-python3 control/constellation-run.py
+python3 control/constellation-run.py --loop-delay 120
 ```
    
 ### 4. Monitoring and Interaction
