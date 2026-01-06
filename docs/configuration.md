@@ -1,5 +1,16 @@
-# NetSatBench Configuration Reference Manual
+<div align="center">
+<img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
+# NetSatBench Configuration Reference Manual 
+
+</div>
+
+## Table of contents
+1. [Worker Configuration File](#worker-configuration-file)
+2. [Satellite Configuration File](#satellite-configuration-file)
+3. [Epoch Configuration File](#epoch-configuration-file)
+
+## Introduction
 This document provides a unified reference for all JSON configuration files used by **NetSatBench**.  
 It describes the structure, semantics, and constraints of:
 
@@ -11,11 +22,11 @@ All configurations are expressed in **JSON format** and are consumed by the NetS
 
 ---
 
-## Worker Configuration File (worker-config.json)
+## Worker Configuration File
 
-### Overview
+### Overview 
 
-The worker configuration file defines:
+The worker configuration file `worker-config.json` defines:
 
 - The set of worker hosts available in the cluster  
 - SSH connection parameters for remote management from the control host  
@@ -97,11 +108,11 @@ Each worker entry must define the following fields:
 
 ---
 
-## Satellite Configuration File (sat-config.json)
+## Satellite Configuration File
 
 ### Overview
 
-The satellite configuration file defines:
+The satellite configuration file, `sat-config.json`, defines:
 
 - Global Layer-3 and routing options shared by all nodes  
 - The set of satellite nodes in the constellation  
@@ -203,6 +214,13 @@ Defines the set of satellite nodes in the emulated constellation.
 
 Defines the set of ground station nodes connected to the constellation.  
 Ground stations use the same fields and semantics as satellites.
+
+---
+
+#### `users`
+
+Defines the set of user nodes connected to the constellation.  
+Users use the same fields and semantics as satellites.
 
 ---
 

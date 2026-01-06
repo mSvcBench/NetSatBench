@@ -28,7 +28,6 @@ NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g.,
 ### Distributed Execution and Control
 Emulated nodes are instantiated across a cluster of hosts (bare metal or virtual machines), referred to as *workers*. Emulated nodes manage their own lifecycle and configuration through an internal agent, called `sat-agent`.  
 The `sat-agent` continuously enforces the desired network and computing state of the constellation stored in an **Etcd distributed key-value store**, whose contents are updated at run time by a dedicated control host to reflect system dynamics.  
-The format and semantics of the Etcd keys used by NetSatBench are described in the [JSON format documentation](docs/json-format.md).
 
 ### Dynamic L2 Fabric
 Node-to-node links, such as inter-satellite links (ISLs) and satellite-to-ground links (SGLs), are modeled as VXLAN tunnels dynamically created and managed by each node’s `sat-agent`, based on the global system state stored in Etcd.  
@@ -45,7 +44,7 @@ A built-in IS-IS configuration utility is provided for FRR; its design and integ
 ### On-board Tasks and Application Execution 
 Applications and/or tasks can be scheduled for execution inside emulated nodes at specific times. Each `sat-agent` continuously monitors a command to run in Etcd and executes them inside its container, enabling dynamic application deployment and execution across the emulated satellite system.
 
-### Physics-Driven Networking
+### Physics-Driven Networking (Working in Progress)
 Link parameters are derived from orbital mechanics and line-of-sight geometry, enabling realistic and reproducible performance evaluation.
 
 ---
@@ -59,7 +58,7 @@ Python scripts implementing constellation-wide orchestration, including cluster 
 Software used to build the container image for each emulated node of the satellite system.
 
 **examples/**  
-Sample emulated satellite systems used for validation and benchmarking. Configurations are specified in JSON format as described in this [document](docs/config_format.md).
+Sample emulated satellite systems used for validation and benchmarking. Configurations are specified in JSON format as described in this [Configuration Manual](docs/configuration.md).
 
 **docs/**  
 Documentation assets, including images, diagrams, and architectural descriptions.
