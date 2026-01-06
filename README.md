@@ -117,12 +117,12 @@ Download or clone the repository on the control host and follow these steps to d
 The sample configuration files are located in [`examples/10nodes`](examples/10nodes).  
 The cluster consists of two workers, `host-1` and `host-2`, defined in [`workers-config.json`](examples/10nodes/workers-config.json). For simplicity, `host-1` has also the role of control host.
 
-The emulated system includes 9 satellites and 1 ground station, as defined in [`constellation-config.json`](examples/10nodes/constellation-config.json).  
+The emulated system includes 8 satellites, 1 ground station and 1 user, as defined in [`sat-config.json`](examples/10nodes/sat-config.json).  
 Constellation dynamics (link creation, updates, removal, and task execution) are specified through epoch files located in [`examples/10nodes/constellation-epochs`](examples/10nodes/constellation-epochs). The ground station `gdr1` run an `iperf3` server starting at the initial epoch.
 
 ### 1. Customize Configuration
 - Edit `workers-config.json` to specify worker IP addresses and SSH parameters.
-- Edit `constellation-config.json` to define node placement by setting the `worker` field for each node.
+- Edit `sat-config.json` to define node placement by setting the `worker` field for each node.
 
 ### 2. Cluster Initialization
 From the control host, configure the environment variables necessary to access the Etcd store from the control host and the workers:
@@ -145,7 +145,7 @@ python3 control/system-init-docker.py --config ./examples/10nodes/workers-config
 ### 3. Initialize, Deploy and Run the Emulated Satellite System
 Execute the `constellation-init.py` script to initialize the constellation state in the Etcd key-value store:
 ```bash
-python3 control/constellation-init.py --config ./examples/10nodes/constellation-config.json
+python3 control/constellation-init.py --config ./examples/10nodes/sat-config.json.json
 ```
 Then, execute the `constellation-deploy.py` script to deploy the emulated satellite nodes across the cluster according to the initialization configuration:
 ```bash
@@ -160,6 +160,7 @@ python3 control/constellation-run.py
 ### 4. Monitoring and Interaction
 You can monitor the status of the emulated nodes and their network by connecting directly to the containers running on the worker hosts via SSH.
 For example, to access a satellite container named `sat-1` on `host-1`, use:
+
 ```bash
 ssh user@host-1 docker exec -it sat-1 /bin/bash
 # inside the container, you can run commands such as:
@@ -168,6 +169,7 @@ ip route show
 ping grd1
 iperf3 -c grd1 # to start an iperf3 client to ground station 1
 ```
+
 Note that `user` must be replaced with the actual SSH username configured on the worker host.
 Within a container, emulated nodes can be referenced by name e\.g\., \`grd1\` for ground station 1.
 

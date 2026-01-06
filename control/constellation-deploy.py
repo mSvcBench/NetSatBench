@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import concurrent.futures
+import time
 import etcd3
 import subprocess
 import json
@@ -378,17 +379,24 @@ def main() -> int:
             else:
                 fail += 1
 
-    print("\n==============================")
-    print(f"✅ Success: {ok}")
-    print(f"❌ Failed : {fail}")
-    print("==============================")
-
     if fail == 0:
-        print("\n👍 Constellation Build Completed.")
-        return 0
+        print("\n✅ Constellation deployment completed...waiting for nodes to come online.")
     else:
-        print("\n⚠️ Constellation Build Completed with failures.")
+        print(f"\n⚠️ Constellation deployment completed with {fail} failures.")
         return 3
+
+    # wait that all deployed node have put their eth0_ip in etcd
+    for name, node in all_nodes.items():
+        while True:
+            val, _ = etcd_client.get(f"/config/{'satellites' if name in satellites else 'users' if name in users else 'grounds'}/{name}")   
+            val = json.loads(val.decode('utf-8')) if val else None
+            if 'eth0_ip' in val:
+                break
+            else:
+                time.sleep(1)
+    time.sleep(5)  # extra wait to ensure all services inside the containers are up
+    print("👍 Constellation deployment completed and all nodes running.")
+
 
 
 if __name__ == "__main__":

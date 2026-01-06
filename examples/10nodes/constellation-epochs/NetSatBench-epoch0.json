@@ -65,14 +65,14 @@
       },
       {
         "endpoint1": "sat8",
-        "endpoint2": "sat9",
+        "endpoint2": "grd1",
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
       },
       {
-        "endpoint1": "grd1",
-        "endpoint2": "sat9",
+        "endpoint1": "usr1",
+        "endpoint2": "sat1",
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"

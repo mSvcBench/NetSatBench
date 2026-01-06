@@ -262,7 +262,7 @@ def main():
     # CLEAN ETCD ENTRIES
     # ==========================================
     print("\n🧼 Cleaning up Etcd entries...")
-    prefixes = ["/config/L3-config-common", "/config/satellites/", "/config/users/", "/config/grounds/", "/config/epoch-config"]
+    prefixes = ["/config/L3-config-common", "/config/satellites/", "/config/users/", "/config/grounds/", "/config/epoch-config", "/config/links/", "/config/run","/config/etchosts/"]
     for prefix in prefixes:
         print(f"   ➞ Deleting keys with prefix {prefix} ...")
         etcd_client.delete_prefix(prefix)

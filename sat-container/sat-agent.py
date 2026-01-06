@@ -71,12 +71,15 @@ def get_remote_ip(etcd_client, node_name):
 
 def get_l3_flags_values(etcd_client):
     l3_flags={}
-    val, _ = etcd_client.get(KEY_L3)
-    if val:
+    val_common, _ = etcd_client.get(KEY_L3)
+    if val_common:
         try:
-            l3_flags = json.loads(val.decode())
+            l3_flags = json.loads(val_common.decode())
         except:
             log.error("❌ Failed to parse L3 flags from Etcd.")
+    my_val = my_config.get("L3-config", {})
+    for key, value in my_val.items():
+        l3_flags[key] = value
     return l3_flags
 
 def run(cmd, log_errors=True):
@@ -505,8 +508,8 @@ def main():
     global my_config, l3_flags, etcd_client, routing
     log.info(f"🚀 Sat Agent Starting for {my_node_name}")
     etcd_client = get_etcd_client()
-    l3_flags = get_l3_flags_values(etcd_client)
     my_config = get_config(etcd_client)
+    l3_flags = get_l3_flags_values(etcd_client)
     
     # Bootstrapping
     ## Register my IP address in Etcd

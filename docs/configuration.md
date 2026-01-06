@@ -107,6 +107,30 @@ Each worker entry must define the following fields:
 - Important: The underlying physical or virtual network must allow unrestricted IP connectivity within this supernet.
 
 ---
+### Example
+
+```json  
+{
+"workers": {
+    "host-1": {
+      "ip": "10.0.1.215",
+      "ssh_user": "ubuntu",
+      "ssh_key": "/home/ubuntu/.ssh/id_rsa",
+      "sat-vnet": "sat-vnet",
+      "sat-vnet-cidr":"172.100.0.0/16",
+      "sat-vnet-supernet": "172.0.0.0/8"
+    },
+    "host-2": {
+      "ip": "10.0.1.144",
+      "ssh_user": "ubuntu",
+      "ssh_key": "/home/ubuntu/.ssh/id_rsa",
+      "sat-vnet": "sat-vnet",
+      "sat-vnet-cidr":"172.101.0.0/16",
+      "sat-vnet-supernet": "172.0.0.0/8"
+    }
+  }
+}
+```
 
 ## Satellite Configuration File
 
@@ -164,12 +188,12 @@ Defines Layer-3 and routing parameters that are globally applied to all emulated
 - Description: Enables or disables IP routing inside emulated nodes.
 
 ##### `routing-module`
-- Type: string  
+- Type: string (needed if `enable-routing` is `true`)
 - Description: Identifier of the routing configuration module used by the `sat-agent`.  
 - Example: `extra.isis`
 
 ##### `isis-area-id`
-- Type: string  
+- Type: string  (needed if `routing-module` is `extra.isis`)
 - Description: IS-IS area identifier applied to all nodes when IS-IS routing is enabled.
 
 ---
@@ -191,10 +215,9 @@ Defines how the time evolution of the constellation is driven.
 #### `satellites`
 
 Defines the set of satellite nodes in the emulated constellation.
-
-##### `id`
-- Type: integer  
-- Description: Unique numerical identifier of the satellite.
+Each satellite entry, has a key that represents the logical satellite name.
+The name must be unique across all nodes (satellites, ground stations, and users) and shold have a length <u>lower than 8 characters</u>.
+The value contains the following fields:
 
 ##### `worker`
 - Type: string  
@@ -205,8 +228,13 @@ Defines the set of satellite nodes in the emulated constellation.
 - Description: Docker image used to instantiate the satellite container.
 
 ##### `subnet_ip`
-- Type: string (CIDR notation)  
-- Description: Internal IP subnet assigned to the satellite node.
+- Type: string (CIDR notation, optional)  
+- Description: Internal IP subnet assigned to the satellite node. If this field is omitted, no internal subnet is assigned.
+
+##### `l3-config`
+- Type: object (optional)  
+- Description: Per-node Layer-3 configuration overrides.  
+- Fields: use the same fields and semantics as `L3-config-common`.
 
 ---
 
@@ -223,7 +251,52 @@ Defines the set of user nodes connected to the constellation.
 Users use the same fields and semantics as satellites.
 
 ---
+### Example
 
+```json  
+{
+  "L3-config-common": {
+    "enable-netem"  : true,
+    "enable-routing" : true,
+    "routing-module": "extra.isis",
+    "isis-area-id": "0001"
+  },
+  "epoch-config": {
+    "epoch-dir": "examples/10nodes/constellation-epochs",
+    "file-pattern": "NetSatBench-epoch*.json"
+  },
+  "satellites": {
+    "sat1": {
+      "worker": "host-1",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.0/29"
+    },
+    "sat2": {
+      "worker": "host-1",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.0/29"
+    }
+  },
+    "grounds": {
+    "grd1": {
+      "worker": "host-2",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.72/29"
+    }
+  },
+  "users": {
+    "usr1": {
+      "worker": "host-2",
+      "image": "msvcbench/sat-container:latest",
+      "subnet_ip": "192.168.0.80/29",
+      "l3-config": {
+        "enable-netem": false
+      }
+    }
+  }
+}
+```
+---
 ## Epoch Configuration File 
 
 ### Overview
@@ -275,7 +348,7 @@ Empty arrays or empty objects indicate that no action of that type is performed 
 
 Defines a list of **new links** to be created between pairs of emulated nodes at the epoch time.
 
-Each entry describes a bidirectional Layer-2 link implemented via a VXLAN tunnel.
+Each entry describes a <u>bidirectional</u> Layer-2 link implemented via a VXLAN tunnel between two emulated nodes.
 
 ##### Fields
 
@@ -360,7 +433,7 @@ Each key represents the logical name of an emulated node, and its value is an or
 
 ---
 
-### Example Epoch Configuration
+### Example
 
 ```json  
 {  
@@ -368,7 +441,7 @@ Each key represents the logical name of an emulated node, and its value is an or
 
   "links-add": [  
     {  
-      "endpoint1": "sat1",  
+      "endpoint1": "usr1",  
       "endpoint2": "sat2",  
       "rate": "50mbit",  
       "loss": 0,  
@@ -378,8 +451,8 @@ Each key represents the logical name of an emulated node, and its value is an or
 
   "links-update": [  
     {  
-      "endpoint1": "sat2",  
-      "endpoint2": "sat3",  
+      "endpoint1": "grd1",  
+      "endpoint2": "usr1",  
       "rate": "20mbit",  
       "delay": "10ms"  
     }  
@@ -387,8 +460,8 @@ Each key represents the logical name of an emulated node, and its value is an or
 
   "links-del": [  
     {  
-      "endpoint1": "sat3",  
-      "endpoint2": "sat4"  
+      "endpoint1": "usr1",  
+      "endpoint2": "sat1"  
     }  
   ],  
 
