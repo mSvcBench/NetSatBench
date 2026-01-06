@@ -1,4 +1,4 @@
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+![License](https://img.shields.io/badge/License-BSD2-green?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Active_Development-orange?style=for-the-badge)
 
 <div align="center">
