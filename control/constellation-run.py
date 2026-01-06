@@ -162,19 +162,13 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             "time",
         ]
 
-        # A. Push satellites/users/grounds + epoch-time
+        # A. Push epoch-time and sanity check
         for key, value in config.items():
             if key not in allowed_keys:
                 print(f"❌ [{filename}] Unexpected key '{key}' found in epoch file, skipping...")
                 continue
-
             if key == "epoch-time":
                 etcd.put("/config/epoch-time", str(value).strip().replace('"', ''))
-
-            elif key in ["satellites", "users", "grounds", "run"]:
-                # NOTE: this keeps your original behavior (even though "run" is also handled later).
-                for k, v in value.items():
-                    etcd.put(f"/config/{key}/{k}", json.dumps(v))
 
         # B. Push Dynamic Actions
         add = config.get("links-add", [])
@@ -186,8 +180,8 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             ep1_antenna = l.get("endpoint1_antenna", 1)
             vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
             vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
-            etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
-            etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
+            etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
+            etcd_key2 = f"/config/links/{l['endpoint2']}/{vxlan_iface_name2}"
 
             vni = calculate_vni(
                 l["endpoint1"], ep1_antenna,
@@ -204,8 +198,8 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             ep1_antenna = l.get("endpoint1_antenna", 1)
             vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
             vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
-            etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
-            etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
+            etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
+            etcd_key2 = f"/config/links/{l['endpoint2']}/{vxlan_iface_name2}"
 
             vni = calculate_vni(
                 l["endpoint1"], ep1_antenna,
@@ -221,8 +215,8 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
             ep1_antenna = l.get("endpoint1_antenna", 1)
             vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
             vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
-            etcd_key1 = f"/config/links/{l['endpoint1']}_/{vxlan_iface_name1}"
-            etcd_key2 = f"/config/links/{l['endpoint2']}_/{vxlan_iface_name2}"
+            etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
+            etcd_key2 = f"/config/links/{l['endpoint2']}/{vxlan_iface_name2}"
 
             # Sanity check: ensure the link exists before updating
             etcd_value1, _ = etcd.get(etcd_key1)
@@ -243,7 +237,7 @@ def apply_single_epoch(json_path: str, etcd, enable_wait: bool = True) -> None:
 
         # D. Push Runtime Commands
         for node, cmds in config.get("run", {}).items():
-            etcd.put(f"/config/run/{node}_", json.dumps(cmds))
+            etcd.put(f"/config/run/{node}", json.dumps(cmds))
 
         print(f"✅ [{filename}] Epoch applied successfully.")
 

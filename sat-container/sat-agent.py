@@ -29,9 +29,9 @@ else:
 my_node_name = os.getenv("NODE_NAME")
 
 # KEYS
-KEY_LINKS = f"/config/links/{my_node_name}_"
+KEY_LINKS_PREFIX = f"/config/links/{my_node_name}/"
 KEY_L3 = "/config/L3-config-common"
-KEY_RUN = f"/config/run/{my_node_name}_"
+KEY_RUN = f"/config/run/{my_node_name}"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("sat-agent")
@@ -157,7 +157,7 @@ def process_initial_topology(etcd_client):
     
     ## Process links add
     tc_flag = l3_flags.get("enable-netem", True)
-    for value, meta in etcd_client.get_prefix(KEY_LINKS):
+    for value, meta in etcd_client.get_prefix(KEY_LINKS_PREFIX):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
         
@@ -398,7 +398,7 @@ def process_link_action(etcd_client, event):
 # ----------------------------
 def watch_link_actions_loop():
     log.info("👀 Watching /config/links (Dynamic Events)...")
-    events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS)
+    events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS_PREFIX)
     for event in events_iterator:
         process_link_action(etcd_client, event)
 

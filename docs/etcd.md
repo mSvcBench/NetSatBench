@@ -1,5 +1,5 @@
-The ETCD keyspace used by NetSatBench follows a hierarchical, declarative schema, where each prefix corresponds to a logical subsystem of the emulator.
-The main prefixes are as follows:
+The ETCD keyspace used by NetSatBench follows a hierarchical, declarative schema, where each prefix corresponds to a logical subsystem of the emulator.  
+The main prefixes are structured as follows:
 ```
 /config
 │
@@ -38,28 +38,33 @@ The main prefixes are as follows:
     ├── grd1
     └── grd1_
 ```
+---
 
-## /config/workers/ 
-Contains the list of worker hosts participating in the emulation, each with its JSON configuration contained in the worker-config.json file (see [configuration manual](configuration.md)). These entries are automatically created and managed by the `control/system-init-docker.py` scripts.
+## /config/workers/
+
+This prefix contains the list of worker hosts participating in the emulation, indexed by worker name.  
+Each worker is associated with a JSON configuration derived from the `worker-config.json` file (see the [configuration manual](configuration.md)).  
+These entries are automatically created and managed by the `control/system-init-docker.py` script.
+
 ### Example
-/config/workers/host-1
-Holds the configuration data of the worker host named "host-1".
-Example content:
-/config/workers/host-1
+
+/config/workers/host-1  
+Stores the configuration data of the worker host named `host-1`.
+
 ```json
 {
- "ip": "10.0.1.215", 
- "ssh_user": "ubuntu", 
- "ssh_key": "/home/ubuntu/.ssh/id_rsa", 
- "sat-vnet": "sat-vnet", 
- "sat-vnet-cidr": "172.100.0.0/16", 
- "sat-vnet-supernet": "172.0.0.0/8"
+  "ip": "10.0.1.215",
+  "ssh_user": "ubuntu",
+  "ssh_key": "/home/ubuntu/.ssh/id_rsa",
+  "sat-vnet": "sat-vnet",
+  "sat-vnet-cidr": "172.100.0.0/16",
+  "sat-vnet-supernet": "172.0.0.0/8"
 }
 ```
-In addition to values contained in the worker-config.json file, the eth0_ip field specifies the IP address assigned to the node primary network interface, which is used for communication between the control plane and the worker nodes.
 
+---
 ## /config/L3-config-common|epoch-config|satellite|ground|user
-Contain the configuration data of the emulated system provided in the sat-config.json file (see [configuration manual](configuration.md)). These entries are automatically created and managed by the `control/constellation-init.py` script.
+These prefixes contain the configuration data of the emulated node indexed by name as defined in the sat-config.json file (see the [configuration manual](configuration.md)). They are automatically created and managed by the control/constellation-init.py script.
 
 ### Example
 /config/satellites/sat1
@@ -71,7 +76,8 @@ Contain the configuration data of the emulated system provided in the sat-config
  "eth0_ip": "172.100.0.5"
 }
 ```
-In addition to values contained in the sat-config.json file, the `eth0_ip` field specifies the IP address assigned to eth0_interface of the node container, which is used for establishing VXLAN links between nodes. It is automatically managed by the `sat-agent` running inside each container during its initialization.
+In addition to the parameters specified in sat-config.json, the `eth0_ip` field defines the IP address assigned to the eth0 interface of the node container.
+This address is used to establish VXLAN links between nodes and is automatically managed by the sat-agent running inside each container during initialization.
 
 /config/L3-config-common
 ```json
@@ -91,7 +97,8 @@ In addition to values contained in the sat-config.json file, the `eth0_ip` field
 ```
 
 ## /config/etchosts/
-Holds the IP address of the loopback interface (if assigned) of any emulated node in the constellation, indexed by its name. These entries are automatically created and managed by the `sat-agent` running inside each container that properly configures the /etc/hosts file so that workloads can use node names rather than IP addresses.
+This prefix holds the IP address of the loopback interface (if assigned) for each emulated node, indexed by node name.
+These entries are automatically created and managed by the sat-agent, which configures the /etc/hosts file inside each container, allowing workloads to refer to nodes by name rather than by IP address.
 ### Example
 
 /config/etchosts/sat1
@@ -100,10 +107,13 @@ Holds the IP address of the loopback interface (if assigned) of any emulated nod
 ```
 
 ## /config/links/
-Contains the state of all emulated links in the current epoch of the emulation, indexed by the source node and interface name. Each entry holds a JSON object with the current parameters of the link, such as delay, loss, bandwidth, and status (up or down). These entries are automatically created and managed by the control/constellation-run.py script during the processing of epoch files.
+This prefix contains the state of all emulated links in the current epoch, indexed by source node and interface name.
+Each entry stores a JSON object describing the current link parameters, such as delay, packet loss, bandwidth, and VXLAN identifier.
+These entries are automatically created and managed by the control/constellation-run.py script while processing epoch files.
+
 ### Example
 
-/config/links/sat1_/vl_sat2_1
+/config/links/sat1/vl_sat2_1
 ```json
 {
  "endpoint1": "sat1", 
@@ -114,12 +124,15 @@ Contains the state of all emulated links in the current epoch of the emulation, 
  "vni": 13475210
 }
 ```
-The key `sat1_/vl_sat2_1` indicates a link originating from node `sat1` on interface `vl_sat2_1`. The interface name and the corresponding VNI are automatically generated by the constellation-run.py script when the link is added.
+The key `sat1/vl_sat2_1` indicates a link originating from node `sat1` on interface `vl_sat2_1`. Both the interface name and the corresponding VNI are automatically generated by the constellation-run.py script when the link is instantiated.
 
 ## /config/run/
-Holds runtime information for each emulated node, indexed by its name. Each entry contains a JSON arrary with the sequence of command to be executed in the current epoch. These entries are automatically created and managed by the constellation-run.py script.
+This prefix stores runtime information for each emulated node, indexed by node name.
+Each entry contains a JSON array specifying the sequence of commands to be executed during the current epoch.
+These entries are automatically created and managed by the constellation-run.py script.
 ### Example
-/config/run/grd1_
+/config/run/grd1
 ```json
 ["sleep 10", "screen -dmS iperf_test iperf3 -s"]
 ```
+The key `grd1` indicates that these commands are to be executed inside the container of node `grd1` during the current epoch.
