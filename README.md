@@ -30,7 +30,7 @@ Emulated nodes are instantiated across a cluster of hosts (bare metal or virtual
 The `sat-agent` continuously enforces the desired network and computing state of the constellation stored in an **Etcd distributed key-value store**, whose contents are updated at run time by a dedicated control host to reflect system dynamics.  
 
 ### Dynamic L2 Fabric
-Node-to-node links, such as inter-satellite links (ISLs) and satellite-to-ground links (SGLs), are modeled as VXLAN tunnels dynamically created and managed by each node’s `sat-agent`, based on the global system state stored in Etcd.  
+Node-to-node links, such as inter-satellite links (ISLs) and satellite-to-ground links (SGLs), are modeled as VXLAN tunnels dynamically created and managed by each node’s `sat-agent`, based on the global system state stored in Etcd described in [the Etcd key-value store documentation](docs/etcd.md).  
 This abstraction provides seamless **Layer-2 connectivity**, independent of container placement within the cluster.
 
 ### Scalability Through Distribution
@@ -64,6 +64,7 @@ Sample emulated satellite systems used for validation and benchmarking. Configur
 Documentation assets, including images, diagrams, and architectural descriptions.
 - [Configuration Manual](docs/configuration.md) — how to define and customize emulated satellite systems
 - [Routing Interface](docs/routing-interface.md) — specification of the routing module interface
+- [Etcd Key-Value Store](docs/etcd.md) — structure and organization of the Etcd key-value store used for constellation state management
 
 ---
 

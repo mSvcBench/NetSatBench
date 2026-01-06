@@ -1,42 +1,59 @@
-The ETCD keyspace used by NetSatBench follows a hierarchical, declarative schema, where each prefix corresponds to a logical subsystem of the emulator.  
+<div align="center">
+<img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
+
+# NetSatBench ETCD Keyspace 
+
+</div>
+
+The ETCD keyspace used by NetSatBench follows a hierarchical, declarative schema, where each prefix corresponds to a logical subsystem of the emulator. 
+The content of the etcd keyspace can be inspected using standard etcd tools, e.g., from the control host via the command:
+
+```bash
+etcdctl get --prefix /config
+```
+
 The main prefixes are structured as follows:
 ```
 /config
 │
 ├── workers
-│   ├── host-1
-│   └── host-2
+│   ├── <worker-name>
+│   ├── ...
+│   └── <worker-name>
 │
 ├── L3-config-common
 │
 ├── epoch-config
 │
 ├── etchosts
-│   ├── sat1
-│   ├── sat2
+│   ├── <node-name>
 │   ├── ...
-│   └── usr1
+│   └── <node-name>
 │
 ├── satellites
-│   ├── sat1
-│   ├── sat2
-│   └── ...
+│   ├── <node-name>
+│   ├── ...
+│   └── <node-name>
 │
 ├── grounds
-│   └── grd1
+│   ├── <node-name>
+│   ├── ...
+│   └── <node-name>
 │
 ├── users
-│   └── usr1
+│   ├── <node-name>
+│   ├── ...
+│   └── <node-name>
 │
 ├── links
-│   ├── sat1_/<interface-name>
-│   ├── sat2_/<interface-name>
+│   ├── <node-name>/<interface-name>
 │   ├── ...
-│   └── sat8_/<interface-name>
+│   └── <node-name>/<interface-name>
 │
 └── run
-    ├── grd1
-    └── grd1_
+    ├── <node-name>
+    ├── ...
+    └── <node-name>
 ```
 ---
 
