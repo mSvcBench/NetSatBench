@@ -6,7 +6,7 @@
     "isis-area-id": "0001"
   },
   "epoch-config": {
-    "epoch-dir": "test/10nodes/constellation-epochs",
+    "epoch-dir": "examples/10nodes/constellation-epochs",
     "file-pattern": "NetSatBench-epoch*.json"
   },
   "satellites": {

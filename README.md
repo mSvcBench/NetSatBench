@@ -1,5 +1,3 @@
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=for-the-badge&logo=python&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-20.10%2B-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Active_Development-orange?style=for-the-badge)
 
@@ -17,7 +15,7 @@
 Emulated systems consist of satellites, ground stations, and user terminals, each implemented as a **Linux container** and distributed across a cluster of bare-metal or virtual machines. This design enables a high degree of parallelism and scalability.  
 VXLAN tunnels dynamically form an **L2 network fabric** interconnecting emulated nodes, with configurable link characteristics (e.g., latency, bandwidth, loss) to reproduce **real-time** and realistic satellite network behavior.
 
-NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g., OSPF, BGP, IS-IS) or user-defined application (e.g., `iperf`, traffic generators, analytics workloads) can run unmodified over the emulated constellation. IS-IS routing is supported out of the box via [FRRouting (FRR)](https://frrouting.org/).
+NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g., OSPF, BGP, IS-IS) or user-defined application (e.g., iperf, ping, analytics workloads) can run unmodified over the emulated constellation. IS-IS routing is supported out of the box via [FRRouting (FRR)](https://frrouting.org/).
 
 ---
 
@@ -60,7 +58,7 @@ Python scripts implementing constellation-wide orchestration, including cluster 
 **sat-container/**  
 Software used to build the container image for each emulated node of the satellite system.
 
-**test/**  
+**examples/**  
 Sample emulated satellite systems used for validation and benchmarking. Configurations are specified in JSON format as described in this [document](docs/config_format.md).
 
 **docs/**  
@@ -97,7 +95,7 @@ Required software:
 - **Etcd** — distributed key-value store for global state coordination  
 - **Python 3** — with dependencies specified in `requirements.txt`  
 - **SSH client** — for remote connections to workers  
-- **control/** and **test/** directories — required to run orchestration scripts and define emulated constellations
+- **control/** and **examples/** directories — required to run orchestration scripts and define emulated constellations
 
 ---
 
@@ -117,11 +115,11 @@ Required software:
 
 Download or clone the repository on the control host and follow these steps to deploy and run a sample emulated satellite system. Be careful to meet all software requirements on both control and worker hosts previously described.
 
-The sample configuration files are located in [`test/10nodes`](test/10nodes).  
-The cluster consists of two workers, `host-1` and `host-2`, defined in [`workers-config.json`](test/10nodes/workers-config.json). For simplicity, `host-1` has also the role of control host.
+The sample configuration files are located in [`examples/10nodes`](examples/10nodes).  
+The cluster consists of two workers, `host-1` and `host-2`, defined in [`workers-config.json`](examples/10nodes/workers-config.json). For simplicity, `host-1` has also the role of control host.
 
-The emulated system includes 9 satellites and 1 ground station, as defined in [`constellation-config.json`](test/10nodes/constellation-config.json).  
-Constellation dynamics (link creation, updates, removal, and task execution) are specified through epoch files located in [`test/10nodes/constellation-epochs`](test/10nodes/constellation-epochs). The ground station `gdr1` run an `iperf3` server starting at the initial epoch.
+The emulated system includes 9 satellites and 1 ground station, as defined in [`constellation-config.json`](examples/10nodes/constellation-config.json).  
+Constellation dynamics (link creation, updates, removal, and task execution) are specified through epoch files located in [`examples/10nodes/constellation-epochs`](examples/10nodes/constellation-epochs). The ground station `gdr1` run an `iperf3` server starting at the initial epoch.
 
 ### 1. Customize Configuration
 - Edit `workers-config.json` to specify worker IP addresses and SSH parameters.
@@ -142,13 +140,13 @@ export ETCD_CA_CERT="/path/to/ca.crt" # Path to Etcd CA certificate, if TLS is e
 
 Configure the worker networking environment:
 ```bash
-python3 control/system-init-docker.py --config ./test/10nodes/workers-config.json
+python3 control/system-init-docker.py --config ./examples/10nodes/workers-config.json
 ```
 
 ### 3. Initialize, Deploy and Run the Emulated Satellite System
 Execute the `constellation-init.py` script to initialize the constellation state in the Etcd key-value store:
 ```bash
-python3 control/constellation-init.py --config ./test/10nodes/constellation-config.json
+python3 control/constellation-init.py --config ./examples/10nodes/constellation-config.json
 ```
 Then, execute the `constellation-deploy.py` script to deploy the emulated satellite nodes across the cluster according to the initialization configuration:
 ```bash
