@@ -295,6 +295,7 @@ def run_all_epochs(
             print(f"🔄 Looping emulation after {loop_delay} seconds...")
             time.sleep(loop_delay)
         else:
+            time.sleep(30)  # brief pause before exiting to allow final epoch processing
             break
     return 0
 

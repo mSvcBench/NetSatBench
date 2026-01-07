@@ -140,6 +140,9 @@ def main():
     allowed_keys = ["satellites", "users", "grounds", "L3-config-common", "workers", "epoch-config"]
 
     # A. Push Worker Config to Etcd
+    if "workers" not in config:
+        print(f"❌ Error: 'workers' key not found in {args.config}.")
+        sys.exit(1)
     for key, value in config.items():
         if key not in allowed_keys:
             # the key should not be present in epoch file, skip it

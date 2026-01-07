@@ -1,6 +1,6 @@
 {
   "L3-config-common": {
-    "enable-netem"  : true ,
+    "enable-netem"  : true,
     "enable-routing" : true,
     "routing-module": "extra.isis",
     "isis-area-id": "0001"
