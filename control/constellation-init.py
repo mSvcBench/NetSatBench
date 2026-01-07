@@ -4,7 +4,8 @@ import etcd3
 import json
 import os
 import sys
-
+import ipaddress
+from itertools import islice
 # ==========================================
 # ETCD CONNECTION
 # ==========================================
@@ -20,9 +21,35 @@ def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password
         sys.exit(1)
 
 # ==========================================
+ #Helper 
+# ==========================================
+def generate_subnet(global_index: int, base_cidr: str) -> str:
+    """
+    Generates sequential /30 subnets from a parent network using the standard library.
+    """
+    try:
+        # Create a network object from the input (e.g., 192.168.0.0/16)
+        parent_network = ipaddress.ip_network(base_cidr)
+        
+        # The subnets() method returns a generator for all possible subnets of the specified prefix.
+        # This is memory-efficient as it doesn't load all subnets into a list at once.
+        subnets_generator = parent_network.subnets(new_prefix=30)
+        
+        # Use islice to jump directly to the desired index without a manual loop.
+        # next() will retrieve the specific subnet at that index.
+        target_subnet = next(islice(subnets_generator, global_index, None))
+        return str(target_subnet)  
+    except StopIteration:
+        return "Error: Index out of range"
+    except ValueError as e:
+        return f"Error: {e}"
+
+
+# ==========================================
 # CONFIG INJECTION LOGIC
 # ==========================================
 def apply_config_to_etcd(etcd, filename: str):
+ 
     allowed_keys = [
         "satellites",
         "users",
@@ -35,7 +62,7 @@ def apply_config_to_etcd(etcd, filename: str):
     try:
         with open(filename, "r", encoding="utf-8") as f:
             config = json.load(f)
-
+        global_subnet_counter = 0
         for key, value in config.items():
             if key not in allowed_keys:
                 print(f"❌ [{filename}] Unexpected key '{key}', skipping...")
@@ -46,6 +73,15 @@ def apply_config_to_etcd(etcd, filename: str):
                 etcd.put(f"/config/{key}", json.dumps(value))
             elif key in ["satellites", "users", "grounds"]:
                 for name, node_cfg in value.items():
+                    my_l3_cfg = config.get("L3-config-common", {}).copy()
+                    local_l3_node_cfg = node_cfg.get("L3-config", {})
+                    for key_l3, val_l3 in local_l3_node_cfg.items():
+                        my_l3_cfg[key_l3] = val_l3
+                    ## Add "subnet_cidr" to node_cfg in case automated IP assignment is used
+                    if my_l3_cfg.get("auto-assign-ips", False) is True:
+                        base_cidr = my_l3_cfg.get("auto-assign-cidr", "192.168.0.0/16")
+                        node_cfg["subnet_cidr"] = generate_subnet(global_subnet_counter, base_cidr)
+                        global_subnet_counter += 1
                     etcd.put(
                         f"/config/{key}/{name}",
                         json.dumps(node_cfg),

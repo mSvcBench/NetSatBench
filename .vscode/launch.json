@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Constellation-run",
+            "name": "Python Debugger: Current File with Args",
             "type": "debugpy",
             "request": "launch",
-            "program": "scripts/constellation-run.py",
+            "program": "${file}",
             "console": "integratedTerminal",
             "args": "${command:pickArgs}"
         },

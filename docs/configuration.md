@@ -183,6 +183,15 @@ Defines Layer-3 and routing parameters that are globally applied to all emulated
 - Description: Enables or disables traffic control (tc netem) for emulating delay, loss, and bandwidth.  
 - Usage: When `true`, link parameters defined in epoch files are enforced at run time.
 
+##### `auto-assign-ips`
+- Type: boolean  
+- Description: Enables or disables automatic assignment of internal IP subnets to nodes.
+- Usage: If `true`, nodes without an explicit `auto-assign-ips = false` field are assigned subnets from the block specified in `auto-assign-cidr` in the order they are defined in the configuration file.
+
+##### `auto-assign-cidr`
+- Type: string (CIDR notation)  
+- Description: Base CIDR block from which sequential /30 subnets are automatically assigned to nodes when  `auto-assign-ips` is `true`.
+  
 ##### `enable-routing`
 - Type: boolean  
 - Description: Enables or disables IP routing inside emulated nodes.
@@ -227,11 +236,11 @@ The value contains the following fields:
 - Type: string  
 - Description: Docker image used to instantiate the satellite container.
 
-##### `subnet_ip`
+##### `subnet_cidr`
 - Type: string (CIDR notation, optional)  
 - Description: Internal IP subnet assigned to the satellite node. The subnet must be at least a `/30`. The last usable IP address within this subnet is assigned to the node’s loopback interface and is used for routing over the L2/VXLAN network fabric. If this field is omitted, no internal subnet is assigned to the node.
 
-##### `l3-config`
+##### `L3-config`
 - Type: object (optional)  
 - Description: Per-node Layer-3 configuration overrides.  
 - Fields: use the same fields and semantics as `L3-config-common`.
@@ -259,7 +268,9 @@ Users use the same fields and semantics as satellites.
     "enable-netem"  : true,
     "enable-routing" : true,
     "routing-module": "extra.isis",
-    "isis-area-id": "0001"
+    "isis-area-id": "0001",
+    "auto-assign-ips": true,
+    "auto-assign-cidr": "192.168.0.0/16"
   },
   "epoch-config": {
     "epoch-dir": "examples/10nodes/constellation-epochs",
@@ -268,29 +279,27 @@ Users use the same fields and semantics as satellites.
   "satellites": {
     "sat1": {
       "worker": "host-1",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.0/29"
+      "image": "msvcbench/sat-container:latest"
     },
     "sat2": {
       "worker": "host-1",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.0/29"
+      "image": "msvcbench/sat-container:latest"
     }
   },
     "grounds": {
     "grd1": {
       "worker": "host-2",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.72/29"
+      "image": "msvcbench/sat-container:latest"
     }
   },
   "users": {
     "usr1": {
       "worker": "host-2",
       "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.80/29",
-      "l3-config": {
-        "enable-netem": false
+      "subnet_cidr": "172.99.0.0/30",
+      "L3-config": {
+        "enable-netem": false,
+        "auto-assign-ips": false
       }
     }
   }

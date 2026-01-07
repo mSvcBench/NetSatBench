@@ -89,20 +89,23 @@ These prefixes contain the configuration data of the emulated node indexed by na
 {
  "worker": "host-1", 
  "image": "msvcbench/sat-container:latest", 
- "subnet_ip": "192.168.0.0/29", 
+ "subnet_cidr": "192.168.0.0/29", 
  "eth0_ip": "172.100.0.5"
 }
 ```
 In addition to the parameters specified in sat-config.json, the `eth0_ip` field defines the IP address assigned to the eth0 interface of the node container.
 This address is used to establish VXLAN links between nodes and is automatically managed by the sat-agent running inside each container during initialization.
+The subnet_cidr field can be automatically assigned if the `auto-assign-cidr` field is set.
 
 /config/L3-config-common
 ```json
 {
- "enable-netem": true, 
- "enable-routing": true, 
- "routing-module": "extra.isis", 
- "isis-area-id": "0001"
+ "enable-netem"  : true,
+ "enable-routing" : true,
+ "routing-module": "extra.isis",
+ "isis-area-id": "0001",
+ "auto-assign-ips": true,
+ "auto-assign-cidr": "192.168.0.0/16"
 }
 ```
 /config/epoch-config

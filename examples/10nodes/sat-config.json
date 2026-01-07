@@ -3,7 +3,9 @@
     "enable-netem"  : true,
     "enable-routing" : true,
     "routing-module": "extra.isis",
-    "isis-area-id": "0001"
+    "isis-area-id": "0001",
+    "auto-assign-ips": true,
+    "auto-assign-cidr": "192.168.0.0/16"
   },
   "epoch-config": {
     "epoch-dir": "examples/10nodes/constellation-epochs",
@@ -12,59 +14,51 @@
   "satellites": {
     "sat1": {
       "worker": "host-1",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.0/29"
+      "image": "msvcbench/sat-container:latest"
         },
     "sat2": {
       "worker": "host-1",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.8/29"
+      "image": "msvcbench/sat-container:latest"
     },
     "sat3": {
       "worker": "host-1",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.16/29"
+      "image": "msvcbench/sat-container:latest"
     },
     "sat4": {
       "worker": "host-1",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.24/29"
+      "image": "msvcbench/sat-container:latest"
     },
     "sat5": {
       "worker": "host-1",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.32/29"
+      "image": "msvcbench/sat-container:latest"
     },
     "sat6": {
       "worker": "host-1",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.40/29"
+      "image": "msvcbench/sat-container:latest"
     },
     "sat7": {
       "worker": "host-2",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.48/29"
+      "image": "msvcbench/sat-container:latest"
     },
     "sat8": {
       "worker": "host-2",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.56/29"
+      "image": "msvcbench/sat-container:latest"
     }
   },
   "grounds": {
     "grd1": {
       "worker": "host-2",
-      "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.72/29"
+      "image": "msvcbench/sat-container:latest"
     }
   },
   "users": {
     "usr1": {
       "worker": "host-2",
       "image": "msvcbench/sat-container:latest",
-      "subnet_ip": "192.168.0.64/29",
+      "subnet_cidr": "172.99.0.0/30",
       "L3-config": {
-        "enable-netem": false
+        "enable-netem": false,
+        "auto-assign-ips": false
       }
     }
   }

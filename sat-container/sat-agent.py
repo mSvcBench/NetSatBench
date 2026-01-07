@@ -276,7 +276,7 @@ def create_vxlan_link(
     run(["ip", "link", "set", "dev", vxlan_if, "up"])
     
     ## Assign IP from my_config subnet, if available. Last IP in subnet assigned to all vxlan interfaces
-    available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
+    available_ips = list(ipaddress.ip_network(my_config.get("subnet_cidr","")).hosts())
     if len(available_ips) > 0:
         ip_addr = str(available_ips[-1]) + "/32"
         run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
@@ -532,8 +532,8 @@ def main():
     process_initial_topology(etcd_client)
 
     ## Publish node IP for etc hosts usage 
-    available_ips = list(ipaddress.ip_network(my_config.get("subnet_ip","")).hosts())
-    ips_mask = my_config.get("subnet_ip","").split('/')[1]
+    available_ips = list(ipaddress.ip_network(my_config.get("subnet_cidr","")).hosts())
+    ips_mask = my_config.get("subnet_cidr","").split('/')[1]
     if len(available_ips) > 0:
         etcd_client.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
 
