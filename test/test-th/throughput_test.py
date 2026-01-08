@@ -5,7 +5,7 @@ Throughput experiment runner (iperf3 over docker containers), driven by etcd con
 Example:
   ./throughput_test.py \
     --etcd-host 10.0.1.215 --etcd-port 2379 \
-    --output-dir test/test-1/throughput_results \
+    --output-dir test/test-th/throughput_results \
     --prober-counts 1 2 4 \
     --iterations 3 \
     --duration 30 \
@@ -44,7 +44,7 @@ def get_prefix_data(etcd_client: etcd3.Etcd3Client, prefix: str) -> Dict[str, An
 # -----------------------------
 # Sampling helpers
 # -----------------------------
-def sample_unique_pairs(nodes: Dict[str, Any], k: int, seed: int | None = None) -> List[Tuple[str, str]]:
+def sample_unique_pairs(nodes: Dict[str, Any], k: int) -> List[Tuple[str, str]]:
     """
     Sample k *pairs* (src, dst) such that:
       - within each pair src != dst
@@ -52,9 +52,6 @@ def sample_unique_pairs(nodes: Dict[str, Any], k: int, seed: int | None = None) 
 
     Raises ValueError if k pairs cannot be formed.
     """
-    if seed is not None:
-        random.seed(seed)
-
     keys = list(nodes)
     if len(keys) < 2 * k:
         raise ValueError(f"Not enough nodes ({len(keys)}) to form {k} non-overlapping pairs.")
@@ -204,16 +201,35 @@ def run_iperf_test(
 # -----------------------------
 # Output helpers
 # -----------------------------
-def write_csv(results: List[Dict[str, Any]], csv_path: str) -> None:
+def write_csv(results: List[Dict[str, Any]], csv_path: str, append: bool = False) -> None:
     fieldnames = ["prober_count", "prober", "src", "dst", "throughput_mbps", "error"]
-    with open(csv_path, "w", newline="") as csvfile:
+    # chech id csv file exists 
+    exists = os.path.exists(csv_path)
+    if exists and not append:
+        input_str = input(f"  ⚠️ CSV file {csv_path} already exists. Overwrite? (y/n): ")
+        if input_str.lower() == 'y' : exists = False
+        elif input_str.lower() == 'n':
+            # ask new file name
+            input_str = input(f"  ⚠️ CSV file {csv_path} already exists. Append? (y/n): ")
+            if input_str.lower() == 'y':
+                append = True
+            else:
+                input_str = input(f"  ⚠️ Enter new CSV file path or 'n' to abort: ")
+                if input_str.lower() == 'n':
+                    print("  ❌ Aborting CSV write.")
+                    return
+                else:
+                    exists = False
+                    csv_path = input_str
+    
+    with open(csv_path, "a" if append else "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
+        if not exists:
+            writer.writeheader()
         for row in results:
             if "error" not in row:
                 row = {**row, "error": ""}
             writer.writerow(row)
-
 
 def compute_summary(results: List[Dict[str, Any]], prober_counts: List[int]) -> Dict[int, float]:
     summary: Dict[int, float] = {}
@@ -270,13 +286,13 @@ def parse_args() -> argparse.Namespace:
         help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
     )
 
-    p.add_argument("--output-dir", default="test/test-1/throughput_results", help="Output directory for logs/CSV/plot")
+    p.add_argument("--output-dir", default="test/test-th/throughput_results", help="Output directory for logs/CSV/plot")
 
-    p.add_argument("--prober-counts", type=int, nargs="+", default=[1], help="List of prober counts to test (e.g., 1 2 4)")
-    p.add_argument("--iterations", type=int, default=1, help="Iterations per prober count")
-    p.add_argument("--duration", type=int, default=30, help="iperf3 duration in seconds")
-    p.add_argument("--parallel-streams", type=int, default=16, help="iperf3 -P parallel streams")
-
+    p.add_argument("--prober-counts", type=int, nargs="+", default=[1], help="List of parallel probers to test (e.g., 1 2 4), default [1]")
+    p.add_argument("--iterations", type=int, default=5, help="Iterations per test, default 5")
+    p.add_argument("--duration", type=int, default=30, help="iperf3 duration in seconds, default 30")
+    p.add_argument("--parallel-streams", type=int, default=16, help="iperf3 -P parallel streams, default 16")
+    p.add_argument("--append", action="store_true", help="Append to existing CSV file if it exists, default is to overwrite")
     p.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
 
 
@@ -301,14 +317,14 @@ def main() -> None:
     results: List[Dict[str, Any]] = []
     lock = threading.Lock()
 
+    if args.seed is not None:
+        random.seed(args.seed)
+
     for prober_count in args.prober_counts:
         print(f"\n⏱ Running test with {prober_count} probers...")
-
         for it in range(args.iterations):
             print(f" ▶️ Iteration {it+1}/{args.iterations}")
-
-            pairs = sample_unique_pairs(all_nodes, prober_count, seed=args.seed)
-
+            pairs = sample_unique_pairs(all_nodes, prober_count)
             threads: List[threading.Thread] = []
             for idx, (src, dst) in enumerate(pairs):
                 print(f"  Prober {idx+1}: {src} → {dst}")
@@ -342,7 +358,7 @@ def main() -> None:
 
     # Save CSV + plot
     csv_path = os.path.join(args.output_dir, "throughput_results.csv")
-    write_csv(results, csv_path)
+    write_csv(results, csv_path, append=args.append)
 
     summary = compute_summary(results, args.prober_counts)
     plot_path = os.path.join(args.output_dir, "throughput_plot.png")
