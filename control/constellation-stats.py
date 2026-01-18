@@ -9,7 +9,7 @@ import os
 import re
 import numpy as np
 import argparse
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime, timezone
 from collections import deque, defaultdict
 
@@ -145,7 +145,205 @@ def connected_components(
 
     return components
 
-def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str) -> None:
+# ==========================================
+# 3. METIS CLUSTERING (k-way partition)
+# ==========================================
+from typing import Iterable
+
+def _build_weighted_metis_arrays(
+    num_nodes: int,
+    edge_weight: Dict[Tuple[int, int], int],
+) -> Tuple[List[int], List[int], List[int]]:
+    """
+    Build (xadj, adjncy, eweights) in METIS CSR format for an undirected graph.
+
+    edge_weight keys are undirected edges (min(i,j), max(i,j)) with positive integer weights.
+    """
+    neigh: List[List[Tuple[int, int]]] = [[] for _ in range(num_nodes)]
+
+    for (a, b), w in edge_weight.items():
+        if a == b:
+            continue
+        if w is None or w <= 0:
+            continue
+        neigh[a].append((b, int(w)))
+        neigh[b].append((a, int(w)))
+
+    # Sort neighbors for reproducibility
+    for u in range(num_nodes):
+        neigh[u].sort(key=lambda t: t[0])
+
+    xadj: List[int] = [0]
+    adjncy: List[int] = []
+    eweights: List[int] = []
+    for u in range(num_nodes):
+        for v, w in neigh[u]:
+            adjncy.append(v)
+            eweights.append(w)
+        xadj.append(len(adjncy))
+
+    return xadj, adjncy, eweights
+
+
+def metis_cluster_nodes(
+    num_nodes: int,
+    active_links: Iterable[Tuple[int, int]],
+    inv_node_map: Dict[int, str],
+    nparts: int,
+    *,
+    edge_weight: Optional[Dict[Tuple[int, int], int]] = None,
+    contiguous: bool = False,
+) -> Dict:
+    """
+    Partition nodes into 'nparts' groups with METIS, minimizing edge cuts.
+    Returns a dict with:
+      - cut: int
+      - parts: List[int]   (len=num_nodes, part id per node)
+      - groups: Dict[int, List[str]]  (part -> node names)
+
+    If edge_weight is provided, it will be used as integer edge weights.
+    Otherwise partitions the unweighted active_links graph.
+
+    METIS objective: minimize cut edges => keep adjacent nodes together. :contentReference[oaicite:1]{index=1}
+    """
+    if nparts <= 1:
+        parts = [0] * num_nodes
+        return {"cut": 0, "parts": parts, "groups": {0: [inv_node_map[i] for i in range(num_nodes)]}}
+
+    try:
+        import pymetis
+    except ImportError as e:
+        raise SystemExit(
+            "❌ pymetis is not installed. Install it with:\n"
+            "   pip install pymetis\n"
+            "or via conda-forge.\n"
+        ) from e
+
+    # If no weights given, create an unweighted edge_weight map from active_links
+    if edge_weight is None:
+        edge_weight = {}
+        for a, b in active_links:
+            if a == b:
+                continue
+            u, v = (a, b) if a < b else (b, a)
+            edge_weight[(u, v)] = 1
+
+    # If graph has no edges, METIS is not very meaningful; just split round-robin.
+    if not edge_weight:
+        parts = [i % nparts for i in range(num_nodes)]
+        groups: Dict[int, List[str]] = defaultdict(list)
+        for i, p in enumerate(parts):
+            groups[p].append(inv_node_map[i])
+        return {"cut": 0, "parts": parts, "groups": dict(groups)}
+
+    xadj, adjncy, eweights = _build_weighted_metis_arrays(num_nodes, edge_weight)
+
+    # pymetis.part_graph supports CSR + eweights (integer weights). :contentReference[oaicite:2]{index=2}
+    cut, parts = pymetis.part_graph(
+        nparts=nparts,
+        xadj=xadj,
+        adjncy=adjncy,
+        eweights=eweights,
+        contiguous=contiguous,
+        # recursive left to pymetis default heuristic
+    )
+
+    groups: Dict[int, List[str]] = defaultdict(list)
+    for i, p in enumerate(parts):
+        groups[int(p)].append(inv_node_map[i])
+
+    return {"cut": int(cut), "parts": list(map(int, parts)), "groups": dict(groups)}
+
+def apply_metis_worker_assignment(
+    in_json_path: str,
+    out_json_path: str,
+    node_to_part: Dict[str, int],
+    *,
+    node_sections: List[str] = ("satellites", "users", "grounds"),
+    worker_field: str = "worker",
+) -> None:
+    """
+    Updates a NetSatBench-style config JSON by assigning each node's `worker_field`
+    according to its METIS partition id.
+
+    - Input JSON must contain:
+        cfg["workers"] as a dict with keys = available worker names (groups)
+      and node sections like cfg["satellites"], cfg["users"], cfg["grounds"] (configurable).
+
+    - node_to_part maps node_name -> partition_id (0..k-1)
+
+    Writes the updated JSON to out_json_path.
+
+    Rules:
+      - partition_id p is mapped to worker_names[p] (stable ordering)
+      - if a node is missing from node_to_part -> error (fail-fast)
+      - if p is outside range -> error
+    """
+    with open(in_json_path, "r", encoding="utf-8") as f:
+        cfg: Dict[str, Any] = json.load(f)
+
+    satellites = cfg.get("satellites", {})
+    users = cfg.get("users", {})
+    grounds = cfg.get("grounds", {})
+    all = {**satellites, **users, **grounds}
+    workers = set()
+    for n in all.values():
+        worker = n.get("worker", {})
+        workers.add(worker)
+
+
+    k = len(workers)
+    workers = sorted(list(workers))
+
+    # Validate partition ids
+    for n, p in node_to_part.items():
+        if not isinstance(p, int):
+            raise ValueError(f"Partition id for node '{n}' is not int: {p!r}")
+        if p < 0 or p >= k:
+            raise ValueError(
+                f"Partition id out of range for node '{n}': {p} (expected 0..{k-1})"
+            )
+
+    updated = 0
+    missing = []
+
+    for section in node_sections:
+        block = cfg.get(section, {})
+        if not block:
+            continue
+        if not isinstance(block, dict):
+            raise ValueError(f"Section '{section}' must be a dict of node_name -> node_config.")
+
+        for node_name, node_cfg in block.items():
+            if node_name not in node_to_part:
+                missing.append(node_name)
+                continue
+            if not isinstance(node_cfg, dict):
+                raise ValueError(f"Node '{node_name}' in section '{section}' must map to a dict.")
+
+            part = node_to_part[node_name]
+            node_cfg[worker_field] = workers[part]
+            updated += 1
+
+    if missing:
+        raise KeyError(
+            f"Missing METIS partition assignment for {len(missing)} node(s): {missing[:20]}"
+            + (" ..." if len(missing) > 20 else "")
+        )
+
+    with open(out_json_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, sort_keys=False)
+
+    print(f"✅ Wrote updated config to {out_json_path} (assigned {updated} nodes, k={k} groups)")
+
+def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
+                            nclusters: int = 0,
+                            cluster_weighted: bool = True,
+                            cluster_contiguous: bool = False,
+                            worker_config_in: Optional[str] = None,
+                            sat_config_out: Optional[str] = None
+                            ) -> None:
+
     # Load configuration and build node_map (same logic you already have)
     with open(config_file, "r", encoding="utf-8") as f:
         config = json.load(f)
@@ -200,6 +398,11 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
     worst_components = 1
     worst_largest_cc = num_nodes
     partition_log: List[Dict] = []
+
+    # For METIS clustering (time-weighted adjacency):
+    # counts how many epochs each undirected edge was active
+    edge_active_count: Dict[Tuple[int, int], int] = defaultdict(int)
+
 
     for path in epoch_files:
         epoch_data = load_json_file_or_report(path)
@@ -264,6 +467,10 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
         total_links_over_time += float(len(active_links))
         total_churn += float(adds + dels)
 
+        # --- accumulate time-weighted adjacency (one count per epoch an edge is active)
+        for key in active_links:
+            edge_active_count[key] += 1
+
         # --- Connectivity check ---
         components = connected_components(num_nodes, active_links, inv_node_map)
         if len(components) > 1:
@@ -285,6 +492,41 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str)
         if num_epochs % 2000 == 0:
             print(f"… processed {num_epochs}/{len(epoch_files)} epochs; active_links={len(active_links)}")
         
+    # ---- METIS clustering (optional; driven by CLI args passed down) ----
+    if nclusters > 1:
+        if cluster_weighted:
+            weights = edge_active_count
+            target_links = None
+        else:
+            weights = None
+            target_links = edge_active_count.keys()
+        res = metis_cluster_nodes(
+            num_nodes=num_nodes,
+            active_links=target_links,          # used only if weights=None
+            inv_node_map=inv_node_map,
+            nparts=nclusters,
+            edge_weight=weights,
+            contiguous=cluster_contiguous,
+        )
+
+        print("\n🧱 METIS Clustering ফল (k-way partition):")
+        print(f"   - k (groups): {nclusters}")
+        print(f"   - edge-weighted over time: {bool(cluster_weighted)}")
+        print(f"   - cut edges (objective): {res['cut']}")
+        
+        for gid in sorted(res["groups"].keys()):
+            nodes = res["groups"][gid]
+            print(f"   - group {gid:02d}: size={len(nodes)} nodes={nodes}")
+
+        if sat_config_out:
+            node_to_part = {inv_node_map[i]: p for i, p in enumerate(res["parts"])}
+            apply_metis_worker_assignment(
+                in_json_path=config_file,
+                out_json_path=sat_config_out,
+                node_to_part=node_to_part,
+            )
+    
+
     # Close durations for links still active at the end
     if last_ts is not None:
         for key, start in link_start_time.items():
@@ -403,8 +645,8 @@ def main() -> int:
 
     parser.add_argument(
         "-c", "--config",
-        default="config.json",
-        help="Path to the JSON configuration file (e.g., config.json)",
+        default="sat-config.json",
+        help="Path to the JSON sat configuration file (e.g., sat-config.json)",
     )
     parser.add_argument(
         "-e", "--epoch-dir",
@@ -416,6 +658,27 @@ def main() -> int:
         default="NetSatBench-epoch*.json",
         help="Epoch filename glob pattern (inside epoch-dir).",
     )
+    parser.add_argument(
+        "--nclusters",
+        type=int,
+        default=0,
+        help="If >1, run METIS to cluster nodes into this many groups (k-way partition).",
+    )
+    parser.add_argument(
+        "--cluster-weighted",
+        action="store_true",
+        help="Use time-weighted edges (weight = number of epochs an edge was active).",
+    )
+    parser.add_argument(
+        "--cluster-contiguous",
+        action="store_true",
+        help="Ask METIS for contiguous partitions (best-effort; not a hard guarantee).",
+    )
+    parser.add_argument(
+        "--sat-config-out",
+        type=str,default=None,
+        help="If set, output config JSON with METIS worker assignment applied.",
+    )
 
     args = parser.parse_args()
 
@@ -423,6 +686,10 @@ def main() -> int:
         config_file=args.config,
         epoch_dir=args.epoch_dir,
         file_pattern=args.file_pattern,
+        nclusters=args.nclusters,
+        cluster_weighted=args.cluster_weighted,
+        cluster_contiguous=args.cluster_contiguous,
+        sat_config_out=args.sat_config_out,
     )
 
     return 0

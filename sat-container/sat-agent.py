@@ -459,7 +459,7 @@ def execute_commands(commands_raw_str):
     try:
         commands = json.loads(commands_raw_str)
         log.info(f"▶️  Executing {len(commands)} runtime commands...")
-        threading.Thread(target=lambda: subprocess.run(f"/bin/bash -c '{' && '.join(commands)}'", shell=True), daemon=True).start()
+        threading.Thread(target=lambda: subprocess.run(f"/bin/bash -c '{' ; '.join(commands)}'", shell=True), daemon=True).start()
         last_executed_cmd_raw = commands_raw_str
     except: pass
 

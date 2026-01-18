@@ -13,16 +13,17 @@ import etcd3
 import zlib
 import shutil
 from typing import Optional, Tuple, List
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 from pathlib import Path
-from functools import partial
+import os
+import pyinotify
+from pathlib import Path
 
 # ==========================================
 # GLOBALS
 # ==========================================
 TIME_OFFSET: Optional[float] = None
 etcd_client = None
+writing_lock = threading.Lock()
 
 
 # ==========================================
@@ -144,21 +145,30 @@ def convert_time_epoch_to_timestamp(time_str: str) -> float:
             "Expected 'YYYY-MM-DDTHH:MM:SSZ'."
         )
 
-class NewEpochFileHandler(FileSystemEventHandler):
-    def on_created(self, event):
-        if not event.is_directory:
-            process_epoch_from_queue(event.src_path)
-            # delete the file after processing
-            os.remove(event.src_path)
 
-def start_queue_watcher(path: Path) -> Observer:
+
+class NewEpochFileHandler(pyinotify.ProcessEvent):
+    def process_IN_CLOSE_WRITE(self, event):
+        # Ignore directories
+        if event.dir:
+            return
+        path = event.pathname
+        process_epoch_from_queue(path)
+        # delete the file after processing
+        os.remove(path)
+
+
+def start_queue_watcher(path: Path):
+    wm = pyinotify.WatchManager()
     handler = NewEpochFileHandler()
-    observer = Observer()
-    observer.schedule(handler, str(path), recursive=False)
-    observer.daemon = True  # ensure it won't prevent process exit
-    observer.start()
-    print(f"👀 Watching epoch queue: {path}")
-    return observer
+    notifier = pyinotify.ThreadedNotifier(wm, handler)
+    notifier.daemon = True
+    notifier.start()
+    mask = pyinotify.IN_CLOSE_WRITE
+    wm.add_watch(str(path), mask, rec=False)
+    print(f"👀 Watching epoch queue (IN_CLOSE_WRITE): {path}")
+    return notifier
+
 
 # ==========================================
 # 🚀 CORE LOGIC
@@ -253,6 +263,7 @@ def process_epoch_from_queue(json_path: str) -> None:
 
     # D. Push Runtime Commands
     for node, cmds in epoch_dict.get("run", {}).items():
+        print(f"▶️  [{os.path.basename(json_path)}] Pushing run commands to node {node}: {cmds}")
         etcd_client.put(f"/config/run/{node}", json.dumps(cmds))
 
     print(f"✅ [{os.path.basename(json_path)}] Epoch applied successfully.")
@@ -267,8 +278,9 @@ def process_epoch_from_dir(json_path: str, queue_path: str, fixed_wait: int = -1
         epoch_time = config.get("epoch-time") if config.get("epoch-time") else convert_time_epoch_to_timestamp(config.get("time"))
         smart_wait(epoch_time, filename, fixed_wait=fixed_wait)
         print(f"🚩 [{filename}] Applying epoch configuration at virtual epoch time {epoch_time}...")
-        # copy epoch file in the queque directory
-        shutil.copy2(json_path, os.path.join(queue_path, filename))
+        with writing_lock:
+            # copy epoch file in the queque directory
+            shutil.copy2(json_path, os.path.join(queue_path, filename))
 
     except Exception as e:
         print(f"❌ Error processing {filename}: {e}")
