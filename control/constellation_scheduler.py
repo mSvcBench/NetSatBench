@@ -87,8 +87,12 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
         mem_req = parse_mem(cfg.get('mem-request',0.0))
         cfg['mem-request'] = f"{int(mem_req * 1024)}MiB" # store as MiB string
 
-        print(f"    Node: {name} | CPU Req: {cpu_req} | MEM Req: {mem_req}GiB | req worker: {cfg.get('worker', 'None')}")
-        
+        cpu_lim = parse_cpu(cfg.get('cpu-limit',0.0))
+        cfg['cpu-limit'] = cpu_lim # remove unit strings
+
+        mem_lim = parse_mem(cfg.get('mem-limit',0.0))
+        cfg['mem-limit'] = f"{int(mem_lim * 1024)}MiB" # store as MiB string
+ 
         #--- Check if already assigned ---
         assigned_worker = cfg.get('worker', None)  
         if assigned_worker:
@@ -100,6 +104,9 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
                     print(f"    ⚠️ Warning: Worker {assigned_worker} overcommitted on MEM for node {name}!")
                 workers[assigned_worker]['cpu-used'] += cpu_req
                 workers[assigned_worker]['mem-used'] += mem_req
+            else:
+                print(f"    ⚠️ Warning: Assigned worker {assigned_worker} for node {name} not found in workers list! Auto-assigning...")
+                nodes_to_schedule.append((name, cfg, cpu_req, mem_req))
         else:
             nodes_to_schedule.append((name, cfg, cpu_req, mem_req))
 
@@ -157,7 +164,7 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
                 # Update the Config Dictionary directly
                 node['data']['worker'] = worker['name']
                 assigned = True
-                print(f"    ✅ Assigned Node: {node['name']} to Worker: {worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {node['mem_req']}GiB)")
+                print(f"    ➞ Assigned Node: {node['name']} to Worker: {worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {round(node['mem_req'],4)}GiB)")
                 break
         if not assigned:
             # Not enough resource found. Overcommit node with highest free resources

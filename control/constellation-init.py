@@ -140,6 +140,12 @@ def main() -> int:
     etcd = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password)
     config_file = args.config
 
+    # check that "/config/workers" exists in etcd and it is not void
+    workers = list(etcd.get_prefix("/config/workers/"))
+    if not workers:
+        print("❌ '/config/workers' is missing or empty in Etcd, use system-init-docker.py first.")
+        sys.exit(1)
+
     try:
         with open(config_file, "r", encoding="utf-8") as f:
             config_data = json.load(f)

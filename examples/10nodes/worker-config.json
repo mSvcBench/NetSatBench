@@ -6,7 +6,9 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.100.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-supernet": "172.0.0.0/8",
+      "cpu": "4",
+      "mem": "6GiB"
     },
     "host-2": {
       "ip": "10.0.1.144",
@@ -14,7 +16,9 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.101.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-supernet": "172.0.0.0/8",
+      "cpu": "4",
+      "mem": "6GiB"
     }
   }
 }

@@ -101,8 +101,10 @@ def recreate_and_run_container(
     ssh_key_path: str,
     worker_bridge: str,
     container_image: str,
-    cpu_requested: str,
+    cpu_requested: float,
     mem_requested: str,
+    cpu_limit: float,
+    mem_limit: str,
     etcd_host: str,
     etcd_port: int,
     etcd_user: str = None,
@@ -151,9 +153,15 @@ def recreate_and_run_container(
                 "-e", f"ETCD_CA_CERT=/app/etcd-ca.crt",
             ])
         if cpu_requested > 0:
-            run_cmd.extend(["--cpus", str(cpu_requested)])
+            run_cmd.extend(["--cpu-shares", str(int(cpu_requested*1024))])  # convert CPU to CPU shares (1024 = 1 CPU)
+        else:
+            run_cmd.extend(["--cpu-shares", "10"])  # minimal CPU shares such as 0.01 CPU
         if mem_requested != "0MiB":
-            run_cmd.extend(["--memory", str(mem_requested)])
+            run_cmd.extend(["--memory-reservation", str(mem_requested)])
+        if cpu_limit > 0:
+             run_cmd.extend(["--cpus", str(cpu_limit)])
+        if mem_limit != "0MiB":
+             run_cmd.extend(["--memory", str(mem_limit)])
         run_cmd.append(container_image) 
 
         run_ssh(
@@ -231,8 +239,10 @@ def create_one_node(
     ssh_key = worker_info.get('ssh_key', '~/.ssh/id_rsa')
     worker_bridge = worker_info.get('sat-vnet', 'sat-vnet')
     image = node.get('image', 'msvcbench/sat-container:latest')
-    cpu_requested = node.get('cpu-request', 0.0)
+    cpu_requested = float(node.get('cpu-request', 0.0))
     mem_requested = node.get('mem-request', "0MiB")
+    cpu_limit = float(node.get('cpu-limit', 0.0))
+    mem_limit = node.get('mem-limit', "0MiB")
 
     try:
         cmd = recreate_and_run_container(
@@ -244,6 +254,8 @@ def create_one_node(
             container_image=image,
             cpu_requested=cpu_requested,
             mem_requested=mem_requested,
+            cpu_limit=cpu_limit,
+            mem_limit=mem_limit,
             etcd_host=etcd_host,
             etcd_port=etcd_port,
             etcd_user=etcd_user,

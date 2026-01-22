@@ -13,48 +13,88 @@
   },
   "satellites": {
     "sat1": {
-      "worker": "host-1",
-      "image": "msvcbench/sat-container:latest"
-        },
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
+    },
     "sat2": {
-      "worker": "host-1",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     },
     "sat3": {
-      "worker": "host-1",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     },
     "sat4": {
-      "worker": "host-1",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     },
     "sat5": {
-      "worker": "host-1",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     },
     "sat6": {
-      "worker": "host-1",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     },
     "sat7": {
-      "worker": "host-2",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     },
     "sat8": {
-      "worker": "host-2",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     }
   },
   "grounds": {
     "grd1": {
-      "worker": "host-2",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "sidecars": [],
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     }
   },
   "users": {
     "usr1": {
-      "worker": "host-2",
       "image": "msvcbench/sat-container:latest",
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi",
+      "sidecars": [],
       "subnet_cidr": "172.99.0.0/30",
       "L3-config": {
         "enable-netem": false,
