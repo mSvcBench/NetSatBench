@@ -6,10 +6,12 @@ import os
 import sys
 import ipaddress
 from itertools import islice
+from constellation_scheduler import schedule_workers
+
 # ==========================================
 # ETCD CONNECTION
 # ==========================================
-def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None, etcd_ca_cert = None):
+def connect_etcd(etcd_host: str, etcd_port: int, etcd_user=None, etcd_password=None, etcd_ca_cert=None):
     try:
         print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
@@ -48,54 +50,51 @@ def generate_subnet(global_index: int, base_cidr: str) -> str:
 # ==========================================
 # CONFIG INJECTION LOGIC
 # ==========================================
-def apply_config_to_etcd(etcd, filename: str):
- 
+def apply_config_to_etcd(etcd, config_data: dict):
+   
     allowed_keys = [
-        "satellites",
-        "users",
-        "grounds",
-        "L3-config-common",
-        "workers",
-        "epoch-config",
+        "satellites", "users", "grounds",
+        "L3-config-common", "workers", "epoch-config"
     ]
 
     try:
-        with open(filename, "r", encoding="utf-8") as f:
-            config = json.load(f)
         global_subnet_counter = 0
-        for key, value in config.items():
+        for key, value in config_data.items():
             if key not in allowed_keys:
-                print(f"❌ [{filename}] Unexpected key '{key}', skipping...")
+                print(f"⚠️ Unexpected key '{key}', skipping...")
                 continue
+            
             if key == "L3-config-common":
                 etcd.put(f"/config/{key}", json.dumps(value))
             elif key in ["epoch-config"]:
                 etcd.put(f"/config/{key}", json.dumps(value))
+            elif key == "workers":
+                for name, node_cfg in value.items():
+                    etcd.put(f"/config/workers/{name}", json.dumps(node_cfg))
+            
             elif key in ["satellites", "users", "grounds"]:
                 for name, node_cfg in value.items():
-                    my_l3_cfg = config.get("L3-config-common", {}).copy()
+                    my_l3_cfg = config_data.get("L3-config-common", {}).copy()
                     local_l3_node_cfg = node_cfg.get("L3-config", {})
                     for key_l3, val_l3 in local_l3_node_cfg.items():
                         my_l3_cfg[key_l3] = val_l3
-                    ## Add "subnet_cidr" to node_cfg in case automated IP assignment is used
+                    
                     if my_l3_cfg.get("auto-assign-ips", False) is True:
-                        base_cidr = my_l3_cfg.get("auto-assign-cidr", "192.168.0.0/16")
-                        node_cfg["subnet_cidr"] = generate_subnet(global_subnet_counter, base_cidr)
-                        global_subnet_counter += 1
+                        if "subnet_cidr" not in node_cfg:
+                            base_cidr = my_l3_cfg.get("auto-assign-cidr", "192.168.0.0/16")
+                            node_cfg["subnet_cidr"] = generate_subnet(global_subnet_counter, base_cidr)
+                            global_subnet_counter += 1
+                    
                     etcd.put(
                         f"/config/{key}/{name}",
                         json.dumps(node_cfg),
                     )
 
-        print(f"✅ Successfully applied constellation config from {filename} to Etcd.")
+        print(f"✅ Successfully applied constellation config to Etcd.")
 
-    except FileNotFoundError:
-        print(f"❌ Error: File '{filename}' not found.")
+    except Exception as e:
+        print(f"❌ Error in apply_config_to_etcd: {e}")
         sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"❌ Error: Failed to parse JSON in '{filename}': {e}")
-        sys.exit(1)
-
 
 # ==========================================
 # MAIN
@@ -106,7 +105,7 @@ def main() -> int:
     )
     parser.add_argument(
         "-c", "--config",
-        default="sat-config.json",
+        default="examples/10nodes-sched/sat-config.json",
         required=False,
         help="Path to the JSON emulation configuration file (e.g., sat-config.json)",
     )
@@ -136,14 +135,21 @@ def main() -> int:
         default=os.getenv("ETCD_CA_CERT", None ),
         help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
     )
-
     args = parser.parse_args()
-
+    
     etcd = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password)
-    apply_config_to_etcd(etcd, args.config)
+    config_file = args.config
 
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+    except Exception as e:
+        print(f"❌ Failed to load file: {e}")
+        return 1
+
+    scheduled_config = schedule_workers(config_data, etcd)
+    apply_config_to_etcd(etcd, scheduled_config)
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

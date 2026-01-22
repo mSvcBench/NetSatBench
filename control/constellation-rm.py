@@ -266,7 +266,15 @@ def main():
     for prefix in prefixes:
         print(f"   ➞ Deleting keys with prefix {prefix} ...")
         etcd_client.delete_prefix(prefix)
-
+    #cleanup workers' usage stats
+    print(f"   ➞ Resetting workers' usage stats...")
+    for name, worker_cfg in workers.items():
+        # Reset usage
+        worker_cfg['cpu-used'] = 0.0
+        worker_cfg['mem-used'] = 0.0  
+        key = f"/config/workers/{name}"
+        etcd_client.put(key, json.dumps(worker_cfg))
+        
     print("-" * 50)
     print("👍 Global Cleanup Complete.")
     return 0

@@ -101,6 +101,8 @@ def recreate_and_run_container(
     ssh_key_path: str,
     worker_bridge: str,
     container_image: str,
+    cpu_requested: str,
+    mem_requested: str,
     etcd_host: str,
     etcd_port: int,
     etcd_user: str = None,
@@ -132,23 +134,7 @@ def recreate_and_run_container(
                 quiet=True,
             )
         # --- Run new container ---
-        if etcd_user and etcd_password and etcd_ca_cert:
-            run_cmd = [
-                "docker", "run", "-d",
-                "--name", node_name,
-                "--hostname", node_name,
-                "--net",worker_bridge,
-                "--privileged",
-                "--pull=always",
-                "-e", f"NODE_NAME={node_name}",
-                "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}",
-                "-e", f"ETCD_USER={etcd_user}",
-                "-e", f"ETCD_PASSWORD={etcd_password}",
-                "-e", f"ETCD_CA_CERT=/app/etcd-ca.crt",
-                container_image,
-            ]
-        else:
-            run_cmd = [
+        run_cmd = [
                 "docker", "run", "-d",
                 "--name", node_name,
                 "--hostname", node_name,
@@ -156,9 +142,20 @@ def recreate_and_run_container(
                 "--privileged",
                 "--pull=always",
                 "-e", f"NODE_NAME={node_name}",
-                "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}",
-                container_image,
-            ]
+                "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}"
+        ]
+        if etcd_user and etcd_password and etcd_ca_cert:
+            run_cmd.extend([
+                "-e", f"ETCD_USER={etcd_user}",
+                "-e", f"ETCD_PASSWORD={etcd_password}",
+                "-e", f"ETCD_CA_CERT=/app/etcd-ca.crt",
+            ])
+        if cpu_requested > 0:
+            run_cmd.extend(["--cpus", str(cpu_requested)])
+        if mem_requested != "0MiB":
+            run_cmd.extend(["--memory", str(mem_requested)])
+        run_cmd.append(container_image) 
+
         run_ssh(
             ssh_username=ssh_username,
             ssh_host=worker,
@@ -167,7 +164,7 @@ def recreate_and_run_container(
             check=True,
         )
 
-        # copu the CA cert if needed with scp and then and docker cp via ssh
+        # copy the CA cert if needed with scp and then and docker cp via ssh
         if etcd_user and etcd_password and etcd_ca_cert:
             scp_cmd = [
                 "scp",
@@ -234,6 +231,8 @@ def create_one_node(
     ssh_key = worker_info.get('ssh_key', '~/.ssh/id_rsa')
     worker_bridge = worker_info.get('sat-vnet', 'sat-vnet')
     image = node.get('image', 'msvcbench/sat-container:latest')
+    cpu_requested = node.get('cpu-request', 0.0)
+    mem_requested = node.get('mem-request', "0MiB")
 
     try:
         cmd = recreate_and_run_container(
@@ -243,6 +242,8 @@ def create_one_node(
             ssh_key_path=ssh_key,
             worker_bridge=worker_bridge,
             container_image=image,
+            cpu_requested=cpu_requested,
+            mem_requested=mem_requested,
             etcd_host=etcd_host,
             etcd_port=etcd_port,
             etcd_user=etcd_user,
