@@ -2,6 +2,7 @@
 import ipaddress
 import os
 import json
+import shlex
 import time
 import logging
 import subprocess
@@ -43,6 +44,7 @@ l3_flags = None
 my_config = None
 etcd_client = None
 routing = None
+last_executed_cmd_raw = None
 
 # ----------------------------
 #   HELPERS
@@ -453,15 +455,35 @@ def watch_etchosts_loop():
             continue
         
 
-def execute_commands(commands_raw_str):
+
+
+def _run_commands_sequentially(commands):
+    for cmd in commands:
+        log.info("▶️  exec: %s", cmd)
+        subprocess.run(
+            ["/bin/bash", "-c", cmd],
+            shell=False,
+            check=False
+        )
+
+def execute_commands(commands_raw_str: str) -> None:
     global last_executed_cmd_raw
-    if not commands_raw_str or commands_raw_str == last_executed_cmd_raw: return
+    if not commands_raw_str or commands_raw_str == last_executed_cmd_raw:
+        return
     try:
         commands = json.loads(commands_raw_str)
-        log.info(f"▶️  Executing {len(commands)} runtime commands...")
-        threading.Thread(target=lambda: subprocess.run(f"/bin/bash -c '{' ; '.join(commands)}'", shell=True), daemon=True).start()
+        if not isinstance(commands, list) or not all(isinstance(c, str) for c in commands):
+            return
+
+        log.info("▶️  Executing %d runtime commands...", len(commands))
+        threading.Thread(
+            target=_run_commands_sequentially,
+            args=(commands,),
+            daemon=True
+        ).start()
         last_executed_cmd_raw = commands_raw_str
-    except: pass
+    except Exception:
+        log.exception("Failed to parse commands JSON")
 
 def watch_satellites_loop():
     # Only useful if you need to detect new peers dynamically
