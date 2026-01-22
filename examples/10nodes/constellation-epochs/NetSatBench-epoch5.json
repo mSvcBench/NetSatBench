@@ -1,17 +1,17 @@
 {
-  "time": "2024-06-01T12:01:00Z",
+  "time": "2024-06-01T12:05:00Z",
 
   "links-add": [
       {
         "endpoint1": "usr1",
-        "endpoint2": "sat3",
+        "endpoint2": "sat7",
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
       },
       {
         "endpoint1": "grd1",
-        "endpoint2": "sat1",
+        "endpoint2": "sat5",
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
@@ -22,14 +22,14 @@
   "links-del": [
       {
         "endpoint1": "usr1",
-        "endpoint2": "sat1",
+        "endpoint2": "sat5",
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"
       },
       {
         "endpoint1": "grd1",
-        "endpoint2": "sat7",
+        "endpoint2": "sat3",
         "rate": "10mbit",
         "loss":0,
         "delay": "1ms"

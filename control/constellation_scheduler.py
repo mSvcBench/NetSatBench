@@ -158,8 +158,8 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
             free_mem = worker['mem'] - worker['mem-used']
             if free_cpu >= node['cpu_req'] and free_mem >= node['mem_req']:
                 # Allocate logic
-                worker['cpu-used'] += node['cpu_req']
-                worker['mem-used'] += node['mem_req']
+                worker['cpu-used'] += node['cpu_req'] if node['cpu_req']> 0.0 else 0.000001  # avoid zero cpu consumption for round-robin scheduling 
+                worker['mem-used'] += node['mem_req'] if node['mem_req'] > 0.0 else 0.000001  # avoid zero mem consumption for round-robin scheduling
                 
                 # Update the Config Dictionary directly
                 node['data']['worker'] = worker['name']
@@ -169,8 +169,8 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
         if not assigned:
             # Not enough resource found. Overcommit node with highest free resources
             best_worker = workers_resources[0]
-            best_worker['cpu-used'] += node['cpu_req']
-            best_worker['mem-used'] += node['mem_req']
+            best_worker['cpu-used'] += node['cpu_req'] if node['cpu_req']> 0.0 else 0.000001  # avoid zero cpu consumption for round-robin scheduling 
+            best_worker['mem-used'] += node['mem_req'] if node['mem_req'] > 0.0 else 0.000001  # avoid zero mem consumption for round-robin scheduling
             node['data']['worker'] = best_worker['name']
             print(f"    ⚠️ Overcommitted Node: {node['name']} to Worker: {best_worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {node['mem_req']}GiB)")
 
