@@ -66,9 +66,10 @@ Utility scripts for analysis, routing and data processing.
 
 **docs/**  
 Documentation assets, including images, diagrams, and architectural descriptions.
-- [Configuration Manual](docs/configuration.md) — how to define and customize emulated satellite systems
-- [Routing Interface](docs/routing-interface.md) — specification of the routing module interface
+- [Control Commands](docs/commands.md) — detailed description of the control scripts available in the `control/` directory
+- [Configuration Manual](docs/configuration.md) — how to define and customize JSON files describing the computing system and the emulation parameters
 - [Etcd Key-Value Store](docs/etcd.md) — structure and organization of the Etcd key-value store used for constellation state management
+- [Routing Interface](docs/routing-interface.md) — specification of the routing module interface
 - [Oracle Routing Module](docs/oracle-routing-module.md) — description of the built-in oracle routing [module](utils/oracle-routing.py) for shortest-path routing with make-before-break strategy.
 
 ---
@@ -151,7 +152,7 @@ python3 control/system-init-docker.py --config ./examples/10nodes/workers-config
 ```
 
 ### 3. Initialize, Deploy and Run the Emulated Satellite System
-Execute the `constellation-init.py` script to initialize the constellation state in the Etcd key-value store:
+Execute the `constellation-init.py` script to initialize the *static* information of constellation in the Etcd key-value store:
 ```bash
 python3 control/constellation-init.py --config ./examples/10nodes/sat-config.json
 ```
@@ -159,7 +160,7 @@ Then, execute the `constellation-deploy.py` script to deploy the emulated satell
 ```bash
 python3 control/constellation-deploy.py
 ```
-Finally, wait a few seconds to ensure that all containers are fully up and running, and then execute the `constellation-run.py` script to start the emulation.
+Finally, wait a few seconds to ensure that all containers are fully up and running, and then execute the `constellation-run.py` script to start the emulation by applying dynamic configuration changes based on the epoch files.
 The system state will evolve over time according to the epoch files:
 ```bash
 python3 control/constellation-run.py --loop-delay 60
