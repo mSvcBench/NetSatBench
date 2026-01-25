@@ -9,9 +9,13 @@ import os
 import re
 import numpy as np
 import argparse
+import logging
 from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime, timezone
 from collections import deque, defaultdict
+
+logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
 
 # ==========================================
 # GLOBALS
@@ -74,15 +78,15 @@ def load_json_file_or_report(path: str) -> dict:
             txt = f.read()
 
         # Print precise position
-        print(f"❌ JSON parse error in file: {path}")
-        print(f"   - msg: {e.msg}")
-        print(f"   - line: {e.lineno}, col: {e.colno}, char: {e.pos}")
+        log.error(f"❌ JSON parse error in file: {path}")
+        log.error(f"   - msg: {e.msg}")
+        log.error(f"   - line: {e.lineno}, col: {e.colno}, char: {e.pos}")
 
         # Show a snippet around the error
         start = max(0, e.pos - 120)
         end = min(len(txt), e.pos + 120)
         snippet = txt[start:end].replace("\n", "\\n")
-        print(f"   - context: ...{snippet}...")
+        log.error(f"   - context: ...{snippet}...")
 
         # Optional salvage: extract first {...} block and retry
         first = txt.find("{")
@@ -90,7 +94,7 @@ def load_json_file_or_report(path: str) -> dict:
         if 0 <= first < last:
             candidate = txt[first:last + 1]
             try:
-                print("⚠️  Attempting salvage parse by extracting outermost {...} block...")
+                log.warning("⚠️  Attempting salvage parse by extracting outermost {...} block...")
                 return json.loads(candidate)
             except json.JSONDecodeError:
                 pass
@@ -334,7 +338,7 @@ def apply_metis_worker_assignment(
     with open(out_json_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, sort_keys=False)
 
-    print(f"✅ Wrote updated config to {out_json_path} (assigned {updated} nodes, k={k} groups)")
+    log.info(f"✅ Wrote updated config to {out_json_path} (assigned {updated} nodes, k={k} groups)")
 
 def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
                             nclusters: int = 0,
@@ -352,8 +356,8 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
     users = config.get("users", {})
     grounds = config.get("grounds", {})
 
-    print("📁 Loading configuration from file...")
-    print(f"🔎 Found {len(satellites)} satellites, {len(users)} users, {len(grounds)} ground stations in configuration.")
+    log.info("📁 Loading configuration from file...")
+    log.info(f"🔎 Found {len(satellites)} satellites, {len(users)} users, {len(grounds)} ground stations in configuration.")
 
     node_map = {}
     node_map.clear()
@@ -371,7 +375,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
         raise ValueError("Configuration has 0 nodes.")
 
     epoch_files = list_epoch_files(epoch_dir, file_pattern)
-    print(f"🔎 Found {len(epoch_files)} epoch files to process.")
+    log.info(f"🔎 Found {len(epoch_files)} epoch files to process.")
     if not epoch_files:
         raise FileNotFoundError(f"No epoch files found in '{epoch_dir}' with pattern '{file_pattern}'")
 
@@ -451,6 +455,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
             if key in active_links:
                 active_links.remove(key)
                 dels += 1
+                log.info(f"🛜 Removing link {key} at time {ts_raw}")
 
                 # Close duration
                 start = link_start_time.pop(key, None)
@@ -480,7 +485,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
                 "n_components": len(components),
                 "components": components
             })
-            print(
+            log.warning(
                 f"❌ PARTITION at {ts_raw}: "
                 f"{len(components)} components "
                 f"(largest={max(c['size'] for c in components)}/{num_nodes})"
@@ -490,7 +495,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
                 )
             )
         if num_epochs % 2000 == 0:
-            print(f"… processed {num_epochs}/{len(epoch_files)} epochs; active_links={len(active_links)}")
+            log.info(f"… processed {num_epochs}/{len(epoch_files)} epochs; active_links={len(active_links)}")
         
     # ---- METIS clustering (optional; driven by CLI args passed down) ----
     if nclusters > 1:
@@ -509,14 +514,14 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
             contiguous=cluster_contiguous,
         )
 
-        print("\n🧱 METIS Clustering ফল (k-way partition):")
-        print(f"   - k (groups): {nclusters}")
-        print(f"   - edge-weighted over time: {bool(cluster_weighted)}")
-        print(f"   - cut edges (objective): {res['cut']}")
+        log.info("\n🧱 METIS Clustering ফল (k-way partition):")
+        log.info(f"   - k (groups): {nclusters}")
+        log.info(f"   - edge-weighted over time: {bool(cluster_weighted)}")
+        log.info(f"   - cut edges (objective): {res['cut']}")
         
         for gid in sorted(res["groups"].keys()):
             nodes = res["groups"][gid]
-            print(f"   - group {gid:02d}: size={len(nodes)} nodes={nodes}")
+            log.info(f"   - group {gid:02d}: size={len(nodes)} nodes={nodes}")
 
         if sat_config_out:
             node_to_part = {inv_node_map[i]: p for i, p in enumerate(res["parts"])}
@@ -539,37 +544,37 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
 
     # ---- Print results ----
     if num_epochs == 0:
-        print("⚠️ No epochs processed.")
+        log.warning("⚠️ No epochs processed.")
         return
 
     avg_links_per_epoch = total_links_over_time / num_epochs
     avg_degree = (2.0 * avg_links_per_epoch) / num_nodes
     avg_churn = total_churn / num_epochs
 
-    print("\n📊 Basic Statistics:")
-    print(f"   - Number of epochs: {num_epochs}")
-    print(f"   - Number of nodes: {num_nodes}")
-    print(f"   - Average links per epoch: {avg_links_per_epoch:.2f}")
-    print(f"   - Average degree: {avg_degree:.2f}")
-    print(f"   - Average link churn (add+del per epoch): {avg_churn:.2f}")
+    log.info("\n📊 Basic Statistics:")
+    log.info(f"   - Number of epochs: {num_epochs}")
+    log.info(f"   - Number of nodes: {num_nodes}")
+    log.info(f"   - Average links per epoch: {avg_links_per_epoch:.2f}")
+    log.info(f"   - Average degree: {avg_degree:.2f}")
+    log.info(f"   - Average link churn (add+del per epoch): {avg_churn:.2f}")
 
-    print("\n📊 Link Duration Statistics")
+    log.info("\n📊 Link Duration Statistics")
     if duration_count == 0:
-        print("   - No link durations measured.")
+        log.info("   - No link durations measured.")
     else:
         avg_dur = duration_sum_sec / duration_count
-        print(f"   - Number of link lifetimes: {duration_count}")
-        print(f"   - Average link duration: {avg_dur:.2f} s")
-        print(f"   - Min duration: {duration_min:.2f} s")
-        print(f"   - Max duration: {duration_max:.2f} s")
+        log.info(f"   - Number of link lifetimes: {duration_count}")
+        log.info(f"   - Average link duration: {avg_dur:.2f} s")
+        log.info(f"   - Min duration: {duration_min:.2f} s")
+        log.info(f"   - Max duration: {duration_max:.2f} s")
 
-    print("\n🧩 Connectivity Statistics:")
+    log.info("\n🧩 Connectivity Statistics:")
     if not partition_log:
-        print("   - Constellation never partitioned.")
+        log.info("   - Constellation never partitioned.")
     else:
-        print(f"   - Partitioned epochs: {len(partition_log)}/{num_epochs}")
+        log.info(f"   - Partitioned epochs: {len(partition_log)}/{num_epochs}")
         worst = max(partition_log, key=lambda e: e["n_components"])
-        print(f"   - Maximum components observed: {worst['n_components']}")
+        log.info(f"   - Maximum components observed: {worst['n_components']}")
 
 def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
@@ -635,7 +640,7 @@ def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, ou
                 w.writerow([t_sec, t_iso, node_map[s], node_map[d], "update",
                             l.get("rate", ""), l.get("delay", ""), l.get("loss", "")])
 
-    print(f"✅ Exported:\n  - {nodes_path}\n  - {events_path}")
+    log.info(f"✅ Exported:\n  - {nodes_path}\n  - {events_path}")
 
 # ==========================================
 # MAIN
@@ -677,11 +682,17 @@ def main() -> int:
     parser.add_argument(
         "--sat-config-out",
         type=str,default=None,
-        help="If set, output config JSON with METIS worker assignment applied.",
+        help="If set, output config JSON with METIS worker assignment applied (no resource assurance !!).",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Logging level (default: INFO)",
     )
 
     args = parser.parse_args()
-
+    log.setLevel(args.log_level.upper())
+    
     compute_streaming_stats(
         config_file=args.config,
         epoch_dir=args.epoch_dir,

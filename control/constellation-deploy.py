@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
 import argparse
 import concurrent.futures
+import logging
 import time
 import etcd3
 import subprocess
 import json
 import os
 import sys
-import shlex
 from typing import Dict, Any, Tuple, Optional
+
+
+logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
 
 # ==========================================
 # HELPERS
 # ==========================================
 def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None, etcd_ca_cert = None):
     try:
-        print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
+        log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
             return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
         else:
             return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
-        print(f"❌ Failed to initialize Etcd client: {e}")
+        log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
 
 def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
@@ -31,7 +35,7 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
         try:
             data[key] = json.loads(value.decode('utf-8'))
         except json.JSONDecodeError:
-            print(f"⚠️ Warning: Could not parse JSON for key {key} under {prefix}")
+            log.warning(f"⚠️ Warning: Could not parse JSON for key {key} under {prefix}")
     return data
 
 
@@ -89,6 +93,7 @@ def run_ssh(
 
     if check and cp.returncode != 0:
         msg = stderr.splitlines()[0] if stderr else "Remote command failed"
+        log.error(f"❌ {msg}")
         raise RemoteCommandError(msg)
 
     return cp
@@ -313,13 +318,20 @@ def main() -> int:
         default=os.getenv("ETCD_CA_CERT", None ),
         help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Logging level (default: INFO)",
+    )
     args = parser.parse_args()
 
+    log.setLevel(args.log_level.upper())
+
     if args.threads < 1:
-        print("❌ --threads must be >= 1")
+        log.error("❌ --threads must be >= 1")
         return 2
 
-    etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password)
+    etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
 
     # 1) LOAD CONFIGURATION
     satellites = get_prefix_data(etcd_client, '/config/satellites/')
@@ -327,7 +339,7 @@ def main() -> int:
     grounds = get_prefix_data(etcd_client, '/config/grounds/')
     workers = get_prefix_data(etcd_client, '/config/workers/')
 
-    print(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
+    log.info(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
 
     if args.only == "satellites":
         all_nodes = satellites
@@ -339,15 +351,15 @@ def main() -> int:
         all_nodes = {**satellites, **users, **grounds}
     
     if not all_nodes:
-        print("⚠️ Warning: No nodes found. Run 'init.py' to populate Etcd first.")
+        log.warning("⚠️ Warning: No nodes found. Run 'init.py' to populate Etcd first.")
         return 1
 
     if not workers:
-        print("❌ Error: No workers found in /config/workers/. Cannot deploy.")
+        log.error("❌ Error: No workers found in /config/workers/. Cannot deploy.")
         return 1
 
     # 2) CREATE CONTAINERS IN PARALLEL
-    print(f"🚀 Deploying {args.only} nodes using {args.threads} threads...")
+    log.info(f"🚀 Deploying {args.only} nodes using {args.threads} threads...")
 
     ok = 0
     fail = 0
@@ -385,7 +397,7 @@ def main() -> int:
             elif node_name in grounds:
                 prefix = "📡"
             
-            print(f"{prefix} {node_name}: {msg}")
+            log.info(f"{prefix} {node_name}: {msg}")
 
             if success:
                 ok += 1
@@ -393,9 +405,9 @@ def main() -> int:
                 fail += 1
 
     if fail == 0:
-        print("\n✅ Constellation deployment completed...waiting for nodes to come online.")
+        log.info("✅ Constellation deployment completed...waiting for nodes to come online.")
     else:
-        print(f"\n⚠️ Constellation deployment completed with {fail} failures.")
+        log.warning(f"⚠️ Constellation deployment completed with {fail} failures.")
         return 3
 
     # wait that all deployed node have put their eth0_ip in etcd
@@ -408,7 +420,7 @@ def main() -> int:
             else:
                 time.sleep(1)
     time.sleep(5)  # extra wait to ensure all services inside the containers are up
-    print("👍 Constellation deployment completed and all nodes running.")
+    log.info("👍 Constellation deployment completed and all nodes running.")
 
 
 

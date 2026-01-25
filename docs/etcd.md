@@ -75,7 +75,9 @@ Stores the configuration data of the worker host named `host-1`.
   "ssh_key": "/home/ubuntu/.ssh/id_rsa",
   "sat-vnet": "sat-vnet",
   "sat-vnet-cidr": "172.100.0.0/16",
-  "sat-vnet-supernet": "172.0.0.0/8"
+  "sat-vnet-supernet": "172.0.0.0/8",
+  "cpu": "4",
+  "mem": "6GiB"
 }
 ```
 
@@ -89,12 +91,16 @@ These prefixes contain the configuration data of the emulated node indexed by na
 {
  "worker": "host-1", 
  "image": "msvcbench/sat-container:latest", 
- "subnet_cidr": "192.168.0.0/29", 
+ "subnet_cidr": "192.168.0.0/29",
+ "cpu-request": "100m",
+ "mem-request": "200Mi",
+ "cpu-limit": "200m",
+ "mem-limit": "400Mi", 
  "eth0_ip": "172.100.0.5"
 }
 ```
 In addition to the parameters specified in sat-config.json, the `eth0_ip` field defines the IP address assigned to the eth0 interface of the node container.
-This address is used to establish VXLAN links between nodes and is automatically managed by the sat-agent running inside each container during initialization.
+This address is used to establish the overlay VXLAN links between nodes and is automatically managed by the sat-agent running inside each container during initialization.
 The subnet_cidr field can be automatically assigned if the `auto-assign-cidr` field is set.
 
 /config/L3-config-common
@@ -117,8 +123,8 @@ The subnet_cidr field can be automatically assigned if the `auto-assign-cidr` fi
 ```
 
 ## /config/etchosts/
-This prefix holds the IP address of the loopback interface (if assigned) for each emulated node, indexed by node name.
-These entries are automatically created and managed by the sat-agent, which configures the /etc/hosts file inside each container, allowing workloads to refer to nodes by name rather than by IP address.
+This prefix holds the overlay IP address assigned to the loopback interface (if assigned) for each emulated node, indexed by node name.
+These entries are automatically created and managed by the sat-agent, which configures the /etc/hosts file inside each container, allowing workloads to refer to nodes by name rather than by overlay IP address.
 ### Example
 
 /config/etchosts/sat1

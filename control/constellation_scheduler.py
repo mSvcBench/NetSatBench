@@ -4,6 +4,9 @@ import re
 import sys
 import etcd3
 from typing import Dict, Any
+import logging
+
+log = logging.getLogger("nsb-logger")
 
 # ==========================================
 # ETCD CONNECTION
@@ -15,7 +18,7 @@ def connect_etcd(etcd_host: str, etcd_port: int, etcd_user=None, etcd_password=N
         else:
             return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
-        print(f"❌ Failed to initialize Etcd client: {e}")
+        log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
 
 # ==========================================
@@ -62,7 +65,7 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
         try:
             data[key] = json.loads(value.decode('utf-8'))
         except json.JSONDecodeError:
-            print(f"⚠️ Warning: Could not parse JSON for key {key} under {prefix}")
+            log.warning(f"⚠️ Warning: Could not parse JSON for key {key} under {prefix}")
     return data
 
 # ==========================================
@@ -70,7 +73,7 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
 # ==========================================
 def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str, Any]:
 
-    print("⚙️  Starting scheduling logic...")
+    log.info("⚙️  Starting scheduling logic...")
 
     satellites = config_data.get('satellites', {})
     users = config_data.get('users', {})
@@ -99,13 +102,13 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
             if assigned_worker in workers:
                 # Deduct resources from assigned worker
                 if workers[assigned_worker]['cpu-used'] + cpu_req > parse_cpu(workers[assigned_worker].get('cpu')):
-                    print(f"    ⚠️ Warning: Worker {assigned_worker} overcommitted on CPU for node {name}!")
+                    log.warning(f"    ⚠️ Warning: Worker {assigned_worker} overcommitted on CPU for node {name}!")
                 if workers[assigned_worker]['mem-used'] + mem_req > parse_mem(workers[assigned_worker].get('mem')):
-                    print(f"    ⚠️ Warning: Worker {assigned_worker} overcommitted on MEM for node {name}!")
+                    log.warning(f"    ⚠️ Warning: Worker {assigned_worker} overcommitted on MEM for node {name}!")
                 workers[assigned_worker]['cpu-used'] += cpu_req
                 workers[assigned_worker]['mem-used'] += mem_req
             else:
-                print(f"    ⚠️ Warning: Assigned worker {assigned_worker} for node {name} not found in workers list! Auto-assigning...")
+                log.warning(f"    ⚠️ Warning: Assigned worker {assigned_worker} for node {name} not found in workers list! Auto-assigning...")
                 nodes_to_schedule.append((name, cfg, cpu_req, mem_req))
         else:
             nodes_to_schedule.append((name, cfg, cpu_req, mem_req))
@@ -120,10 +123,6 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
             'cpu-used': parse_cpu(cfg.get('cpu-used', 0.0)),
             'mem-used': parse_mem(cfg.get('mem-used', 0.0))
         })
-
-    # if not workers_resources:
-    #     print("❌ Scheduler Aborted: No workers found in config.")
-    #     return config_data
 
     def get_worker_score(w):
         free_cpu = w['cpu'] - w['cpu-used']
@@ -164,7 +163,7 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
                 # Update the Config Dictionary directly
                 node['data']['worker'] = worker['name']
                 assigned = True
-                print(f"    ➞ Assigned Node: {node['name']} to Worker: {worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {round(node['mem_req'],4)}GiB)")
+                log.info(f"    ➞ Assigned Node: {node['name']} to Worker: {worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {round(node['mem_req'],4)}GiB)")
                 break
         if not assigned:
             # Not enough resource found. Overcommit node with highest free resources
@@ -172,7 +171,7 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
             best_worker['cpu-used'] += node['cpu_req'] if node['cpu_req']> 0.0 else 0.000001  # avoid zero cpu consumption for round-robin scheduling 
             best_worker['mem-used'] += node['mem_req'] if node['mem_req'] > 0.0 else 0.000001  # avoid zero mem consumption for round-robin scheduling
             node['data']['worker'] = best_worker['name']
-            print(f"    ⚠️ Overcommitted Node: {node['name']} to Worker: {best_worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {node['mem_req']}GiB)")
+            log.warning(f"    ⚠️ Overcommitted Node: {node['name']} to Worker: {best_worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {node['mem_req']}GiB)")
 
     # update worker config in etcd with usage stats
     for worker in workers_resources:
@@ -189,5 +188,5 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
 
 
 
-    print("✅ Scheduling logic finished.")
+    log.info("✅ Scheduling Completed.")
     return config_data

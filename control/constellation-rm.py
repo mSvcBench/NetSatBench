@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
 import argparse
 import os
-import shlex
+import logging
 import concurrent
 import etcd3
 import subprocess
 import json
 import sys
 
+logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
+
 # ==========================================
 # HELPERS
 # ==========================================
 def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None, etcd_ca_cert = None):
     try:
-        print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
+        log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
             return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
         else:
             return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
-        print(f"❌ Failed to initialize Etcd client: {e}")
+        log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
 
 def get_prefix_data(etcd_client,prefix):
@@ -30,7 +33,7 @@ def get_prefix_data(etcd_client,prefix):
         try:
             data[key] = json.loads(value.decode('utf-8'))
         except json.JSONDecodeError:
-            pass
+            log.warning(f"⚠️ Warning: Could not parse JSON for key {key} under {prefix}")
     return data
 
 class SshError(RuntimeError):
@@ -168,17 +171,30 @@ def main():
         default=os.getenv("ETCD_PASSWORD", None ),
         help="Etcd password (default: env ETCD_PASSWORD or None)",
     )
+    parser.add_argument(
+        "--etcd-ca-cert",
+        default=os.getenv("ETCD_CA_CERT", None ),
+        help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Logging level (default: INFO)",
+    )
+
     args = parser.parse_args()
 
+    log.setLevel(args.log_level.upper())
+    
     if args.threads < 1:
-        print("❌ --threads must be >= 1")
+        log.error("❌ --threads must be >= 1")
         return 2
 
 
     # ==========================================
     # LOAD CONFIGURATION
     # ==========================================
-    etcd_client = connect_etcd(args.etcd_host, args.etcd_port)
+    etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
 
     # Fetch all relevant configuration
     satellites = get_prefix_data(etcd_client, '/config/satellites/')
@@ -187,7 +203,7 @@ def main():
     workers = get_prefix_data(etcd_client, '/config/workers/')
 
     # Merge satellites and users into one list of nodes to clean up
-    print(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
+    log.info(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
 
     if args.only == "satellites":
         all_nodes = satellites
@@ -199,13 +215,13 @@ def main():
         all_nodes = {**satellites, **users, **grounds}
 
     if not all_nodes:
-        print("⚠️  No nodes found in Etcd. Nothing to do.")
+        log.warning("⚠️  No nodes found in Etcd. Nothing to do.")
 
     # ==========================================
     # DELETE CONTAINERS (Threaded)
     # ==========================================
-    print(f"\n🧹 Starting Cleanup Process for {args.only} nodes using {args.threads} threads...")
-    print("-" * 50)
+    log.info(f"🧹 Starting Cleanup Process for {args.only} nodes using {args.threads} threads...")
+    log.info("-" * 50)
     
     ok = 0
     fail = 0
@@ -216,7 +232,7 @@ def main():
             worker = node.get('worker')
             # Validation: Does the host exist in config?
             if worker not in workers:
-                print(f"⚠️  Skipping {name}: Worker '{worker}' not found in /config/workers")
+                log.warning(f"⚠️  Skipping {name}: Worker '{worker}' not found in /config/workers")
                 continue
             future = executor.submit(
                 node_removal,
@@ -243,31 +259,31 @@ def main():
             elif node_name in grounds:
                 prefix = "📡"
             
-            print(f"{prefix} {node_name}: {msg}")
+            log.info(f"{prefix} {node_name}: {msg}")
 
             if success:
                 ok += 1
             else:
                 fail += 1
 
-    print("\n==============================")
-    print(f"✅ Success: {ok}")
-    print(f"❌ Failed : {fail}")
-    print("==============================")
+    log.info("==============================")
+    log.info(f"✅ Success: {ok}")
+    log.info(f"❌ Failed : {fail}")
+    log.info("==============================")
 
     if fail != 0:
-        print("\n⚠️ Constellation Cleaning Completed with failures.")
+        log.warning("⚠️ Constellation Cleaning Completed with failures.")
         
     # ==========================================
     # CLEAN ETCD ENTRIES
     # ==========================================
-    print("\n🧼 Cleaning up Etcd entries...")
+    log.info("🧼 Cleaning up Etcd entries...")
     prefixes = ["/config/L3-config-common", "/config/satellites/", "/config/users/", "/config/grounds/", "/config/epoch-config", "/config/links/", "/config/run","/config/etchosts/"]
     for prefix in prefixes:
-        print(f"   ➞ Deleting keys with prefix {prefix} ...")
+        log.info(f"   ➞ Deleting keys with prefix {prefix} ...")
         etcd_client.delete_prefix(prefix)
     #cleanup workers' usage stats
-    print(f"   ➞ Resetting workers' usage stats...")
+    log.info(f"   ➞ Resetting workers' usage stats...")
     for name, worker_cfg in workers.items():
         # Reset usage
         worker_cfg['cpu-used'] = 0.0
@@ -275,8 +291,8 @@ def main():
         key = f"/config/workers/{name}"
         etcd_client.put(key, json.dumps(worker_cfg))
         
-    print("-" * 50)
-    print("👍 Global Cleanup Complete.")
+    log.info("-" * 50)
+    log.info("👍 Global Cleanup Complete.")
     return 0
 
 if __name__ == "__main__":

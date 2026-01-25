@@ -13,9 +13,10 @@
 **NetSatBench** is a distributed emulation framework for evaluating communication and application workloads over large-scale satellite constellations.
 
 Emulated systems consist of satellites, ground stations, and user terminals, each implemented as a **Linux container** and distributed across a cluster of bare-metal or virtual machines. This design enables a high degree of parallelism and scalability.  
-VXLAN tunnels dynamically form an **L2 network fabric** interconnecting emulated nodes, with configurable link characteristics (e.g., latency, bandwidth, loss) to reproduce **real-time** and realistic satellite network behavior.
 
-NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g., OSPF, BGP, IS-IS) or user-defined application (e.g., iperf, ping, analytics workloads) can run unmodified over the emulated constellation. IS-IS routing is supported out of the box via [FRRouting (FRR)](https://frrouting.org/).
+The satellite network is implemented as an overlay Layer-2 fabric whose links (satellite-to-satellite and satellite-to-ground) are **VXLAN tunnels** dynamically created and managed by each emulated node in a complete distributed and scalable manner. Each link can be configured with realistic performance characteristics (e.g., latency, bandwidth, loss) to reproduce real-time satellite network behavior.  
+
+NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g., OSPF, BGP, IS-IS) or user-defined application (e.g., iperf, ping, analytics workloads) can run unmodified over the emulated constellation. IS-IS routing is supported out of the box via [FRRouting (FRR)](https://frrouting.org/), event though its stability strongly depends on the constellation dynamics.
 
 ---
 
@@ -27,22 +28,22 @@ NetSatBench is **Layer-3 and application agnostic**: any routing protocol (e.g.,
 
 ### Distributed Execution and Control
 Emulated nodes are instantiated across a cluster of hosts (bare metal or virtual machines), referred to as *workers*. Emulated nodes manage their own lifecycle and configuration through an internal agent, called `sat-agent`.  
-The `sat-agent` continuously enforces the desired network and computing state of the constellation stored in an **Etcd distributed key-value store**, whose contents are updated at run time by a dedicated control host to reflect system dynamics.  
+Any `sat-agent` continuously enforces the desired network and computing state of the related node through publish-subscribe interactions with an **Etcd distributed key-value store**, whose contents are updated at run time to reflect system dynamics.   
 
 ### Dynamic L2 Fabric
-Node-to-node links, such as inter-satellite links (ISLs) and satellite-to-ground links (SGLs), are modeled as VXLAN tunnels dynamically created and managed by each node’s `sat-agent`, based on the global system state stored in Etcd described in [the Etcd key-value store documentation](docs/etcd.md).  
-This abstraction provides seamless **Layer-2 connectivity**, independent of container placement within the cluster.
+Node-to-node links, such as inter-satellite links (ISLs) and satellite-to-ground links (SGLs), are modeled as VXLAN tunnels dynamically created and managed by each node’s `sat-agent`, based on the global system state stored in Etcd.  
+This overlay network provides seamless **Layer-2 connectivity** among emulated nodes, independent of container placement within the cluster.
 
 ### Scalability Through Distribution
 By distributing containers across multiple hosts and relying on publish–subscribe coordination via Etcd, NetSatBench can scale to thousands of emulated nodes with modest resource requirements per host. 
-Each worker can host multiple containers, each representing a satellite, ground station, or user terminal with its own networking stack, `sat-agent` and `FRR` daemon. A raw emulated node, without user tasks, typically requires less than 50 MB of RAM and minimal CPU resources when idle. We have successfully run emulations with 100 emulated nodes per worker with 8GB of RAM and 4 CPUs.
+Each worker can host hundreds of containers, each representing a satellite, ground station, or user terminal. A raw emulated node, without user applications and with FRR daemon, typically requires less than 50 MB of RAM and minimal CPU resources when idle. We have successfully run emulations with 100 emulated nodes per worker with 8GB of RAM and 4 CPUs.
 
-### Built-in Extensible IP Routing Support
-FRRouting (FRR) running over the L2 VXLAN fabric is natively supported. Upon link creation or removal, each `sat-agent` may invoke a user-provided routing configuration utility to update the routing daemon or perform custom routing actions.  
-A built-in IS-IS configuration utility is provided for FRR; its design and integration with the `sat-agent` are described in the [routing interface documentation](docs/routing-interface.md).
+### Extensible IP Routing Support
+Upon link creation or removal, each `sat-agent` may invoke, through a Python interface, a user-provided IP routing module. This module is responsible for updating the routing daemon or performing custom routing actions over the VXLAN fabric.
+A built-in IS-IS routing [module](sat-container/extra/isis.py) for FRR is provided, illustrating the design of such modules and their integration with the `sat-agent` via the specified Python interface.
 
 ### On-board Tasks and Application Execution 
-Applications and/or tasks can be scheduled for execution inside emulated nodes at specific times. Each `sat-agent` continuously monitors a command to run in Etcd and executes them inside its container, enabling dynamic application deployment and execution across the emulated satellite system.
+User-defined applications and/or tasks can be loaded on the node payload as `sidecar` containers and scheduled for execution inside emulated nodes at specific times. Each `sat-agent` continuously monitors new commands to run from Etcd and executes them inside its containers, enabling dynamic application deployment and execution across the emulated satellite system.
 
 ### Physics-Driven Networking (Working in Progress)
 Link parameters are derived from orbital mechanics and line-of-sight geometry, enabling realistic and reproducible performance evaluation.
@@ -60,11 +61,15 @@ Software used to build the container image for each emulated node of the satelli
 **examples/**  
 Sample emulated satellite systems used for validation and benchmarking. Configurations are specified in JSON format as described in this [Configuration Manual](docs/configuration.md).
 
+**utils/**  
+Utility scripts for analysis, routing and data processing.
+
 **docs/**  
 Documentation assets, including images, diagrams, and architectural descriptions.
 - [Configuration Manual](docs/configuration.md) — how to define and customize emulated satellite systems
 - [Routing Interface](docs/routing-interface.md) — specification of the routing module interface
 - [Etcd Key-Value Store](docs/etcd.md) — structure and organization of the Etcd key-value store used for constellation state management
+- [Oracle Routing Module](docs/oracle-routing-module.md) — description of the built-in oracle routing [module](utils/oracle-routing.py) for shortest-path routing with make-before-break strategy.
 
 ---
 
@@ -148,7 +153,7 @@ python3 control/system-init-docker.py --config ./examples/10nodes/workers-config
 ### 3. Initialize, Deploy and Run the Emulated Satellite System
 Execute the `constellation-init.py` script to initialize the constellation state in the Etcd key-value store:
 ```bash
-python3 control/constellation-init.py --config ./examples/10nodes/sat-config.json.json
+python3 control/constellation-init.py --config ./examples/10nodes/sat-config.json
 ```
 Then, execute the `constellation-deploy.py` script to deploy the emulated satellite nodes across the cluster according to the initialization configuration:
 ```bash
@@ -157,24 +162,18 @@ python3 control/constellation-deploy.py
 Finally, wait a few seconds to ensure that all containers are fully up and running, and then execute the `constellation-run.py` script to start the emulation.
 The system state will evolve over time according to the epoch files:
 ```bash
-python3 control/constellation-run.py --loop-delay 120
+python3 control/constellation-run.py --loop-delay 60
 ```
    
 ### 4. Monitoring and Interaction
 You can monitor the status of the emulated nodes and their network by connecting directly to the containers running on the worker hosts via SSH.
-For example, to access a satellite container named `sat-1` on `host-1`, use:
+The easier way is to use the `utils/constellation-exec.py` script, which simplifies the connection process.
 
+For example, to run a bash on a satellite container named `usr1` use:
 ```bash
-ssh user@host-1 docker exec -it sat-1 /bin/bash
-# inside the container, you can run commands such as:
-ip addr show
-ip route show
-ping grd1
-iperf3 -c grd1 # to start an iperf3 client to ground station 1
+python3 utils/constellation-exec.py -it usr1 bash
 ```
 
-Note that `user` must be replaced with the actual SSH username configured on the worker host.
-Within a container, emulated nodes can be referenced by name e\.g\., \`grd1\` for ground station 1.
 
 ### 5. Cleanup
 After completing your experiments, you can remove the emulated satellite system by running the `constellation-rm.py` script.

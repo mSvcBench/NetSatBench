@@ -15,6 +15,10 @@ import json
 import os
 import subprocess
 import sys
+import logging
+
+logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
 
 
 # --------------------------
@@ -68,7 +72,7 @@ def iptables_delete_rule_loop(remote: str, rule_check: str, rule_delete: str) ->
         out = run(del_cmd)
         if out.returncode != 0:
             # if deletion failed, stop to avoid infinite loop
-            print(f"⚠️  Failed deleting iptables rule.\nCMD: {del_cmd}\nSTDERR:\n{out.stderr}")
+            log.warning(f"⚠️  Failed deleting iptables rule.\nCMD: {del_cmd}\nSTDERR:\n{out.stderr}")
             break
 
 
@@ -79,7 +83,7 @@ def run_command(remote: str, cmd: str) -> None:
         # "best effort": print warning but continue
         msg = (res.stderr or res.stdout).strip()
         if msg:
-            print(f"⚠️  Command failed (continuing): {cmd}\n    {msg}")
+            log.warning(f"⚠️  Command failed (continuing): {cmd}\n    {msg}")
 
 
 # --------------------------
@@ -121,18 +125,24 @@ def main():
         default=os.getenv("ETCD_CA_CERT", None ),
         help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Logging level (default: INFO)",
+    )
 
     args = parser.parse_args()
+    log.setLevel(args.log_level.upper())
 
     cfg = {}
     if args.config:
         try:
             cfg = load_json(args.config)
         except FileNotFoundError:
-            print(f"❌ Error: File {args.config} not found.")
+            log.error(f"❌ Error: File {args.config} not found.")
             sys.exit(1)
         except json.JSONDecodeError as e:
-            print(f"❌ Error: Failed to parse JSON in {args.config}: {e}")
+            log.error(f"❌ Error: Failed to parse JSON in {args.config}: {e}")
             sys.exit(1)
 
     try:
@@ -141,7 +151,7 @@ def main():
         else:
             etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port)
     except Exception as e:
-        print(f"❌ Failed to initialize Etcd client: {e}")
+        log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
 
     # Read hosts from etcd (same as your script)
@@ -150,7 +160,7 @@ def main():
     else:
         workers = get_prefix_data(etcd_client, "/config/workers/")
     if not workers:
-        print("⚠️  No workers found under /config/workers/. Nothing to teardown on remote workers.")
+        log.warning("⚠️  No workers found under /config/workers/. Nothing to teardown on remote workers.")
     else:
         # 1) Remove routes (all-to-all)
         for worker_name, worker in workers.items():
@@ -160,13 +170,13 @@ def main():
             remote_str = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
             sat_vnet = worker.get("sat-vnet", "sat-vnet")
             sat_vnet_supercidr = worker.get("sat-vnet-supernet", "172.0.0.0/8")
-            print(f"🖥️ Cleaning worker {worker_name} at {ssh_ip}")
+            log.info(f"🖥️ Cleaning worker {worker_name} at {ssh_ip}")
             # Verify connectivity
             try:
                 subprocess.run(f"ssh -o StrictHostKeyChecking=no -i {ssh_key} {ssh_user}@{ssh_ip} 'echo > /dev/null'", 
                             shell=True, check=True)
             except subprocess.CalledProcessError as e:
-                print(f"    ❌ Failed to connect to worker {worker_name} at {ssh_ip}: {e}")
+                log.error(f"    ❌ Failed to connect to worker {worker_name} at {ssh_ip}: {e}")
             
             for other_name, other_worker in workers.items():
                 if other_name == worker_name:
@@ -182,26 +192,24 @@ def main():
                     remote_str,
                     f"sudo ip route del {other_cidr} via {other_ip}"
                 )
-                print(f"    ✅ Removed route to {other_name}")
+                log.info(f"    ✅ Removed route to {other_name}")
 
                 # inserted rule was: -I DOCKER-USER -s super -d super -j ACCEPT
                 # delete all matches:
                 rule_check = f"sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
                 rule_delete = f"sudo iptables -D DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
                 iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
-                print(f"    ✅ Removed iptables DOCKER-USER forwarding rule on worker: {worker_name} ({ssh_ip})")
-
-
+                log.info(f"    ✅ Removed iptables DOCKER-USER forwarding rule on worker: {worker_name} ({ssh_ip})")
 
                 # best-effort: if it doesn't exist, continue
                 run_command(remote_str, f"docker network rm {sat_vnet}")
-                print(f"    ✅ Removed docker network '{sat_vnet}' on worker: {worker_name} ({ssh_ip})")
+                log.info(f"    ✅ Removed docker network '{sat_vnet}' on worker: {worker_name} ({ssh_ip})")
 
 
     # 4) Remove ETCD keys that your script created/overwrote
-    print("✅ Removed /config/workers/ prefix")
+    log.info("✅ Removed /config/workers/ prefix")
     etcd_client.delete_prefix("/config/workers/")
-    print("👍 Cleaning completed.")
+    log.info("👍 Cleaning completed.")
 
 
 if __name__ == "__main__":

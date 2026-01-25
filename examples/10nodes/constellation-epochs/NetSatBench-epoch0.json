@@ -109,7 +109,6 @@
     ],
   "run": {
     "grd1": [
-      "sleep 10",
       "screen -dmS iperf_test iperf3 -s"
     ]
   }

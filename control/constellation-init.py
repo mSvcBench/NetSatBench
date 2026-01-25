@@ -5,21 +5,25 @@ import json
 import os
 import sys
 import ipaddress
+import logging
 from itertools import islice
 from constellation_scheduler import schedule_workers
+
+logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
+log = logging.getLogger("constellation-init")
 
 # ==========================================
 # ETCD CONNECTION
 # ==========================================
 def connect_etcd(etcd_host: str, etcd_port: int, etcd_user=None, etcd_password=None, etcd_ca_cert=None):
     try:
-        print(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
+        log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
             return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
         else:
             return etcd3.client(host=etcd_host, port=etcd_port)
     except Exception as e:
-        print(f"❌ Failed to initialize Etcd client: {e}")
+        log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
 
 # ==========================================
@@ -61,7 +65,7 @@ def apply_config_to_etcd(etcd, config_data: dict):
         global_subnet_counter = 0
         for key, value in config_data.items():
             if key not in allowed_keys:
-                print(f"⚠️ Unexpected key '{key}', skipping...")
+                log.warning(f"⚠️ Unexpected key '{key}', skipping...")
                 continue
             
             if key == "L3-config-common":
@@ -90,10 +94,10 @@ def apply_config_to_etcd(etcd, config_data: dict):
                         json.dumps(node_cfg),
                     )
 
-        print(f"✅ Successfully applied constellation config to Etcd.")
+        log.info(f"✅ Successfully applied constellation config to Etcd.")
 
     except Exception as e:
-        print(f"❌ Error in apply_config_to_etcd: {e}")
+        log.error(f"❌ Error in apply_config_to_etcd: {e}")
         sys.exit(1)
 
 # ==========================================
@@ -135,22 +139,29 @@ def main() -> int:
         default=os.getenv("ETCD_CA_CERT", None ),
         help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Logging level (default: INFO)",
+    )
     args = parser.parse_args()
+
+    log.setLevel(args.log_level.upper())
     
-    etcd = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password)
+    etcd = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
     config_file = args.config
 
     # check that "/config/workers" exists in etcd and it is not void
     workers = list(etcd.get_prefix("/config/workers/"))
     if not workers:
-        print("❌ '/config/workers' is missing or empty in Etcd, use system-init-docker.py first.")
+        log.error("❌ '/config/workers' is missing or empty in Etcd, use system-init-docker.py first.")
         sys.exit(1)
 
     try:
         with open(config_file, "r", encoding="utf-8") as f:
             config_data = json.load(f)
     except Exception as e:
-        print(f"❌ Failed to load file: {e}")
+        log.error(f"❌ Failed to load file: {e}")
         return 1
 
     scheduled_config = schedule_workers(config_data, etcd)

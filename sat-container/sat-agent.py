@@ -2,7 +2,6 @@
 import ipaddress
 import os
 import json
-import shlex
 import time
 import logging
 import subprocess
@@ -35,7 +34,7 @@ KEY_L3 = "/config/L3-config-common"
 KEY_RUN = f"/config/run/{my_node_name}"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger("sat-agent")
+log = logging.getLogger(__name__)
 
 # GLOBAL STATE
 LINK_STATE_CACHE = {} # Only used for the initial sync
@@ -214,7 +213,6 @@ def process_initial_topology(etcd_client):
     ## Execute any pending runtime commands
     val, _ = etcd_client.get(KEY_RUN)
     if val:
-        log.info("▶️  Executing pending runtime commands after initial setup...")
         execute_commands(val.decode())
     
     ## Configure /etc/hosts entries for all known satellites/grounds/users
@@ -398,12 +396,26 @@ def process_link_action(etcd_client, event):
 # ----------------------------
 def watch_link_actions_loop():
     log.info("👀 Watching /config/links (Dynamic Events)...")
-    events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS_PREFIX)
-    for event in events_iterator:
-        process_link_action(etcd_client, event)
+    backoff = 1
+    while True:
+        try:
+            events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS_PREFIX)
+            for event in events_iterator:
+                process_link_action(etcd_client, event)
+        except Exception as ex:
+            log.exception("❌ Failed to watch link actions (will retry).")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+        finally:
+            if cancel is not None:
+                try:
+                    cancel()
+                except Exception:
+                    pass
 
 def watch_command_loop():
     log.info("👀 Watching Runtime Commands...")
+    backoff = 1
     while True:
         try:
             events, cancel = etcd_client.watch(KEY_RUN)
@@ -428,44 +440,57 @@ def watch_command_loop():
 
 def watch_etchosts_loop():
     log.info("👀 Watching /config/etchosts (Dynamic Events)...")
-    events_iterator, cancel = etcd_client.watch_prefix("/config/etchosts/")
-    for event in events_iterator:
-        # If the event is a PutEvent, update /etc/hosts, otherwise if it is a delete event remove from /etc/hosts
+    backoff = 1
+    while True:
         try:
-            if isinstance(event, etcd3.events.PutEvent):
-                node_name = event.key.decode().split('/')[-1]
-                ip_addr = event.value.decode().strip()
-                if ip_addr:
-                    try:
-                        # Check if entry already exists, in case remove and reinsert with current value
-                        with open("/etc/hosts", "r") as f:
-                            hosts_content = f.read()
-                        pattern = re.compile(rf"^{re.escape(ip_addr)}\s+{re.escape(node_name)}$", re.MULTILINE)
-                        if not pattern.search(hosts_content):
-                            # Remove any existing entry for this node_name
-                            hosts_content = re.sub(rf"^.*\s+{re.escape(node_name)}$\n", "", hosts_content, flags=re.MULTILINE)
-                            # Append to /etc/hosts
-                            with open("/etc/hosts", "w") as f:
-                                f.write(hosts_content)
-                                f.write(f"{ip_addr}\t{node_name}\n")
-                            log.info(f"✅ Updated /etc/hosts entry: {ip_addr} {node_name}")
-                    except Exception as e:
-                        log.error(f"❌ Failed to update /etc/hosts for {node_name}: {e}")
-            elif isinstance(event, etcd3.events.DeleteEvent):
-                node_name = event.key.decode().split('/')[-1]
+            events_iterator, cancel = etcd_client.watch_prefix("/config/etchosts/")
+            for event in events_iterator:
+                # If the event is a PutEvent, update /etc/hosts, otherwise if it is a delete event remove from /etc/hosts
                 try:
-                    # Remove any existing entry for this node_name
-                    with open("/etc/hosts", "r") as f:
-                        hosts_content = f.read()
-                    new_content = re.sub(rf"^.*\s+{re.escape(node_name)}$\n", "", hosts_content, flags=re.MULTILINE)
-                    with open("/etc/hosts", "w") as f:
-                        f.write(new_content)
-                    log.info(f"✅ Removed /etc/hosts entry for: {node_name}")
-                except Exception as e:
-                    log.error(f"❌ Failed to remove /etc/hosts entry for {node_name}: {e}")
-        except: 
-            log.error("❌ Failed to process /config/etchosts event.")
-            continue
+                    if isinstance(event, etcd3.events.PutEvent):
+                        node_name = event.key.decode().split('/')[-1]
+                        ip_addr = event.value.decode().strip()
+                        if ip_addr:
+                            try:
+                                # Check if entry already exists, in case remove and reinsert with current value
+                                with open("/etc/hosts", "r") as f:
+                                    hosts_content = f.read()
+                                pattern = re.compile(rf"^{re.escape(ip_addr)}\s+{re.escape(node_name)}$", re.MULTILINE)
+                                if not pattern.search(hosts_content):
+                                    # Remove any existing entry for this node_name
+                                    hosts_content = re.sub(rf"^.*\s+{re.escape(node_name)}$\n", "", hosts_content, flags=re.MULTILINE)
+                                    # Append to /etc/hosts
+                                    with open("/etc/hosts", "w") as f:
+                                        f.write(hosts_content)
+                                        f.write(f"{ip_addr}\t{node_name}\n")
+                                    log.info(f"✅ Updated /etc/hosts entry: {ip_addr} {node_name}")
+                            except Exception as e:
+                                log.error(f"❌ Failed to update /etc/hosts for {node_name}: {e}")
+                    elif isinstance(event, etcd3.events.DeleteEvent):
+                        node_name = event.key.decode().split('/')[-1]
+                        try:
+                            # Remove any existing entry for this node_name
+                            with open("/etc/hosts", "r") as f:
+                                hosts_content = f.read()
+                            new_content = re.sub(rf"^.*\s+{re.escape(node_name)}$\n", "", hosts_content, flags=re.MULTILINE)
+                            with open("/etc/hosts", "w") as f:
+                                f.write(new_content)
+                            log.info(f"✅ Removed /etc/hosts entry for: {node_name}")
+                        except Exception as e:
+                            log.error(f"❌ Failed to remove /etc/hosts entry for {node_name}: {e}")
+                except: 
+                    log.error("❌ Failed to process /config/etchosts event.")
+                    continue
+        except Exception as ex:
+            log.exception("❌ Failed to watch /config/etchosts (will retry).")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+        finally:
+            if cancel is not None:
+                try:
+                    cancel()
+                except Exception:
+                    pass        
         
 
 def _run_commands_sequentially(commands):
@@ -484,8 +509,6 @@ def execute_commands(commands_raw_str: str) -> None:
         commands = json.loads(commands_raw_str)
         if not isinstance(commands, list) or not all(isinstance(c, str) for c in commands):
             return
-
-        log.info("▶️  Executing %d runtime commands...", len(commands))
         threading.Thread(
             target=_run_commands_sequentially,
             args=(commands,),

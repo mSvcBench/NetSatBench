@@ -49,7 +49,9 @@ Each worker is uniquely identified by a logical name (e.g., `host-1`, `host-2`) 
       "ssh_key": "<path-to-private-key>",  
       "sat-vnet": "<bridge-name>",  
       "sat-vnet-cidr": "<container-subnet>",  
-      "sat-vnet-supernet": "<global-supernet>"  
+      "sat-vnet-supernet": "<global-supernet>",
+      "cpu": "<num-cpu-cores>",
+      "mem": "<memory-available>" 
     },  
     ...  
   }  
@@ -94,7 +96,7 @@ Each worker entry must define the following fields:
 
 ##### `sat-vnet-cidr`
 - Type: string (CIDR notation)  
-- Description: Unique IP subnet assigned to containers running on this worker.  
+- Description: Unique IP subnet assigned to eth0 interfaces of containers running on this worker.  
 - Constraints:  
   - Must be unique per worker  
   - Must be a subnet of `sat-vnet-supernet`  
@@ -103,8 +105,18 @@ Each worker entry must define the following fields:
 ##### `sat-vnet-supernet`
 - Type: string (CIDR notation)  
 - Description: Global supernet encompassing all container subnets across the cluster.  
-- Usage: Ensures routable IP addressing between containers on different workers without NAT.  
-- Important: The underlying physical or virtual network must allow unrestricted IP connectivity within this supernet.
+- Usage: Ensures routable underlay IP addressing between containers on different workers without NAT.  
+- Important: The underlying physical or virtual Ethernet network must allow unrestricted IP connectivity within this supernet.
+
+##### `cpu`
+- Type: string  
+- Description: Number of CPU cores available for container execution on the worker host.  
+- Usage: Used by the control scripts to schedule emulated nodes based on resource availability.
+
+##### `mem`
+- Type: string  
+- Description: Amount of memory available for container execution on the worker host.  
+- Usage: Used by the control scripts to schedule emulated nodes based on resource availability.
 
 ---
 ### Example
@@ -118,7 +130,9 @@ Each worker entry must define the following fields:
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.100.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-supernet": "172.0.0.0/8",
+      "cpu": "4",
+      "mem": "6GiB"
     },
     "host-2": {
       "ip": "10.0.1.144",
@@ -126,7 +140,9 @@ Each worker entry must define the following fields:
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.101.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-supernet": "172.0.0.0/8",
+      "cpu": "4",
+      "mem": "6GiB"
     }
   }
 }
@@ -138,14 +154,14 @@ Each worker entry must define the following fields:
 
 The satellite configuration file, `sat-config.json`, defines:
 
-- Global Layer-3 and routing options shared by all nodes  
+- Global Layer-3 and routing options of the VXLAN-based overlay network that are shared by all nodes  
 - The set of satellite nodes in the constellation  
 - The set of ground stations and users connected to the constellation  
 - Placement of each node on worker hosts  
-- Container images and per-node internal subnets
+- Container images, requirements, and per-node internal overlay subnets
 - Time evolution parameters for the constellation emulation 
 
-Each emulated node (satellite, ground station, or user) is uniquely identified by a logical name (e.g., `sat1`, `grd1`, `usr1`).
+Each emulated node (satellite, ground station, or user) is uniquely identified by a logical name (e.g., `sat1`, `grd1`, `usr1`) that should use less than 8 characters.
 
 ---
 
@@ -176,7 +192,7 @@ Each emulated node (satellite, ground station, or user) is uniquely identified b
 
 #### `L3-config-common`
 
-Defines Layer-3 and routing parameters that are globally applied to all emulated nodes.
+Defines Layer-3 and routing parameters of the VXLAN-based overlay network that are globally applied to all emulated nodes.
 
 ##### `enable-netem`
 - Type: boolean  
@@ -190,15 +206,15 @@ Defines Layer-3 and routing parameters that are globally applied to all emulated
 
 ##### `auto-assign-cidr`
 - Type: string (CIDR notation)  
-- Description: Base CIDR block from which sequential /30 subnets are automatically assigned to nodes when  `auto-assign-ips` is `true`.
+- Description: Base CIDR block for overlay addressing from which sequential /30 subnets are automatically assigned to nodes when `auto-assign-ips` is `true`.
   
 ##### `enable-routing`
 - Type: boolean  
-- Description: Enables or disables IP routing inside emulated nodes.
+- Description: Enables or disables overlay IP routing inside emulated nodes.
 
 ##### `routing-module`
 - Type: string (needed if `enable-routing` is `true`)
-- Description: Identifier of the routing configuration module used by the `sat-agent`.  
+- Description: Identifier of the routing configuration module used by the `sat-agent` (see [routing-interface](routing-interface.md)).  
 - Example: `extra.isis`
 
 ##### `isis-area-id`
@@ -229,12 +245,28 @@ The name must be unique across all nodes (satellites, ground stations, and users
 The value contains the following fields:
 
 ##### `worker`
-- Type: string  
-- Description: Worker host on which the satellite container is deployed.
+- Type: string  (optional)
+- Description: Worker host on which the satellite container is deployed. If omitted, the `constellation-init` script automatically assigns the node to a worker based on resource availability.
 
 ##### `image`
 - Type: string  
 - Description: Docker image used to instantiate the satellite container.
+
+##### `cpu-request`
+- Type: string (optional)
+- Description: CPU resources requested for the satellite container (e.g., `100m` for 0.1 CPU core). Used to control the scheduling of nodes on workers and as a priority level in case of CPU resource contention (e.g., see docker --cpu-shares).
+
+##### `mem-request`
+- Type: string (optional)
+- Description: Memory resources requested for the satellite container (e.g., `200Mi`). Used to control the scheduling of nodes on workers and as a priority OOM killing level in case of memory exhaustion (e.g., see docker --memory-reservation).
+
+##### `cpu-limit`
+- Type: string (optional)
+- Description: CPU resources limit for the satellite container (e.g., `200m` for 0.2 CPU core). Used to cap the maximum CPU usage of the container (similar to Kubernetes CPU limits).
+
+##### `mem-limit`
+- Type: string (optional)
+- Description: Memory resources limit for the satellite container (e.g., `400Mi`). Used to cap the maximum memory usage of the container (similar to Kubernetes memory limits).
 
 ##### `subnet_cidr`
 - Type: string (CIDR notation, optional)  
@@ -248,14 +280,12 @@ The value contains the following fields:
 ---
 
 #### `grounds`
-
 Defines the set of ground station nodes connected to the constellation.  
 Ground stations use the same fields and semantics as satellites.
 
 ---
 
 #### `users`
-
 Defines the set of user nodes connected to the constellation.  
 Users use the same fields and semantics as satellites.
 
@@ -278,24 +308,29 @@ Users use the same fields and semantics as satellites.
   },
   "satellites": {
     "sat1": {
-      "worker": "host-1",
-      "image": "msvcbench/sat-container:latest"
-    },
-    "sat2": {
-      "worker": "host-1",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     }
   },
-    "grounds": {
+  "grounds": {
     "grd1": {
-      "worker": "host-2",
-      "image": "msvcbench/sat-container:latest"
+      "image": "msvcbench/sat-container:latest",
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi"
     }
   },
   "users": {
     "usr1": {
-      "worker": "host-2",
       "image": "msvcbench/sat-container:latest",
+      "cpu-request": "100m",
+      "mem-request": "200Mi",
+      "cpu-limit": "200m",
+      "mem-limit": "400Mi",
       "subnet_cidr": "172.99.0.0/30",
       "L3-config": {
         "enable-netem": false,
@@ -312,15 +347,18 @@ Users use the same fields and semantics as satellites.
 
 An epoch configuration file defines:
 
-- The simulation time at which the epoch is applied  
+- The relative emulation time at which the epoch is applied  
 - Links to be added between emulated nodes  
 - Existing links whose parameters must be updated  
-- Links to be removed from the system  
+- Links to be removed between emulated nodes   
 - Commands to be executed inside specific emulated nodes  
 
-Epoch files are loaded sequentially by the control logic (`constellation-run`) in lexicographical order and applied at the specified emulation time. Each application of an epoch file modifies the global system state stored in Etcd and `sat-agent` of emulated nodes are promptly notified. 
+Epoch files are loaded sequentially by the control logic (`constellation-run`) and applied at the specified emulation time with an offset equal to the difference between the current epoch time and the first epoch time.
 
-The first epoch file should contain all initial link definitions required to establish connectivity between nodes at simulation start time. Moreover, the delay between two epochs is determined by the difference between their `time` fields and the first epoch time.
+The epoch file names are expected to terminate with a numerical suffix that indicates their processing sequence.  E.g., `NetSatBench-epoch0.json`, `NetSatBench-epoch1.json`, etc.  
+Each application of an epoch file modifies the link and command (run) state stored in Etcd and `sat-agent` of emulated nodes are promptly notified. 
+
+The first epoch file should contain all initial link definitions required to establish connectivity between nodes at simulation start time.
 
 ---
 
@@ -357,7 +395,7 @@ Empty arrays or empty objects indicate that no action of that type is performed 
 
 Defines a list of **new links** to be created between pairs of emulated nodes at the epoch time.
 
-Each entry describes a <u>bidirectional</u> Layer-2 link implemented via a VXLAN tunnel between two emulated nodes.
+Each entry describes a <u>bidirectional</u> Layer-2 overlay link implemented via a VXLAN tunnel between two emulated nodes.
 
 ##### Fields
 
@@ -404,7 +442,7 @@ The fields are identical to those used in `links-add`:
 
 Defines links that must be **removed** from the system at the epoch time.
 
-Removal tears down the corresponding VXLAN tunnels and associated traffic control configuration.
+Removal tears down the corresponding overlay VXLAN tunnels and associated traffic control configuration.
 
 ##### Fields
 
