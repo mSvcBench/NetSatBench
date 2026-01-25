@@ -38,13 +38,11 @@ logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)
 log = logging.getLogger("sat-agent")
 
 # GLOBAL STATE
-last_executed_cmd_raw = None
 LINK_STATE_CACHE = {} # Only used for the initial sync
 l3_flags = None
 my_config = None
 etcd_client = None
 routing = None
-last_executed_cmd_raw = None
 
 # ----------------------------
 #   HELPERS
@@ -408,10 +406,25 @@ def watch_command_loop():
     log.info("👀 Watching Runtime Commands...")
     while True:
         try:
-            events, _ = etcd_client.watch(KEY_RUN)
+            events, cancel = etcd_client.watch(KEY_RUN)
             for e in events:
-                if e.value: execute_commands(e.value.decode())
-        except: time.sleep(5)
+                if not getattr(e, "value", None):
+                    continue
+                try:
+                    execute_commands(e.value.decode())
+                except Exception:
+                    # This ensures a bad value never kills the watch loop
+                    log.exception("❌ Runtime command processing failed (but watcher continues).")           
+        except Exception as ex:
+            log.exception("❌ Failed to watch runtime commands (will retry).")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+        finally:
+            if cancel is not None:
+                try:
+                    cancel()
+                except Exception:
+                    pass
 
 def watch_etchosts_loop():
     log.info("👀 Watching /config/etchosts (Dynamic Events)...")
@@ -455,8 +468,6 @@ def watch_etchosts_loop():
             continue
         
 
-
-
 def _run_commands_sequentially(commands):
     for cmd in commands:
         log.info("▶️  exec: %s", cmd)
@@ -467,8 +478,7 @@ def _run_commands_sequentially(commands):
         )
 
 def execute_commands(commands_raw_str: str) -> None:
-    global last_executed_cmd_raw
-    if not commands_raw_str or commands_raw_str == last_executed_cmd_raw:
+    if not commands_raw_str:
         return
     try:
         commands = json.loads(commands_raw_str)
@@ -481,7 +491,6 @@ def execute_commands(commands_raw_str: str) -> None:
             args=(commands,),
             daemon=True
         ).start()
-        last_executed_cmd_raw = commands_raw_str
     except Exception:
         log.exception("Failed to parse commands JSON")
 
@@ -550,8 +559,6 @@ def main():
         else:
             log.error(msg)
 
-    # Initial Links Setup
-    process_initial_topology(etcd_client)
 
     ## Publish node IP for etc hosts usage 
     available_ips = list(ipaddress.ip_network(my_config.get("subnet_cidr","")).hosts())
@@ -568,6 +575,10 @@ def main():
     for t in threads: t.start()
     
     log.info(f"✅ All Watchers Started.")
+
+    # Initial Links Setup
+    process_initial_topology(etcd_client)
+
     while True: time.sleep(1)
 
 if __name__ == "__main__":
