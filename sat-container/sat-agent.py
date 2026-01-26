@@ -398,6 +398,7 @@ def watch_link_actions_loop():
     log.info("👀 Watching /config/links (Dynamic Events)...")
     backoff = 1
     while True:
+        cancel = None
         try:
             events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS_PREFIX)
             for event in events_iterator:
@@ -417,6 +418,7 @@ def watch_command_loop():
     log.info("👀 Watching Runtime Commands...")
     backoff = 1
     while True:
+        cancel = None
         try:
             events, cancel = etcd_client.watch(KEY_RUN)
             for e in events:
@@ -442,6 +444,7 @@ def watch_etchosts_loop():
     log.info("👀 Watching /config/etchosts (Dynamic Events)...")
     backoff = 1
     while True:
+        cancel = None
         try:
             events_iterator, cancel = etcd_client.watch_prefix("/config/etchosts/")
             for event in events_iterator:
@@ -572,8 +575,8 @@ def main():
         time.sleep(2)
 
     # L3 Routing Init
-    isis_flags = l3_flags.get("enable-routing", True)
-    if isis_flags:
+    routing_flags = l3_flags.get("enable-routing", True)
+    if routing_flags:
         routing_mod_name = l3_flags.get("routing-module", "extra.isis")
         routing = __import__(routing_mod_name, fromlist=[''])
         msg, success = routing.init(etcd_client, my_node_name)
@@ -585,7 +588,6 @@ def main():
 
     ## Publish node IP for etc hosts usage 
     available_ips = list(ipaddress.ip_network(my_config.get("subnet_cidr","")).hosts())
-    ips_mask = my_config.get("subnet_cidr","").split('/')[1]
     if len(available_ips) > 0:
         etcd_client.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
 
