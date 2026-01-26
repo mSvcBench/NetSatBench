@@ -59,7 +59,7 @@ python3 control/system-init-docker.py \
   --config worker-config.json
 ```
 
-All parameters are optional. Run with `--help` to see the full list of available options.
+Run with `--help` to see the full list of available options.
 
 
 ## Worker Cleaning 
@@ -77,7 +77,7 @@ Example invocation:
 ```bash
 python3 control/system-clean-docker.py
 ```
-All parameters are optional. Run with `--help` to see the full list of available options.
+All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
 ## Constellation Initialization  
 `control/constellation-init.py`
@@ -115,7 +115,7 @@ python3 control/constellation-init.py \
   --config ./examples/10nodes/sat-config.json
 ```
 
-All parameters are optional. Run with `--help` to see the full list of available options.
+Run with `--help` to see the full list of available options.
 
 ## Constellation Deployment  
 `control/constellation-deploy.py`
@@ -135,12 +135,12 @@ Example invocation:
 ```bash
 python3 control/constellation-deploy.py
 ```
-All parameters are optional. Run with `--help` to see the full list of available options.
+All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
 ## Constellation Execution
 `control/constellation-run.py`
 
-This Python script manages the *dynamic* information of the satellite constellation emulation based on epoch files, described in the configuration manual (see [configuration.md](configuration.md)). 
+This Python script manages the *dynamic* information of the satellite constellation, such as links or commands, based on epoch files whose format is described in the configuration manual (see [configuration.md](configuration.md)). 
 
 It is responsible for applying configuration changes, including link additions/removals and command execution within node containers, at the appropriate times during the emulation. It is intended to be executed after the constellation has been deployed using the `control/constellation-deploy.py` script.
 
@@ -159,7 +159,7 @@ The script can be configured to loop indefinitely over the epoch files, restarti
 
 The script can be configured to use a fixed wait time between epochs instead of synchronizing virtual time with real time (`--fixed-wait`).
 
-The script can be configured to work in an interactive-mode, where it wait for epoch file injected by the user in the epoch-queue directory instead of reading from a predefined epoch directory (`--interactive`). In this case the script does not perform any time synchronization, simply processing each epoch file as soon as it appears in the queue directory. This mode is useful for **digital twin** scenarios where the user injects constellation state at runtime.
+The script can be configured to work in an *interactive-mode* (`--interactive`), where it process only epoch file injected manually by the user in the epoch-queue directory instead of reading from a predefined epoch directory. In this case the script does not perform any time synchronization, simply processing each injected epoch file as soon as it appears in the queue directory. This mode is useful for **digital twin** scenarios where the user update constellation state at runtime.
 
 ---
 ### Usage
@@ -168,7 +168,7 @@ Example invocation:
 python3 control/constellation-run.py \
   --loop-delay 60
 ```
-All parameters are optional. Run with `--help` to see the full list of available options.
+All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
 ## Constellation Removal
 `control/constellation-rm.py`
@@ -181,5 +181,5 @@ Example invocation:
 ```bash
 python3 control/constellation-rm.py
 ```
-All parameters are optional. Run with `--help` to see the full list of available options. 
+All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options. 
 
