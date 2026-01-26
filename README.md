@@ -210,18 +210,18 @@ Execute the `constellation-init.py` script to push the *static* information of c
 ```bash
 python3 control/constellation-init.py --config ./examples/10nodes/sat-config.json
 ```
-Then, execute the `constellation-deploy.py` script to deploy the emulated satellite nodes across the cluster:
+Then, execute the `constellation-deploy.py` script to deploy the containers of satellite nodes across the cluster:
 ```bash
 python3 control/constellation-deploy.py
 ```
-Finally, execute the `constellation-run.py` script to start the emulation by applying scheduled dynamic configuration changes based on the epoch files.
+Finally, execute the `constellation-run.py` script to start the emulation by applying *dynamic* configurations related on links and tasks based on the epoch files.
 ```bash
 python3 control/constellation-run.py --loop-delay 60
 ```
    
 ### 4. Monitoring and Interaction
 You can monitor the status of the emulated nodes and their network by connecting directly to the containers running on the worker hosts via SSH.
-The easier way is to use the `utils/constellation-exec.py` script, which simplifies the connection process.
+The easiest way is to use the `utils/constellation-exec.py` script, which simplifies the connection process.
 
 For example: 
 - to run a bash on a satellite container named `usr1` use:
@@ -230,14 +230,14 @@ For example:
     ```
 
 - to check the status of forwarding table on satellite `usr1` use:
-```bash
-python3 utils/constellation-exec.py usr1 ip route show\
-```
+    ```bash
+    python3 utils/constellation-exec.py usr1 ip route show
+    ```
 
 - to run an iperf3 client from user `usr1` to ground station `grd1` use:
-```bash
-python3 utils/constellation-exec.py usr1 iperf3 -c grd1 -t 30 -i 2
-```
+    ```bash
+    python3 utils/constellation-exec.py usr1 iperf3 -c grd1 -t 30 -i 2
+    ```
 
 
 ### 5. Cleanup
