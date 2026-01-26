@@ -2,38 +2,8 @@
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 </div>
 
-
-
-# Exec CLI
-`constellation-exec.py`
-This utility script allows executing commands on emulated satellite nodes by connecting to their respective containers via SSH. The syntax is similar to `docker exec`.
----
-## Usage
-
-```bash
-python3 utils/constellation-exec.py [-it] [-d] <node-name> <command> [args...]
-```
----
-## Examples
-- To run a bash shell on a satellite container named `usr1`:
-```bash
-python3 utils/constellation-exec.py -it usr1 bash
-```
-
-# Constellation Statistics
-`constellation-stats.py`
-This utility script collects and displays statistics from the emulated satellite constellation.
-It retrieves data from Etcd and epoch files and can generate reports on various performance metrics.
----
-## Usage  
-
-```bash
-python3 utils/constellation-stats.py [options]
-```
----
-
 # Oracle Routing Module
-`oracle-routing.py`
+
 This module provides a reference **oracle-style routing implementation** for the satellite network emulator.
 It demonstrates how routing strategies can be evaluated by injecting explicit routing commands into **epoch files** via `run` sections.
 
