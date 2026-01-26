@@ -200,10 +200,23 @@ def main():
                 rule_delete = f"sudo iptables -D DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
                 iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
                 log.info(f"    ✅ Removed iptables DOCKER-USER forwarding rule on worker: {worker_name} ({ssh_ip})")
-
-                # best-effort: if it doesn't exist, continue
-                run_command(remote_str, f"docker network rm {sat_vnet}")
-                log.info(f"    ✅ Removed docker network '{sat_vnet}' on worker: {worker_name} ({ssh_ip})")
+                
+                # inserted rule was: -A POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE
+                default_interface_cmd = f"ssh {remote_str} ip route show default | awk '/default/ {{print $5}}'"
+                default_interface_result = run(default_interface_cmd)
+                if default_interface_result.returncode != 0:
+                    log.error(f"    ❌ Failed to discover default interface on worker {worker_name}, using fallback eth0."
+                        f"CMD: {default_interface_cmd}\n"
+                        f"STDOUT:\n{default_interface_result.stdout}\n"
+                        f"STDERR:\n{default_interface_result.stderr}")
+                    default_interface = "eth0"  # fallback
+                else:
+                    default_interface = default_interface_result.stdout.strip()
+                rule_check = f"sudo iptables -C POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
+                rule_delete = f"sudo iptables -D POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
+                iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
+                log.info(f"    ✅ Removing POSTROUTING MASQUERADE rule on worker: {worker_name} ({ssh_ip})")
+        
 
 
     # 4) Remove ETCD keys that your script created/overwrote

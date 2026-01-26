@@ -243,7 +243,45 @@ def main():
             else:
                 log.info(f"    ✅ DOCKER-USER iptables rule enabled successfully.")
 
-        
+        # ADD POSTROUTING iptables rule to enable NAT for outgoing packets from containers to outside world, i.e. with destination different from sat_vnet_supercidr
+        ## discover the default interface on the worker
+        default_interface_cmd = f"ssh {remote_str} ip route show default | awk '/default/ {{print $5}}'"
+        default_interface_result = run(default_interface_cmd)
+        if default_interface_result.returncode != 0:
+            log.error(f"    ❌ Failed to discover default interface on worker {worker_name}, using fallback eth0."
+                f"CMD: {default_interface_cmd}\n"
+                f"STDOUT:\n{default_interface_result.stdout}\n"
+                f"STDERR:\n{default_interface_result.stderr}")
+            default_interface = "eth0"  # fallback
+        else:
+            default_interface = default_interface_result.stdout.strip()
+            log.info(f"    ✅ Default interface on worker {worker_name} is {default_interface}.")
+
+        nat_cmd = (
+            f"ssh {remote_str} sudo iptables -t nat -C POSTROUTING -s {sat_vnet_supercidr} "
+            f"! -d {sat_vnet_supercidr} "
+            f"-o {default_interface} "
+            f"-j MASQUERADE"
+        )
+        nat_checked = run(nat_cmd)
+        if nat_checked.returncode == 0:
+            log.info(f"    ✅ POSTROUTING iptables NAT rule already exists.")
+        else:    
+            nat_add_cmd = (
+                f"ssh {remote_str} sudo iptables -t nat -A POSTROUTING -s {sat_vnet_supercidr} "
+                f"! -d {sat_vnet_supercidr} "
+                f"-o {default_interface} "
+                f"-j MASQUERADE"
+            )
+            nat_added = run(nat_add_cmd)
+            if nat_added.returncode != 0:
+                log.error(f"    ❌ Failed to add POSTROUTING iptables NAT rule."
+                    f"CMD: {nat_add_cmd}\n"
+                    f"STDOUT:\n{nat_added.stdout}\n"
+                    f"STDERR:\n{nat_added.stderr}")
+            else:
+                log.info(f"    ✅ POSTROUTING iptables NAT rule added successfully.")
+
         for other_worker_name, other_worker in workers.items():
             if other_worker_name == worker_name:
                 continue  # Skip self
