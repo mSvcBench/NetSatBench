@@ -216,8 +216,6 @@ def main():
                 rule_delete = f"sudo iptables -D POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
                 iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
                 log.info(f"    ✅ Removing POSTROUTING MASQUERADE rule on worker: {worker_name} ({ssh_ip})")
-        
-
 
     # 4) Remove ETCD keys that your script created/overwrote
     log.info("✅ Removed /config/workers/ prefix")
