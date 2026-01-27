@@ -64,7 +64,6 @@ def apply_config_to_etcd(etcd, config_data: dict):
         # init for auto-assign-ips
         # super_cidr_counter = dict of tuple, first value is a counter second value a string of base cidr
         super_cidr_counter = {}  # global counter per matchType
-        base_super_cidr = "172.27.0.0/16"  # default base super cidr
         if "L3-config-common" in config_data:
             l3_common_cfg = config_data["L3-config-common"]
             if "auto-assign-super-cidr" in l3_common_cfg:
@@ -73,8 +72,6 @@ def apply_config_to_etcd(etcd, config_data: dict):
                     super_cidr = supercidr_entry.get("super-cidr","")
                     if match_type and super_cidr:
                         super_cidr_counter[match_type] = (0, super_cidr)
-                        if match_type == "any":
-                            base_super_cidr = super_cidr  # set the base super cidr to the first found entry
 
         # upload config to etcd
         for key, value in config_data.items():
@@ -100,19 +97,15 @@ def apply_config_to_etcd(etcd, config_data: dict):
     
                     if merged_l3_cfg.get("auto-assign-ips", False) is True:   
                         if "cidr" not in merged_l3_cfg:
-                            supercidr_set = merged_l3_cfg.get("auto-assign-super-cidr", {})
-                            ip_assigned = False
-                            for supercidr in supercidr_set:
-                                 if supercidr.get("matchType","") == node_cfg.get("type"):
-                                    super_cidr_value = supercidr.get("super-cidr","")
-                                    # Get the counter and base_cidr for this matchType
-                                    if node_cfg.get("type") in super_cidr_counter:
-                                        counter, base_cidr = super_cidr_counter[node_cfg.get("type")]
-                                        node_cfg["cidr"] = generate_subnet(counter, base_cidr)
-                                        # Update counter for this matchType
-                                        super_cidr_counter[node_cfg.get("type")] = (counter + 1, base_cidr)
-                                        ip_assigned = True
-                                        break
+                            # Get the counter and base_cidr for this matchType
+                            node_type = node_cfg.get("type")
+                            if node_type in super_cidr_counter:
+                                counter, base_cidr = super_cidr_counter[node_type]
+                                node_cfg["cidr"] = generate_subnet(counter, base_cidr)
+                                # Update counter for this matchType
+                                super_cidr_counter[node_type] = (counter + 1, base_cidr)
+                            else:
+                                log.warning(f"⚠️ No super-cidr found for node '{name}' with type '{node_type}'")
                     
                     etcd.put(
                         f"/config/{key}/{name}",
