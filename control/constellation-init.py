@@ -96,7 +96,7 @@ def apply_config_to_etcd(etcd, config_data: dict):
                         merged_l3_cfg[key_l3] = val_l3
     
                     if merged_l3_cfg.get("auto-assign-ips", False) is True:   
-                        if "cidr" not in merged_l3_cfg:
+                        if "cidr" not in merged_l3_cfg and "cidr" not in node_cfg:
                             # Get the counter and base_cidr for this matchType
                             node_type = node_cfg.get("type")
                             if node_type in super_cidr_counter:
@@ -108,7 +108,7 @@ def apply_config_to_etcd(etcd, config_data: dict):
                                 log.warning(f"⚠️ No super-cidr found for node '{name}' with type '{node_type}'")
                     
                     etcd.put(
-                        f"/config/nodes/{name}",
+                        f"/config/{key}/{name}",
                         json.dumps(node_cfg),
                     )
 
