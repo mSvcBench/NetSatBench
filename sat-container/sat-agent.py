@@ -30,7 +30,6 @@ my_node_name = os.getenv("NODE_NAME")
 
 # KEYS
 KEY_LINKS_PREFIX = f"/config/links/{my_node_name}/"
-KEY_L3 = "/config/L3-config-common"
 KEY_RUN = f"/config/run/{my_node_name}"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
@@ -54,32 +53,17 @@ def get_etcd_client():
                 etcd_client = etcd3.client(host=ETCD_HOST, port=ETCD_PORT, user=ETCD_USER, password=ETCD_PASSWORD, ca_cert=ETCD_CA_CERT)
             else:
                 etcd_client = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
-            log.info(f"✅ Connected to Etcd at {ETCD_HOST}:{ETCD_PORT}.")
+            log.info(f" ✅ Connected to Etcd at {ETCD_HOST}:{ETCD_PORT}.")
             return etcd_client
         except:
             time.sleep(5)
 
 def get_remote_ip(etcd_client, node_name):
-    val, _ = etcd_client.get(f"/config/satellites/{node_name}")
-    if not val: val, _ = etcd_client.get(f"/config/users/{node_name}")
-    if not val: val, _ = etcd_client.get(f"/config/grounds/{node_name}")
+    val, _ = etcd_client.get(f"/config/nodes/{node_name}")
     if val:
         try: return json.loads(val.decode()).get("eth0_ip")
         except: pass
     return None
-
-def get_l3_flags_values(etcd_client):
-    l3_flags={}
-    val_common, _ = etcd_client.get(KEY_L3)
-    if val_common:
-        try:
-            l3_flags = json.loads(val_common.decode())
-        except:
-            log.error("❌ Failed to parse L3 flags from Etcd.")
-    my_val = my_config.get("L3-config", {})
-    for key, value in my_val.items():
-        l3_flags[key] = value
-    return l3_flags
 
 def run(cmd, log_errors=True):
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -215,8 +199,8 @@ def process_initial_topology(etcd_client):
     if val:
         execute_commands(val.decode())
     
-    ## Configure /etc/hosts entries for all known satellites/grounds/users
-    log.info("📝 Updating /etc/hosts with known satellites, grounds and users...")
+    ## Configure /etc/hosts entries for all known nodes
+    log.info("📝 Updating /etc/hosts with known nodes...")
     prefix = "/config/etchosts/"
     for value, meta in etcd_client.get_prefix(prefix):
         node_name = meta.key.decode().split('/')[-1]
@@ -232,9 +216,9 @@ def process_initial_topology(etcd_client):
                 # Append to /etc/hosts
                 with open("/etc/hosts", "a") as f:
                     f.write(f"{ip_addr}\t{node_name}\n")
-                log.info(f"✅ Added /etc/hosts entry: {ip_addr} {node_name}")
+                log.info(f" ✅ Added /etc/hosts entry: {ip_addr} {node_name}")
             except Exception as e:
-                log.error(f"❌ Failed to update /etc/hosts for {node_name}: {e}")
+                log.error(f" ❌ Failed to update /etc/hosts for {node_name}: {e}")
 
 # ----------------------------
 #   PART 2: DYNAMIC ACTIONS (Epoch 1+)
@@ -274,11 +258,11 @@ def create_vxlan_link(
     run(["ip", "link", "set", "dev", vxlan_if, "up"])
     
     ## Assign IP from my_config subnet, if available. Last IP in subnet assigned to all vxlan interfaces
-    available_ips = list(ipaddress.ip_network(my_config.get("subnet_cidr","")).hosts())
+    available_ips = list(ipaddress.ip_network(my_config.get("L3-config", {}).get("cidr","")).hosts())
     if len(available_ips) > 0:
         ip_addr = str(available_ips[-1]) + "/32"
         run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
-        log.info(f"  ✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
+        log.info(f" ✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
         if l3_flags.get("enable-routing", False):
             msg, success = routing.link_add(etcd_client, my_node_name, vxlan_if)
             if success:
@@ -293,7 +277,7 @@ def delete_vxlan_link(
     run([
         "ip", "link", "del", vxlan_if
     ])
-    log.info(f"  ✅ VXLAN {vxlan_if} deleted.")
+    log.info(f" ✅ VXLAN {vxlan_if} deleted.")
     if l3_flags.get("enable-routing", False):
         msg, success = routing.link_del(etcd_client, my_node_name, vxlan_if)
         if success:
@@ -351,13 +335,13 @@ def process_link_action(etcd_client, event):
                 l = json.loads(event.value.decode())
                 ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
                 if ep1 != my_node_name and ep2 != my_node_name:
-                    log.error(f"❌ Link action {ep1}<->{ep2} not relevant to this node.")
+                    log.error(f" ❌ Link action {ep1}<->{ep2} not relevant to this node.")
                     return
 
                 ip1 = get_remote_ip(etcd_client, ep1)
                 ip2 = get_remote_ip(etcd_client, ep2)
                 if not ip1 or not ip2:
-                    log.error(f"❌ Missing IPs for link action {ep1}<->{ep2}.")
+                    log.error(f" ❌ Missing IPs for link action {ep1}<->{ep2}.")
                     return
                 
                 vni = str(l.get("vni", "0"))
@@ -381,14 +365,14 @@ def process_link_action(etcd_client, event):
                             netem_opts=netem_opts
                     ) 
                     else:
-                        log.info(f"  🎛️  No netem options defined for {vxlan_if}, skipping tc")
+                        log.info(f" 🎛️  No netem options defined for {vxlan_if}, skipping tc")
         
         ## Process DeleteEvent
         elif isinstance(event, etcd3.events.DeleteEvent):
                 # interface delete removes possible TC automatically 
                 delete_vxlan_link(vxlan_if)
     except: 
-        log.error("  ❌ Failed to parse link action.")
+        log.error(" ❌ Failed to parse link action.")
         return
 
 # ----------------------------
@@ -520,14 +504,6 @@ def execute_commands(commands_raw_str: str) -> None:
     except Exception:
         log.exception("Failed to parse commands JSON")
 
-def watch_satellites_loop():
-    # Only useful if you need to detect new peers dynamically
-    # For now, just a placeholder or you can implement if needed
-    pass
-
-def watch_users_loop():
-    pass
-
 # ----------------------------
 #   INIT & MAIN
 # ----------------------------
@@ -548,16 +524,12 @@ def register_my_ip(etcd_client):
                 return True
             except: return False
 
-        sat_found = update_key(f"/config/satellites/{my_node_name}")
-        user_found = update_key(f"/config/users/{my_node_name}")
-        ground_found = update_key(f"/config/grounds/{my_node_name}")
-        return (sat_found or user_found or ground_found)
+        node_found = update_key(f"/config/nodes/{my_node_name}")
+        return node_found
     except: return False
 
 def get_config(etcd_client):
-    val, _ = etcd_client.get(f"/config/satellites/{my_node_name}")
-    if not val: val, _ = etcd_client.get(f"/config/users/{my_node_name}")
-    if not val: val, _ = etcd_client.get(f"/config/grounds/{my_node_name}")
+    val, _ = etcd_client.get(f"/config/nodes/{my_node_name}")
     if not val: return
     return json.loads(val.decode())
 
@@ -566,7 +538,7 @@ def main():
     log.info(f"🚀 Sat Agent Starting for {my_node_name}")
     etcd_client = get_etcd_client()
     my_config = get_config(etcd_client)
-    l3_flags = get_l3_flags_values(etcd_client)
+    l3_flags = my_config.get("L3-config", {})
     
     # Bootstrapping
     ## Register my IP address in Etcd
@@ -575,19 +547,23 @@ def main():
         time.sleep(2)
 
     # L3 Routing Init
-    routing_flags = l3_flags.get("enable-routing", True)
+    routing_flags = l3_flags.get("enable-routing", False)
     if routing_flags:
         routing_mod_name = l3_flags.get("routing-module", "extra.isis")
         routing = __import__(routing_mod_name, fromlist=[''])
-        msg, success = routing.init(etcd_client, my_node_name)
-        if success:
-            log.info(msg)
-        else:
-            log.error(msg)
-
+        try:
+            log.info(f"🌐 Initializing L3 Routing using module: {routing_mod_name} ...")
+            msg, success = routing.init(etcd_client, my_node_name)
+            if success:
+                log.info(msg)
+            else:
+                log.error(msg)
+        except Exception as e:
+            log.error(f"❌ Failed to initialize L3 routing: {e}")
+            routing = None
 
     ## Publish node IP for etc hosts usage 
-    available_ips = list(ipaddress.ip_network(my_config.get("subnet_cidr","")).hosts())
+    available_ips = list(ipaddress.ip_network(my_config.get("L3-config", {}).get("cidr","")).hosts())
     if len(available_ips) > 0:
         etcd_client.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
 

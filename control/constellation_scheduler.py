@@ -74,11 +74,7 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
 def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str, Any]:
 
     log.info("⚙️  Starting scheduling logic...")
-
-    satellites = config_data.get('satellites', {})
-    users = config_data.get('users', {})
-    grounds = config_data.get('grounds', {})
-    all_nodes = {**satellites, **users, **grounds}
+    all_nodes = config_data.get('nodes', {})
     workers = get_prefix_data(etcd_client, '/config/workers/')
     
 

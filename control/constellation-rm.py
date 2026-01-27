@@ -145,10 +145,9 @@ def main():
         help="Number of worker threads for parallel container removal (default: CPU count).",
     )
     parser.add_argument(
-        "--only",
-        choices=["satellites", "users", "grounds", "all"],
-        default="all",
-        help="Select which node types to deploy (default: all).",
+        "--type",
+        default="any",
+        help="Select which node types to deploy in a comma-separated list (default: any).",
     )
     parser.add_argument(
         "--etcd-host",
@@ -197,30 +196,25 @@ def main():
     etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
 
     # Fetch all relevant configuration
-    satellites = get_prefix_data(etcd_client, '/config/satellites/')
-    users = get_prefix_data(etcd_client, '/config/users/')
-    grounds = get_prefix_data(etcd_client, '/config/grounds/')
     workers = get_prefix_data(etcd_client, '/config/workers/')
-
-    # Merge satellites and users into one list of nodes to clean up
-    log.info(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
-
-    if args.only == "satellites":
-        all_nodes = satellites
-    elif args.only == "users":
-        all_nodes = users
-    elif args.only == "grounds":
-        all_nodes = grounds
+    all_nodes = get_prefix_data(etcd_client, '/config/nodes/')
+    all_nodes_filtered = {}
+    node_types = args.type.split(",")
+    if "any" in node_types:
+        all_nodes_filtered = all_nodes
     else:
-        all_nodes = {**satellites, **users, **grounds}
+        for node_type in node_types:
+            all_nodes_filtered = {name:node for name,node in all_nodes.items() if node.get("type","undefined") == node_type}
 
-    if not all_nodes:
+    log.info(f"🔎 Found {len(all_nodes_filtered)} nodes, to remove.")
+
+    if not all_nodes_filtered:
         log.warning("⚠️  No nodes found in Etcd. Nothing to do.")
 
     # ==========================================
     # DELETE CONTAINERS (Threaded)
     # ==========================================
-    log.info(f"🧹 Starting Cleanup Process for {args.only} nodes using {args.threads} threads...")
+    log.info(f"🧹 Starting Cleanup Process for {args.type} nodes using {args.threads} threads...")
     log.info("-" * 50)
     
     ok = 0
@@ -228,7 +222,7 @@ def main():
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = {}
-        for name, node in all_nodes.items():
+        for name, node in all_nodes_filtered.items():
             worker = node.get('worker')
             # Validation: Does the host exist in config?
             if worker not in workers:
@@ -252,12 +246,14 @@ def main():
                 node_name = name
 
             # Print per-node result
-            if node_name in satellites:
+            if all_nodes_filtered[node_name].get("type","undefined") == "satellite":
                 prefix = "🛰️"
-            elif node_name in users:
+            elif all_nodes_filtered[node_name].get("type","undefined") == "user":
                 prefix = "👤"
-            elif node_name in grounds:
+            elif all_nodes_filtered[node_name].get("type","undefined") == "gateway":
                 prefix = "📡"
+            else:
+                prefix = "🛰️"
             
             log.info(f"{prefix} {node_name}: {msg}")
 
@@ -278,7 +274,7 @@ def main():
     # CLEAN ETCD ENTRIES
     # ==========================================
     log.info("🧼 Cleaning up Etcd entries...")
-    prefixes = ["/config/L3-config-common", "/config/satellites/", "/config/users/", "/config/grounds/", "/config/epoch-config", "/config/links/", "/config/run","/config/etchosts/"]
+    prefixes = ["/config/node-config-common", "/config/nodes/", "/config/epoch-config", "/config/links/", "/config/run","/config/etchosts/"]
     for prefix in prefixes:
         log.info(f"   ➞ Deleting keys with prefix {prefix} ...")
         etcd_client.delete_prefix(prefix)

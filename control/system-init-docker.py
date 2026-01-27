@@ -255,8 +255,6 @@ def main():
             default_interface = "eth0"  # fallback
         else:
             default_interface = default_interface_result.stdout.strip()
-            log.info(f"    ✅ Default interface on worker {worker_name} is {default_interface}.")
-
         nat_cmd = (
             f"ssh {remote_str} sudo iptables -t nat -C POSTROUTING -s {sat_vnet_supercidr} "
             f"! -d {sat_vnet_supercidr} "
@@ -300,7 +298,7 @@ def main():
                     f"STDOUT:\n{routed.stdout}\n"
                     f"STDERR:\n{routed.stderr}")
             else:
-                log.info(f"    ✅ IP route to {other_worker_name} added successfully")
+                log.info(f"    ✅ IP route to containers in {other_worker_name} added successfully")
     log.info("👍 All workers configured successfully.")
         
 

@@ -6,7 +6,10 @@ import os
 import sys
 import ipaddress
 import logging
+import copy
 from itertools import islice
+from typing import Any, Mapping
+from pyparsing import Mapping
 from constellation_scheduler import schedule_workers
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
@@ -51,50 +54,93 @@ def generate_subnet(global_index: int, base_cidr: str) -> str:
         return f"Error: {e}"
 
 
+def merge_node_common_config(config_data: dict) -> dict:
+    node_common_cfg = config_data.get("node-config-common", {})
+    nodes_cfg = config_data.get("nodes", {})
+
+    merged_nodes_cfg = {}
+    for name, node_cfg in nodes_cfg.items():
+        merged_nodes_cfg[name] = deep_merge(node_common_cfg, node_cfg)
+
+    return {**config_data, "nodes": merged_nodes_cfg}
+
+def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Recursively merge override into base.
+    - Dict+dict: merge recursively
+    - Otherwise: override wins
+    Returns a NEW dict with NO shared nested dicts with inputs.
+    """
+    out: dict[str, Any] = {}
+
+    # Start with base (deep-copied structure)
+    for k, v in base.items():
+        if isinstance(v, dict):
+            out[k] = deep_merge(v, {})   # makes a fresh nested dict
+        else:
+            out[k] = copy.deepcopy(v)             # safe for lists/objects
+
+    # Apply override
+    for k, v in override.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = deep_merge(v, {}) if isinstance(v, dict) else copy.deepcopy(v)
+
+    return out
+
+
 # ==========================================
 # CONFIG INJECTION LOGIC
 # ==========================================
 def apply_config_to_etcd(etcd, config_data: dict):
    
     allowed_keys = [
-        "satellites", "users", "grounds",
-        "L3-config-common", "workers", "epoch-config"
+        "nodes","node-config-common", "epoch-config"
     ]
 
     try:
-        global_subnet_counter = 0
+        # init for auto-assign-ips
+        super_cidr_vector: dict[str, tuple[int, str]] = {}
+        super_cidr_vector["any"] = (0, "172.27.0.0/16")  # default base super cidr
+        node_common_cfg = config_data.get("node-config-common", {})
+        if "L3-config" in node_common_cfg:
+            l3_common_cfg = node_common_cfg["L3-config"]
+            if "auto-assign-super-cidr" in l3_common_cfg:
+                for supercidr_entry in l3_common_cfg["auto-assign-super-cidr"]:
+                    match_type = supercidr_entry.get("matchType","")
+                    super_cidr = supercidr_entry.get("super-cidr","")
+                    if match_type and super_cidr:
+                        super_cidr_vector[match_type] = (0, super_cidr)
+        # upload config to etcd
         for key, value in config_data.items():
             if key not in allowed_keys:
-                log.warning(f"⚠️ Unexpected key '{key}', skipping...")
+                log.warning(f"⚠️ Unexpected key '{key}', allowed keys are {allowed_keys}, skipping...")
                 continue
-            
-            if key == "L3-config-common":
+            if key == "node-config-common":
                 etcd.put(f"/config/{key}", json.dumps(value))
             elif key in ["epoch-config"]:
                 etcd.put(f"/config/{key}", json.dumps(value))
-            elif key == "workers":
+            elif key == "nodes":
+                log.info(f"⚙️ Starting IP assignment process...")
                 for name, node_cfg in value.items():
-                    etcd.put(f"/config/workers/{name}", json.dumps(node_cfg))
-            
-            elif key in ["satellites", "users", "grounds"]:
-                for name, node_cfg in value.items():
-                    my_l3_cfg = config_data.get("L3-config-common", {}).copy()
-                    local_l3_node_cfg = node_cfg.get("L3-config", {})
-                    for key_l3, val_l3 in local_l3_node_cfg.items():
-                        my_l3_cfg[key_l3] = val_l3
-                    
-                    if my_l3_cfg.get("auto-assign-ips", False) is True:
-                        if "subnet_cidr" not in node_cfg:
-                            base_cidr = my_l3_cfg.get("auto-assign-cidr", "192.168.0.0/16")
-                            node_cfg["subnet_cidr"] = generate_subnet(global_subnet_counter, base_cidr)
-                            global_subnet_counter += 1
-                    
+                    # merge with common config
+                    l3_cfg = node_cfg.get("L3-config", {})
+                    # auto-assign IPs if enabled
+                    if l3_cfg.get("auto-assign-ips", False) is True:   
+                        if "cidr" not in l3_cfg:
+                            supercidr_type = node_cfg.get("type")
+                            if supercidr_type not in super_cidr_vector:
+                                supercidr_type = "any"
+                            l3_cfg["cidr"] = generate_subnet(super_cidr_vector[supercidr_type][0], super_cidr_vector[supercidr_type][1])
+                            super_cidr_vector[supercidr_type] = (super_cidr_vector[supercidr_type][0] + 1, super_cidr_vector[supercidr_type][1])    
+                    log.info(f"    ➞ Assigned CIDR {l3_cfg.get('cidr', None)} to node {name} of type {node_cfg.get("type")}")
                     etcd.put(
                         f"/config/{key}/{name}",
                         json.dumps(node_cfg),
                     )
 
-        log.info(f"✅ Successfully applied constellation config to Etcd.")
+        log.info(f"✅ Successfully injected constellation config to Etcd.")
 
     except Exception as e:
         log.error(f"❌ Error in apply_config_to_etcd: {e}")
@@ -163,7 +209,8 @@ def main() -> int:
     except Exception as e:
         log.error(f"❌ Failed to load file: {e}")
         return 1
-
+    
+    config_data = merge_node_common_config(config_data)
     scheduled_config = schedule_workers(config_data, etcd)
     apply_config_to_etcd(etcd, scheduled_config)
     return 0

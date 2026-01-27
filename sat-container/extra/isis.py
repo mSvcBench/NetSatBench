@@ -28,15 +28,16 @@ def derive_sysid_from_string(value: str) -> str:
 # ----------------------------
 def init(etcd_client, node_name) -> tuple[str, bool]:
     try:
-        l3_config = json.loads(etcd_client.get(f"/config/L3-config-common")[0].decode())
-        area_id = l3_config.get("isis-area-id", "0001")
-        val, _ = etcd_client.get(f"/config/satellites/{node_name}")
-        if not val: val, _ = etcd_client.get(f"/config/users/{node_name}")
-        if not val: val, _ = etcd_client.get(f"/config/grounds/{node_name}")
+        val, _ = etcd_client.get(f"/config/nodes/{node_name}")
         my_config = json.loads(val.decode())
-        available_ips = list(ipaddress.ip_network(my_config.get("subnet_cidr","")).hosts())
+        l3_config = my_config.get("L3-config", {})
+        if "cidr" not in l3_config:
+            msg=f"  ❌ IS-IS configuration failed: No CIDR assigned to node."
+            return msg, False
+        area_id = l3_config.get("metadata", {}).get("isis-area-id","0001")  # default area ID
+        available_ips = list(ipaddress.ip_network(l3_config.get("cidr","")).hosts())
         loopback_ip = available_ips[-1] if available_ips else ipaddress.ip_address("127.0.0.1")
-        loopback_mask = my_config.get("subnet_cidr","").split('/')[1] if '/' in my_config.get("subnet_cidr","") else '30'
+        loopback_mask = l3_config.get("cidr","").split('/')[1] if '/' in l3_config.get("cidr","") else '30'
         loopback_ip_mask = f"{loopback_ip}/{loopback_mask}"
         # Extract sys_id from node name 
         sys_id = derive_sysid_from_string(node_name)

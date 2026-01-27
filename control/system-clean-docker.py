@@ -170,7 +170,7 @@ def main():
             remote_str = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
             sat_vnet = worker.get("sat-vnet", "sat-vnet")
             sat_vnet_supercidr = worker.get("sat-vnet-supernet", "172.0.0.0/8")
-            log.info(f"🖥️ Cleaning worker {worker_name} at {ssh_ip}")
+            log.info(f"🧹 Cleaning worker {worker_name} at {ssh_ip}")
             # Verify connectivity
             try:
                 subprocess.run(f"ssh -o StrictHostKeyChecking=no -i {ssh_key} {ssh_user}@{ssh_ip} 'echo > /dev/null'", 
@@ -178,6 +178,14 @@ def main():
             except subprocess.CalledProcessError as e:
                 log.error(f"    ❌ Failed to connect to worker {worker_name} at {ssh_ip}: {e}")
             
+            # remove docker network
+            run_command(
+                remote_str,
+                f"sudo docker network rm {sat_vnet} || true"
+            )
+            log.info(f"    ✅ Docker network {sat_vnet} removed successfully.")
+
+            # remove routes to other workers' containers
             for other_name, other_worker in workers.items():
                 if other_name == worker_name:
                     continue
@@ -186,36 +194,35 @@ def main():
                 if not other_cidr:
                     continue
 
-                # Your setup used: ip route replace <cidr> via <other_ip>
-                # Teardown: delete that route (best-effort)
                 run_command(
                     remote_str,
-                    f"sudo ip route del {other_cidr} via {other_ip}"
+                    f"sudo ip route del {other_cidr} via {other_ip} || true"
                 )
-                log.info(f"    ✅ Removed route to {other_name}")
+                log.info(f"    ✅ IP route to containers in {other_name} removed succcesfully.")
 
-                # inserted rule was: -I DOCKER-USER -s super -d super -j ACCEPT
-                # delete all matches:
-                rule_check = f"sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
-                rule_delete = f"sudo iptables -D DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
-                iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
-                log.info(f"    ✅ Removed iptables DOCKER-USER forwarding rule on worker: {worker_name} ({ssh_ip})")
-                
-                # inserted rule was: -A POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE
-                default_interface_cmd = f"ssh {remote_str} ip route show default | awk '/default/ {{print $5}}'"
-                default_interface_result = run(default_interface_cmd)
-                if default_interface_result.returncode != 0:
-                    log.error(f"    ❌ Failed to discover default interface on worker {worker_name}, using fallback eth0."
-                        f"CMD: {default_interface_cmd}\n"
-                        f"STDOUT:\n{default_interface_result.stdout}\n"
-                        f"STDERR:\n{default_interface_result.stderr}")
-                    default_interface = "eth0"  # fallback
-                else:
-                    default_interface = default_interface_result.stdout.strip()
-                rule_check = f"sudo iptables -C POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
-                rule_delete = f"sudo iptables -D POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
-                iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
-                log.info(f"    ✅ Removing POSTROUTING MASQUERADE rule on worker: {worker_name} ({ssh_ip})")
+            # cleaning iptables rules
+            # inserted rule was: -I DOCKER-USER -s super -d super -j ACCEPT
+            # delete all matches:
+            rule_check = f"sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
+            rule_delete = f"sudo iptables -D DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
+            iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
+            log.info(f"    ✅ DOCKER-USER iptables rule removed successfully.")
+            
+            # inserted rule was: -A POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE
+            default_interface_cmd = f"ssh {remote_str} ip route show default | awk '/default/ {{print $5}}'"
+            default_interface_result = run(default_interface_cmd)
+            if default_interface_result.returncode != 0:
+                log.error(f"    ❌ Failed to discover default interface on worker {worker_name}, using fallback eth0."
+                    f"CMD: {default_interface_cmd}\n"
+                    f"STDOUT:\n{default_interface_result.stdout}\n"
+                    f"STDERR:\n{default_interface_result.stderr}")
+                default_interface = "eth0"  # fallback
+            else:
+                default_interface = default_interface_result.stdout.strip()
+            rule_check = f"sudo iptables -C POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
+            rule_delete = f"sudo iptables -D POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
+            iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
+            log.info(f"    ✅ POSTROUTING iptables NAT rule removed successfully.")
 
     # 4) Remove ETCD keys that your script created/overwrote
     log.info("✅ Removed /config/workers/ prefix")

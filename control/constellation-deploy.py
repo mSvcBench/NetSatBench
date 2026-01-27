@@ -287,10 +287,9 @@ def main() -> int:
         help="Number of worker threads for parallel container creation (default: CPU count).",
     )
     parser.add_argument(
-        "--only",
-        choices=["satellites", "users", "grounds", "all"],
-        default="all",
-        help="Select which node types to deploy (default: all).",
+        "--type",
+        default="any",
+        help="Select which node types to deploy in a comma-separated list (default: any).",
     )
     parser.add_argument(
         "--etcd-host",
@@ -334,23 +333,19 @@ def main() -> int:
     etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
 
     # 1) LOAD CONFIGURATION
-    satellites = get_prefix_data(etcd_client, '/config/satellites/')
-    users = get_prefix_data(etcd_client, '/config/users/')
-    grounds = get_prefix_data(etcd_client, '/config/grounds/')
     workers = get_prefix_data(etcd_client, '/config/workers/')
-
-    log.info(f"🔎 Found {len(satellites)} satellites, {len(users)} users, and {len(grounds)} grounds in Etcd.")
-
-    if args.only == "satellites":
-        all_nodes = satellites
-    elif args.only == "users":
-        all_nodes = users
-    elif args.only == "grounds":
-        all_nodes = grounds
+    all_nodes = get_prefix_data(etcd_client, '/config/nodes/')
+    all_nodes_filtered = {}
+    node_types = args.type.split(",")
+    if "any" in node_types:
+        all_nodes_filtered = all_nodes
     else:
-        all_nodes = {**satellites, **users, **grounds}
+        for node_type in node_types:
+            all_nodes_filtered = {name:node for name,node in all_nodes.items() if node.get("type","undefined") == node_type}
+
+    log.info(f"🔎 Found {len(all_nodes_filtered)} nodes, to deploy.")
     
-    if not all_nodes:
+    if not all_nodes_filtered:
         log.warning("⚠️ Warning: No nodes found. Run 'init.py' to populate Etcd first.")
         return 1
 
@@ -359,14 +354,14 @@ def main() -> int:
         return 1
 
     # 2) CREATE CONTAINERS IN PARALLEL
-    log.info(f"🚀 Deploying {args.only} nodes using {args.threads} threads...")
+    log.info(f"🚀 Deploying {args.type} nodes using {args.threads} threads...")
 
     ok = 0
     fail = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = {}
-        for name, node in all_nodes.items():
+        for name, node in all_nodes_filtered.items():
             future = executor.submit(
                 create_one_node,
                 name,
@@ -390,12 +385,14 @@ def main() -> int:
                 node_name = name
 
             # Print per-node result
-            if node_name in satellites:
+            if all_nodes_filtered[node_name].get("type") == "satellite":
                 prefix = "🛰️"
-            elif node_name in users:
+            elif all_nodes_filtered[node_name].get("type") == "user":
                 prefix = "👤"
-            elif node_name in grounds:
+            elif all_nodes_filtered[node_name].get("type") == "gateway":
                 prefix = "📡"
+            else:
+                prefix = "🛰️"
             
             log.info(f"{prefix} {node_name}: {msg}")
 
@@ -411,9 +408,9 @@ def main() -> int:
         return 3
 
     # wait that all deployed node have put their eth0_ip in etcd
-    for name, node in all_nodes.items():
+    for name, node in all_nodes_filtered.items():
         while True:
-            val, _ = etcd_client.get(f"/config/{'satellites' if name in satellites else 'users' if name in users else 'grounds'}/{name}")   
+            val, _ = etcd_client.get(f"/config/nodes/{name}")   
             val = json.loads(val.decode('utf-8')) if val else None
             if 'eth0_ip' in val:
                 break
@@ -421,8 +418,6 @@ def main() -> int:
                 time.sleep(1)
     time.sleep(5)  # extra wait to ensure all services inside the containers are up
     log.info("👍 Constellation deployment completed and all nodes running.")
-
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
