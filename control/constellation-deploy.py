@@ -355,6 +355,7 @@ def main() -> int:
 
     # 2) CREATE CONTAINERS IN PARALLEL
     log.info(f"🚀 Deploying {args.type} nodes using {args.threads} threads...")
+    log.info("-" * 50)
 
     ok = 0
     fail = 0
@@ -400,7 +401,7 @@ def main() -> int:
                 ok += 1
             else:
                 fail += 1
-
+    log.info("-" * 50)
     if fail == 0:
         log.info("✅ Constellation deployment completed...waiting for nodes to come online.")
     else:

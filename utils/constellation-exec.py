@@ -22,15 +22,11 @@ etcd_client = None
 # HELPERS
 # ==========================================
 
-def get_remote_worker(etcd_client, node_name):
-    val, _ = etcd_client.get(f"/config/satellites/{node_name}")
-    if not val:
-        val, _ = etcd_client.get(f"/config/users/{node_name}")
-    if not val:
-        val, _ = etcd_client.get(f"/config/grounds/{node_name}")
+def get_node_cfg(etcd_client, node_name):
+    val, _ = etcd_client.get(f"/config/nodes/{node_name}")
     if val:
         try:
-            return json.loads(val.decode()).get("worker")
+            return json.loads(val.decode())
         except Exception:
             pass
     return None
@@ -126,9 +122,13 @@ def main():
     # ==========================================
     # RESOLVE WORKER
     # ==========================================
-    worker_name = get_remote_worker(etcd_client, args.node)
-    if not worker_name:
+    node_cfg = get_node_cfg(etcd_client, args.node)
+    if not node_cfg:
         log.error(f"❌ Node '{args.node}' not found in Etcd.")
+        sys.exit(1)
+    worker_name = node_cfg.get("worker", None)
+    if not worker_name:
+        log.error(f"❌ Worker of node '{args.node}' not found in Etcd.")
         sys.exit(1)
 
     val, _ = etcd_client.get(f"/config/workers/{worker_name}")
@@ -146,8 +146,16 @@ def main():
     worker_ip = worker.get("ip", worker_name)
     ssh_key = worker.get("ssh_key", "~/.ssh/id_rsa")
     ssh_key = os.path.expanduser(ssh_key)
-
-    log.info(f"🚀 Target node='{args.node}' worker='{worker_name}' ({ssh_user}@{worker_ip})")
+    
+    if node_cfg.get("type") == "satellite":
+        prefix = "🛰️"
+    elif node_cfg.get("type") == "user":
+        prefix = "👤"
+    elif node_cfg.get("type") == "gateway":
+        prefix = "📡"
+    else:
+        prefix = "🛰️"
+    log.info(f"{prefix} Target node='{args.node}' worker='{worker_name}' ({ssh_user}@{worker_ip})")
 
     # ==========================================
     # BUILD COMMAND SAFELY (no shell=True)
