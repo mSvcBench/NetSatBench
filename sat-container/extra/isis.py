@@ -29,7 +29,7 @@ def derive_sysid_from_string(value: str) -> str:
 def init(etcd_client, node_name) -> tuple[str, bool]:
     try:
         l3_config = json.loads(etcd_client.get(f"/config/L3-config-common")[0].decode())
-        area_id = l3_config.get("isis-area-id", "0001")
+        area_id = l3_config.get("metadata", {}).get("isis-area-id", "0001")
         val, _ = etcd_client.get(f"/config/satellites/{node_name}")
         if not val: val, _ = etcd_client.get(f"/config/users/{node_name}")
         if not val: val, _ = etcd_client.get(f"/config/grounds/{node_name}")

@@ -1,11 +1,17 @@
 {
   "L3-config-common": {
     "enable-netem"  : true,
-    "enable-routing" : true,
+    "enable-routing" : false,
     "routing-module": "extra.isis",
-    "isis-area-id": "0001",
+    "routing-metadata": {
+      "isis-area-id": "0001"
+    },
     "auto-assign-ips": true,
-    "auto-assign-cidr": "192.168.0.0/16"
+    "auto-assign-super-cidr": [
+        {"matchType":"satellite","super-cidr":"192.168.0.0/16"},
+        {"matchType":"gateway","super-cidr":"172.10.0.0/16"},
+        {"matchType":"user","super-cidr":"172.11.0.0/16"}
+    ]
   },
   "epoch-config": {
     "epoch-dir": "examples/10nodes/constellation-epochs",
@@ -13,6 +19,7 @@
   },
   "satellites": {
     "sat1": {
+      "type": "satellite",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -21,6 +28,7 @@
       "mem-limit": "400Mi"
     },
     "sat2": {
+      "type": "satellite",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -29,6 +37,7 @@
       "mem-limit": "400Mi"
     },
     "sat3": {
+      "type": "satellite",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -37,6 +46,7 @@
       "mem-limit": "400Mi"
     },
     "sat4": {
+      "type": "satellite",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -45,6 +55,7 @@
       "mem-limit": "400Mi"
     },
     "sat5": {
+      "type": "satellite",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -53,6 +64,7 @@
       "mem-limit": "400Mi"
     },
     "sat6": {
+      "type": "satellite",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -61,6 +73,7 @@
       "mem-limit": "400Mi"
     },
     "sat7": {
+      "type": "satellite",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -69,6 +82,7 @@
       "mem-limit": "400Mi"
     },
     "sat8": {
+      "type": "satellite",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -79,6 +93,7 @@
   },
   "grounds": {
     "grd1": {
+      "type": "gateway",
       "image": "msvcbench/sat-container:latest",
       "sidecars": [],
       "cpu-request": "100m",
@@ -89,16 +104,17 @@
   },
   "users": {
     "usr1": {
+      "type": "user",
       "image": "msvcbench/sat-container:latest",
       "cpu-request": "100m",
       "mem-request": "200Mi",
       "cpu-limit": "200m",
       "mem-limit": "400Mi",
       "sidecars": [],
-      "subnet_cidr": "172.99.0.0/30",
       "L3-config": {
         "enable-netem": false,
-        "auto-assign-ips": false
+        "auto-assign-ips": false,
+        "cidr": "172.99.0.0/30"
       }
     }
   }

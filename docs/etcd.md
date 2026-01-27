@@ -75,7 +75,7 @@ Stores the configuration data of the worker host named `host-1`.
   "ssh_key": "/home/ubuntu/.ssh/id_rsa",
   "sat-vnet": "sat-vnet",
   "sat-vnet-cidr": "172.100.0.0/16",
-  "sat-vnet-supernet": "172.0.0.0/8",
+  "sat-vnet-super-cidr": "172.0.0.0/8",
   "cpu": "4",
   "mem": "6GiB"
 }
@@ -101,7 +101,7 @@ These prefixes contain the configuration data of the emulated node indexed by na
 ```
 In addition to the parameters specified in sat-config.json, the `eth0_ip` field defines the IP address assigned to the eth0 interface of the node container.
 This address is used to establish the overlay VXLAN links between nodes and is automatically managed by the sat-agent running inside each container during initialization.
-The subnet_cidr field can be automatically assigned if the `auto-assign-cidr` field is set.
+The subnet_cidr field can be automatically assigned if the `auto-assign-super-cidr` field is set.
 
 /config/L3-config-common
 ```json
@@ -109,9 +109,11 @@ The subnet_cidr field can be automatically assigned if the `auto-assign-cidr` fi
  "enable-netem"  : true,
  "enable-routing" : true,
  "routing-module": "extra.isis",
- "isis-area-id": "0001",
+  "routing-metadata": {
+      "isis-area-id": "0001"
+    },
  "auto-assign-ips": true,
- "auto-assign-cidr": "192.168.0.0/16"
+ "auto-assign-super-cidr": "192.168.0.0/16"
 }
 ```
 /config/epoch-config

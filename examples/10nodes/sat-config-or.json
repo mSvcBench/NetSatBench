@@ -3,7 +3,7 @@
     "enable-netem"  : true,
     "enable-routing" : false,
     "auto-assign-ips": true,
-    "auto-assign-cidr": "192.168.0.0/16"
+    "auto-assign-super-cidr": "192.168.0.0/16"
   },
   "epoch-config": {
     "epoch-dir": "examples/10nodes/constellation-epochs-or",

@@ -219,7 +219,7 @@ def main():
         log.info(f"    ✅ Docker network '{sat_vnet}' created successfully.")
 
         # Add DOCKER-USER iptables rule to allow forwarding between local and remote containers
-        sat_vnet_supercidr = worker.get('sat-vnet-supernet', '172.0.0.0/8')
+        sat_vnet_supercidr = worker.get('sat-vnet-super-cidr', '172.0.0.0/8')
         check_forward_cmd = (
                 f"ssh {remote_str} sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr}"
                 f" -d {sat_vnet_supercidr}"

@@ -37,7 +37,7 @@ For each worker defined in the configuration file, the script:
   - a unique subnet per worker (`sat-vnet-cidr`)
   - IP masquerading disabled
   - trusted host interface binding
-- Ensures packet forwarding is allowed via the `DOCKER-USER` iptables chain for the `sat-vnet-supernet`
+- Ensures packet forwarding is allowed via the `DOCKER-USER` iptables chain for the `sat-vnet-super-cidr`
 - Installs static IP routes so that containers running on different workers can reach each other **without NAT**
 
 The result is a fully connected **Layer-3 container-to-container network** across all workers, which serves as the substrate for creating VXLAN overlay tunnels used to emulate satellite links.

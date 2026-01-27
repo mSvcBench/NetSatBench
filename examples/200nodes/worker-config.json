@@ -6,7 +6,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.100.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-2": {
       "ip": "10.0.1.144",
@@ -14,7 +14,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.101.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-3": {
       "ip": "10.0.2.199",
@@ -22,7 +22,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.102.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-a-1": {
       "ip": "10.0.1.208",
@@ -30,7 +30,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.103.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-a-2": {
       "ip": "10.0.3.211",
@@ -38,7 +38,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.104.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-a-3": {
       "ip": "10.0.3.65",
@@ -46,7 +46,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.105.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-a-4": {
       "ip": "10.0.2.163",
@@ -54,7 +54,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.106.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-a-5": {
       "ip": "10.0.2.217",
@@ -62,7 +62,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.107.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-a-6": {
       "ip": "10.0.2.226",
@@ -70,7 +70,7 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.108.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     },
     "host-a-7": {
       "ip": "10.0.0.143",
@@ -78,6 +78,6 @@
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.109.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8"
+      "sat-vnet-super-cidr": "172.0.0.0/8"
     }
   }}

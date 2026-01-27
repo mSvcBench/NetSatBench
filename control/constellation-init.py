@@ -57,12 +57,25 @@ def generate_subnet(global_index: int, base_cidr: str) -> str:
 def apply_config_to_etcd(etcd, config_data: dict):
    
     allowed_keys = [
-        "satellites", "users", "grounds",
-        "L3-config-common", "workers", "epoch-config"
+        "nodes","L3-config-common", "workers", "epoch-config"
     ]
 
     try:
-        global_subnet_counter = 0
+        # init for auto-assign-ips
+        super_cidr_counter = {tuple(): 0}  # global counter per matchType
+        base_super_cidr = "172.27.0.0/16"  # default base super cidr
+        if "L3-config-common" in config_data:
+            l3_common_cfg = config_data["L3-config-common"]
+            if "auto-assign-super-cidr" in l3_common_cfg:
+                for supercidr_entry in l3_common_cfg["auto-assign-super-cidr"]:
+                    match_type = supercidr_entry.get("matchType","")
+                    super_cidr = supercidr_entry.get("super-cidr","")
+                    if match_type and super_cidr:
+                        super_cidr_counter[match_type] = 0
+                        if match_type == "any":
+                            base_super_cidr = super_cidr  # set the base super cidr to the first found entry
+
+        # upload config to etcd
         for key, value in config_data.items():
             if key not in allowed_keys:
                 log.warning(f"⚠️ Unexpected key '{key}', skipping...")
@@ -75,19 +88,25 @@ def apply_config_to_etcd(etcd, config_data: dict):
             elif key == "workers":
                 for name, node_cfg in value.items():
                     etcd.put(f"/config/workers/{name}", json.dumps(node_cfg))
-            
-            elif key in ["satellites", "users", "grounds"]:
+            elif key == "nodes":
                 for name, node_cfg in value.items():
-                    my_l3_cfg = config_data.get("L3-config-common", {}).copy()
-                    local_l3_node_cfg = node_cfg.get("L3-config", {})
-                    for key_l3, val_l3 in local_l3_node_cfg.items():
-                        my_l3_cfg[key_l3] = val_l3
-                    
-                    if my_l3_cfg.get("auto-assign-ips", False) is True:
-                        if "subnet_cidr" not in node_cfg:
-                            base_cidr = my_l3_cfg.get("auto-assign-cidr", "192.168.0.0/16")
-                            node_cfg["subnet_cidr"] = generate_subnet(global_subnet_counter, base_cidr)
-                            global_subnet_counter += 1
+                    if "type" not in node_cfg:
+                        node_cfg["type"] = "undefined"
+                    merged_l3_cfg = config_data.get("L3-config-common", {}).copy()
+                    local_l3_cfg = node_cfg.get("L3-config", {})
+                    for key_l3, val_l3 in local_l3_cfg.items():
+                        merged_l3_cfg[key_l3] = val_l3
+    
+                    if merged_l3_cfg.get("auto-assign-ips", False) is True:   
+                        if "cidr" not in merged_l3_cfg:
+                            supercidr_set = merged_l3_cfg.get("auto-assign-super-cidr", {})
+                            ip_assigned = False
+                            for supercidr in supercidr_set:
+                                 if supercidr.get("matchType","") == node_cfg.get("type"):
+                                    supercidr = supercidr.get("cidr","")
+                                    ### TODO: greate a global_subnet_counter per matchType
+                                    node_cfg["cidr"] = generate_subnet(super_cidr_counter, base_cidr)
+                            super_cidr_counter += 1
                     
                     etcd.put(
                         f"/config/{key}/{name}",

@@ -128,10 +128,10 @@
         <mxCell id="fOTdgnzoVHL2Ov8Uhaf4-56" value="run" style="verticalLabelPosition=middle;verticalAlign=middle;html=1;shape=process;whiteSpace=wrap;rounded=1;size=0.14;arcSize=6;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;labelPosition=center;align=center;" vertex="1" parent="1">
           <mxGeometry x="399.6" y="512.92" width="80.4" height="16.08" as="geometry" />
         </mxCell>
-        <mxCell id="fOTdgnzoVHL2Ov8Uhaf4-57" value="allow forward&#xa;sat-vnet-supernet 172.0.0.0/8" style="text;whiteSpace=wrap;fontFamily=Helvetica;fontSize=10;labelBackgroundColor=none;fontColor=default;align=right;" vertex="1" parent="1">
+        <mxCell id="fOTdgnzoVHL2Ov8Uhaf4-57" value="allow forward&#xa;sat-vnet-super-cidr 172.0.0.0/8" style="text;whiteSpace=wrap;fontFamily=Helvetica;fontSize=10;labelBackgroundColor=none;fontColor=default;align=right;" vertex="1" parent="1">
           <mxGeometry x="-17.75" y="442" width="169.25" height="20" as="geometry" />
         </mxCell>
-        <mxCell id="fOTdgnzoVHL2Ov8Uhaf4-60" value="allow forward&#xa;sat-vnet-supernet 172.0.0.0/8" style="text;whiteSpace=wrap;fontFamily=Helvetica;fontSize=10;labelBackgroundColor=none;fontColor=default;align=left;" vertex="1" parent="1">
+        <mxCell id="fOTdgnzoVHL2Ov8Uhaf4-60" value="allow forward&#xa;sat-vnet-super-cidr 172.0.0.0/8" style="text;whiteSpace=wrap;fontFamily=Helvetica;fontSize=10;labelBackgroundColor=none;fontColor=default;align=left;" vertex="1" parent="1">
           <mxGeometry x="598.5" y="441" width="169.25" height="20" as="geometry" />
         </mxCell>
       </root>

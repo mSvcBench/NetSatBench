@@ -49,7 +49,7 @@ Each worker is uniquely identified by a logical name (e.g., `host-1`, `host-2`) 
       "ssh_key": "<path-to-private-key>",  
       "sat-vnet": "<bridge-name>",  
       "sat-vnet-cidr": "<container-subnet>",  
-      "sat-vnet-supernet": "<global-supernet>",
+      "sat-vnet-super-cidr": "<global-supernet>",
       "cpu": "<num-cpu-cores>",
       "mem": "<memory-available>" 
     },  
@@ -99,10 +99,10 @@ Each worker entry must define the following fields:
 - Description: Unique IP subnet assigned to eth0 interfaces of containers running on this worker.  
 - Constraints:  
   - Must be unique per worker  
-  - Must be a subnet of `sat-vnet-supernet`  
+  - Must be a subnet of `sat-vnet-super-cidr`  
 - Example: `172.100.0.0/16`
 
-##### `sat-vnet-supernet`
+##### `sat-vnet-super-cidr`
 - Type: string (CIDR notation)  
 - Description: Global supernet encompassing all container subnets across the cluster.  
 - Usage: Ensures routable underlay IP addressing between containers on different workers without NAT.  
@@ -130,7 +130,7 @@ Each worker entry must define the following fields:
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.100.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8",
+      "sat-vnet-super-cidr": "172.0.0.0/8",
       "cpu": "4",
       "mem": "6GiB"
     },
@@ -140,7 +140,7 @@ Each worker entry must define the following fields:
       "ssh_key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.101.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8",
+      "sat-vnet-super-cidr": "172.0.0.0/8",
       "cpu": "4",
       "mem": "6GiB"
     }
@@ -202,9 +202,9 @@ Defines Layer-3 and routing parameters of the VXLAN-based overlay network that a
 ##### `auto-assign-ips`
 - Type: boolean  
 - Description: Enables or disables automatic assignment of internal IP subnets to nodes.
-- Usage: If `true`, nodes without an explicit `auto-assign-ips = false` field are assigned subnets from the block specified in `auto-assign-cidr` in the order they are defined in the configuration file.
+- Usage: If `true`, nodes without an explicit `auto-assign-ips = false` field are assigned subnets from the block specified in `auto-assign-super-cidr` in the order they are defined in the configuration file.
 
-##### `auto-assign-cidr`
+##### `auto-assign-super-cidr`
 - Type: string (CIDR notation)  
 - Description: Base CIDR block for overlay addressing from which sequential /30 subnets are automatically assigned to nodes when `auto-assign-ips` is `true`.
   
@@ -216,10 +216,13 @@ Defines Layer-3 and routing parameters of the VXLAN-based overlay network that a
 - Type: string (needed if `enable-routing` is `true`)
 - Description: Identifier of the routing configuration module used by the `sat-agent` (see [routing-interface](routing-interface.md)).  
 - Example: `extra.isis`
-
-##### `isis-area-id`
-- Type: string  (needed if `routing-module` is `extra.isis`)
-- Description: IS-IS area identifier applied to all nodes when IS-IS routing is enabled.
+##### `routing-metadata`
+- Type: object (optional)  
+- Description: Additional metadata fields passed to the routing module for custom configuration.  
+- Example:
+```json
+  { "isis-area-id": "0001" }
+```
 
 ---
 
@@ -300,7 +303,7 @@ Users use the same fields and semantics as satellites.
     "routing-module": "extra.isis",
     "isis-area-id": "0001",
     "auto-assign-ips": true,
-    "auto-assign-cidr": "192.168.0.0/16"
+    "auto-assign-super-cidr": "192.168.0.0/16"
   },
   "epoch-config": {
     "epoch-dir": "examples/10nodes/constellation-epochs",
