@@ -57,7 +57,7 @@ def generate_subnet(global_index: int, base_cidr: str) -> str:
 def apply_config_to_etcd(etcd, config_data: dict):
    
     allowed_keys = [
-        "nodes","L3-config-common", "workers", "epoch-config"
+        "satellites", "users", "grounds", "L3-config-common", "workers", "epoch-config"
     ]
 
     try:
@@ -86,7 +86,7 @@ def apply_config_to_etcd(etcd, config_data: dict):
             elif key == "workers":
                 for name, node_cfg in value.items():
                     etcd.put(f"/config/workers/{name}", json.dumps(node_cfg))
-            elif key == "nodes":
+            elif key in ["satellites", "users", "grounds"]:
                 for name, node_cfg in value.items():
                     if "type" not in node_cfg:
                         node_cfg["type"] = "undefined"
@@ -108,7 +108,7 @@ def apply_config_to_etcd(etcd, config_data: dict):
                                 log.warning(f"⚠️ No super-cidr found for node '{name}' with type '{node_type}'")
                     
                     etcd.put(
-                        f"/config/{key}/{name}",
+                        f"/config/nodes/{name}",
                         json.dumps(node_cfg),
                     )
 
