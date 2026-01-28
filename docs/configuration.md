@@ -15,10 +15,10 @@ This document provides a unified reference for all JSON configuration files used
 It describes the structure, semantics, and constraints of:
 
 - the **worker configuration file**, `worker-config.json`, which defines the execution cluster and networking substrate;  
-- the **satellite configuration file**, `sat-config.json`, which defines the logical satellite system, routing behavior, and time evolution.
-- the **epoch configuration files**, which define time-based events affecting the constellation emulation.
+- the **satellite configuration file**, `sat-config.json`, which defines static configuration paramenters of the satellite system.
+- the **epoch configuration files**, which define time-based events affecting the dynamic behavior of the satellite system.
 
-All configurations are expressed in **JSON format** and are consumed by the NetSatBench control scripts run on the control host.
+All configurations are expressed in **JSON format** and are processed by the control scripts run on the control host and inserted in the **Etcd** datastore.
 
 ---
 
@@ -45,11 +45,11 @@ Each worker is uniquely identified by a logical name (e.g., `host-1`, `host-2`) 
   "workers": {  
     "<worker-name>": {  
       "ip": "<management-ip>",  
-      "ssh_user": "<ssh-username>",  
-      "ssh_key": "<path-to-private-key>",  
+      "ssh-user": "<ssh-username>",  
+      "ssh-key": "<path-to-private-key>",  
       "sat-vnet": "<bridge-name>",  
       "sat-vnet-cidr": "<container-subnet>",  
-      "sat-vnet-supernet": "<global-supernet>",
+      "sat-vnet-supernet": "<containers-supernet>",
       "cpu": "<num-cpu-cores>",
       "mem": "<memory-available>" 
     },  
@@ -59,32 +59,57 @@ Each worker is uniquely identified by a logical name (e.g., `host-1`, `host-2`) 
 ```
 
 ---
+### Example
+
+```json  
+{
+"workers": {
+    "host-1": {
+      "ip": "10.0.1.215",
+      "ssh-user": "ubuntu",
+      "ssh-key": "/home/ubuntu/.ssh/id_rsa",
+      "sat-vnet": "sat-vnet",
+      "sat-vnet-cidr":"172.100.0.0/16",
+      "sat-vnet-supernet": "172.0.0.0/8",
+      "cpu": "4",
+      "mem": "6GiB"
+    },
+    "host-2": {
+      "ip": "10.0.1.144",
+      "ssh-user": "ubuntu",
+      "ssh-key": "/home/ubuntu/.ssh/id_rsa",
+      "sat-vnet": "sat-vnet",
+      "sat-vnet-cidr":"172.101.0.0/16",
+      "sat-vnet-supernet": "172.0.0.0/8",
+      "cpu": "4",
+      "mem": "6GiB"
+    }
+  }
+}
+```
+---
 
 ### Fields Description
 
 #### `workers`
 
-Top-level object containing the definition of all worker hosts in the cluster.
-
-Each key under `workers` represents a logical worker identifier, which is used throughout the system to assign emulated nodes to specific hosts.
+Top-level object containing the definition of all worker hosts in the cluster. Each key under `workers` represents a logical worker identifier.
 
 ---
 
 #### Per-Worker Fields
-
-Each worker entry must define the following fields:
 
 ##### `ip`
 - Type: string  
 - Description: Management IP address of the worker host, reachable from the control host.  
 - Usage: Used by control scripts to establish SSH connections and as the bind address for VXLAN tunnels.
 
-##### `ssh_user`
+##### `ssh-user`
 - Type: string  
 - Description: Username used by the control host to connect to the worker via SSH.  
 - Requirements: This user must have passwordless `sudo` access and permissions to run Docker commands.
 
-##### `ssh_key`
+##### `ssh-key`
 - Type: string  
 - Description: Absolute path to the private SSH key used by the control host for authentication.  
 - Notes: The key must be readable by the control scripts and authorized on the worker host.
@@ -96,7 +121,7 @@ Each worker entry must define the following fields:
 
 ##### `sat-vnet-cidr`
 - Type: string (CIDR notation)  
-- Description: Unique IP subnet assigned to eth0 interfaces of containers running on this worker.  
+- Description: Unique underlay IP subnet assigned to eth0 interfaces of containers running on this worker.  
 - Constraints:  
   - Must be unique per worker  
   - Must be a subnet of `sat-vnet-supernet`  
@@ -104,49 +129,21 @@ Each worker entry must define the following fields:
 
 ##### `sat-vnet-supernet`
 - Type: string (CIDR notation)  
-- Description: Global supernet encompassing all container subnets across the cluster.  
+- Description: Underlay CIDR supernet encompassing all container subnets (sat-vnet-cidr) across the cluster.  
 - Usage: Ensures routable underlay IP addressing between containers on different workers without NAT.  
 - Important: The underlying physical or virtual Ethernet network must allow unrestricted IP connectivity within this supernet.
 
 ##### `cpu`
 - Type: string  
-- Description: Number of CPU cores available for container execution on the worker host.  
+- Description: Number of CPU cores available for container execution on the worker host. Allowed units: integer or fractional (e.g., `4`, `2.5`) of CPU cores, or `m` (millicores).  
 - Usage: Used by the control scripts to schedule emulated nodes based on resource availability.
 
 ##### `mem`
 - Type: string  
-- Description: Amount of memory available for container execution on the worker host.  
+- Description: Amount of memory available for container execution on the worker host. Allowed units: `KiB`, `MiB`, `GiB`, `TiB`. 
 - Usage: Used by the control scripts to schedule emulated nodes based on resource availability.
 
 ---
-### Example
-
-```json  
-{
-"workers": {
-    "host-1": {
-      "ip": "10.0.1.215",
-      "ssh_user": "ubuntu",
-      "ssh_key": "/home/ubuntu/.ssh/id_rsa",
-      "sat-vnet": "sat-vnet",
-      "sat-vnet-cidr":"172.100.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8",
-      "cpu": "4",
-      "mem": "6GiB"
-    },
-    "host-2": {
-      "ip": "10.0.1.144",
-      "ssh_user": "ubuntu",
-      "ssh_key": "/home/ubuntu/.ssh/id_rsa",
-      "sat-vnet": "sat-vnet",
-      "sat-vnet-cidr":"172.101.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8",
-      "cpu": "4",
-      "mem": "6GiB"
-    }
-  }
-}
-```
 
 ## Satellite Configuration File
 
@@ -154,12 +151,10 @@ Each worker entry must define the following fields:
 
 The satellite configuration file, `sat-config.json`, defines:
 
-- Global Layer-3 and routing options of the VXLAN-based overlay network that are shared by all nodes  
-- The set of satellite nodes in the constellation  
-- The set of ground stations and users connected to the constellation  
-- Placement of each node on worker hosts  
-- Container images, requirements, and per-node internal overlay subnets
-- Time evolution parameters for the constellation emulation 
+- Common config data shared by all nodes  
+- The set of nodes in the constellation with specific values overriding global parameters  
+- Directory and filename pattern for epoch files that drive time evolution  
+
 
 Each emulated node (satellite, ground station, or user) is uniquely identified by a logical name (e.g., `sat1`, `grd1`, `usr1`) that should use less than 8 characters.
 
@@ -169,67 +164,208 @@ Each emulated node (satellite, ground station, or user) is uniquely identified b
 
 ```json  
 {  
-  "L3-config-common": { ... },  
+  "node-config-common": { ... },  
   "epoch-config": { ... },  
-  "satellites": {  
-    "<satellite-name>": { ... },  
-    ...  
-  },  
-  "grounds": {  
-    "<ground-name>": { ... },  
-    ...  
-  },
-  "users": {  
-    "<user-name>": { ... },  
-    ...  
-  }
+  "nodes": {  
+    "<node-name>": { ... },  
+    ...
+  ...
 }  
 ```
 
 ---
 
+### Example
+
+```json  
+{
+  "node-config-common": {
+    "type": "undefined",
+    "n_antennas": 2,
+    "metadata": {},  
+    "image": "msvcbench/sat-container:latest",
+    "sidecars": [],
+    "cpu-request": "100m",
+    "mem-request": "200MiB",
+    "cpu-limit": "200m",
+    "mem-limit": "400MiB",
+    "L3-config": {
+      "enable-netem"  : true,
+      "enable-routing" : true,
+      "routing-module": "extra.isis",
+      "routing-metadata": {
+        "isis-area-id": "0001"
+      },
+      "auto-assign-ips": true,
+      "auto-assign-super-cidr": [
+          {"matchType":"satellite","super-cidr":"192.168.0.0/16"},
+          {"matchType":"gateway","super-cidr":"172.10.0.0/16"},
+          {"matchType":"user","super-cidr":"172.11.0.0/16"}
+      ]
+    }
+  },
+  "epoch-config": {
+    "epoch-dir": "examples/10nodes/constellation-epochs",
+    "file-pattern": "NetSatBench-epoch*.json"
+  },
+  "nodes": {
+    "sat1": {
+      "type": "satellite",
+      "n_antennas": 5,
+      "metadata": {
+        "orbit": {
+          "TLE": [
+            "1 47284U 20100AC  25348.63401725  .00000369  00000+0  98748-3 0  9994",
+            "2 47284  87.8941  27.3203 0001684  91.6865 268.4456 13.12589579240444"
+          ]
+          },
+        "labels": {
+          "name": "ONEWEB-0138"
+        }
+      }
+    },
+    "sat2": {
+      "type": "satellite",
+      "n_antennas": 5
+    },
+    ...,
+    "grd1": {
+      "type": "gateway",
+      "n_antennas": 2,
+      "cpu-request": "200m",
+      "mem-request": "400MiB",
+      "cpu-limit": "400m",
+      "mem-limit": "800MiB",
+      "metadata": {
+        "location": {
+          "latitude": 37.4275,
+          "longitude": -122.1697,
+          "altitude": 30
+        },
+        "labels": {
+          "name": "stanford_ground_station"
+        }
+      }
+    },
+    "usr1": {
+      "type": "user",
+      "n_antennas": 2,
+      "metadata": {
+        "location": {
+          "latitude": 37.7749,
+          "longitude": -122.4194,
+          "altitude": 20
+        },
+        "labels": {
+          "name": "san_francisco_user"
+        }
+      },
+      "L3-config": {
+        "enable-netem": false,
+        "auto-assign-ips": false,
+        "cidr": "172.99.0.0/30"
+      }
+    }
+  }
+}
+```
 ### Fields Description
 
-#### `L3-config-common`
+#### `node-config-common`
 
-Defines Layer-3 and routing parameters of the VXLAN-based overlay network that are globally applied to all emulated nodes.
+Defines common  of the VXLAN-based overlay network that are globally applied to all emulated nodes.
 
-##### `enable-netem`
+#### `node-config-common` Fields
+##### `type`
+- Type: string  
+- Description: Type of the node. Recommended values: `satellite`, `gateway`, `user`. Custom strings are possible.  
+- Usage: Used for classification, automatic IP assignment, icons, etc.
+
+##### `n_antennas`
+- Type: integer  
+- Description: Number of antennas of the node.  
+- Usage: Not used by control scripts
+
+##### `metadata`
+- Type: object  
+- Description: Arbitrary key-value pairs associated with the node.  
+- Usage: Not used by control scripts
+
+##### `image`
+- Type: string  
+- Description: Docker image of sat-agent used to instantiate the container for the node.
+- Usage: Must be a valid image accessible from the worker hosts.
+
+##### `sidecars`
+- Type: array of strings  
+- Description: List of Docker images of sidecar containers to be deployed alongside the main node container.
+- Usage: Not yet supported by control scripts.
+
+##### `cpu-request`
+- Type: string (optional)  
+- Description: CPU resources requested for the node container (e.g., `100m` for 0.1 CPU core). 
+- Usage: Used to control the scheduling of nodes on workers and as a priority level in case of CPU resource contention (e.g., see docker --cpu-shares).
+
+##### `mem-request`
+- Type: string (optional)  
+- Description: Memory resources requested for the node container (e.g., `200MiB`). 
+- Usage: Used to control the scheduling of nodes on workers and as a priority OOM killing level in case of memory exhaustion (e.g., see docker --memory-reservation).
+
+##### `cpu-limit`
+- Type: string (optional)  
+- Description: CPU resources limit for the node container (e.g., `200m` for 0.2 CPU core). 
+- Usage: Used to cap the maximum CPU usage of the container (e.g., see docker --cpus).
+
+##### `mem-limit`
+- Type: string (optional)  
+- Description: Memory resources limit for the node container (e.g., `400MiB`). 
+- Usage: Used to cap the maximum memory usage of the container (e.g., see docker --memory).
+
+##### `L3-config`
+- Type: object  
+- Description: Layer-3 network configuration parameters applied to satellite links (VXLAN tunnels).
+- Fields: see below.
+
+###### `enable-netem`
 - Type: boolean  
 - Description: Enables or disables traffic control (tc netem) for emulating delay, loss, and bandwidth.  
-- Usage: When `true`, link parameters defined in epoch files are enforced at run time.
+- Usage: When `true`, satelite link parameters defined in epoch files are enforced at run time.
 
-##### `auto-assign-ips`
-- Type: boolean  
-- Description: Enables or disables automatic assignment of internal IP subnets to nodes.
-- Usage: If `true`, nodes without an explicit `auto-assign-ips = false` field are assigned subnets from the block specified in `auto-assign-cidr` in the order they are defined in the configuration file.
+###### `enable-routing`
+- Type: boolean
+- Description: Enables or disables IP routing over satellite links.
+- Usage: If `true`, the routing module specified in `routing-module` is activated.
 
-##### `auto-assign-cidr`
-- Type: string (CIDR notation)  
-- Description: Base CIDR block for overlay addressing from which sequential /30 subnets are automatically assigned to nodes when `auto-assign-ips` is `true`.
-  
-##### `enable-routing`
-- Type: boolean  
-- Description: Enables or disables overlay IP routing inside emulated nodes.
-
-##### `routing-module`
+###### `routing-module`
 - Type: string (needed if `enable-routing` is `true`)
-- Description: Identifier of the routing configuration module used by the `sat-agent` (see [routing-interface](routing-interface.md)).  
+- Description: Identifier of the routing configuration module used by the `sat-agent` (see [routing-interface](routing-interface.md)) for the satellite links.  
 - Example: `extra.isis`
 
-##### `isis-area-id`
-- Type: string  (needed if `routing-module` is `extra.isis`)
-- Description: IS-IS area identifier applied to all nodes when IS-IS routing is enabled.
+###### `auto-assign-ips`
+- Type: boolean  
+- Description: Enables or disables automatic assignment of internal IP subnets routed over satellite links.
+- Usage: If `true`, nodes are assigned subnets from the block specified in `auto-assign-cidr`
 
+###### `auto-assign-super-cidr`
+- Type: JSON array of objects  
+- Description: List of rules for automatic assignment of internal IP subnets to nodes based on their type.
+- Each rule object contains the following fields::
+  - `matchType`: string  
+    - Description: Node type to match (e.g., `satellite`, `gateway`, `user`).
+  - `super-cidr`: string (CIDR notation)  
+    - Description: Base CIDR block for overlay addressing from which sequential /30 subnets are automatically assigned to nodes of the specified type. Use a subnet different from those used in the underlay network, e.g, `sat-vnet-supernet` in worker configuration and the network used by physical interfaces of hosts (e.g., eth0).
 ---
 
 #### `epoch-config`
 
 Defines how the time evolution of the constellation is driven.
 
+#### `epoch-config` Fields
+
 ##### `epoch-dir`
 - Type: string  
 - Description: Path to the directory containing epoch definition files.
+- Usage: Epoch files in this directory matching the `file-pattern` are loaded and applied sequentially during constellation run time.
 
 ##### `file-pattern`
 - Type: string  
@@ -237,115 +373,34 @@ Defines how the time evolution of the constellation is driven.
 
 ---
 
-#### `satellites`
+### `nodes`
 
-Defines the set of satellite nodes in the emulated constellation.
-Each satellite entry, has a key that represents the logical satellite name.
-The name must be unique across all nodes (satellites, ground stations, and users) and shold have a length <u>lower than 8 characters</u>.
-The value contains the following fields:
+Defines the set of nodes in the emulated constellation.
+Each node entry has a key that represents the logical `node-name`.
+The name must be unique across all nodes and should have a length <u>lower than 8 characters</u>.
 
-##### `worker`
+### Per-Node Fields 
+The fields of a node can contain any field of `node-config-common` to override the corresponding common value.
+Besides the ovverrided common fields, each node can also define the following additional fields to avoid automatic assignment:
+
+#### `worker`
 - Type: string  (optional)
 - Description: Worker host on which the satellite container is deployed. If omitted, the `constellation-init` script automatically assigns the node to a worker based on resource availability.
+- Usage: Must correspond to a valid worker name defined in the worker configuration file `worker-config.json`.
 
-##### `image`
-- Type: string  
-- Description: Docker image used to instantiate the satellite container.
+#### `cidr`
+- Type: string (CIDR notation)  (optional)
+- Description: Specific IP subnet assigned to a node and routed over satellite links. If omitted, the subnet is automatically assigned if `auto-assign-ips` is `true`. Otherwise the node will not have an IP address.
+- Usage: Must be a /30 subnet out of the block defined in `auto-assign-super-cidr` to avoid overlaps.
 
-##### `cpu-request`
-- Type: string (optional)
-- Description: CPU resources requested for the satellite container (e.g., `100m` for 0.1 CPU core). Used to control the scheduling of nodes on workers and as a priority level in case of CPU resource contention (e.g., see docker --cpu-shares).
 
-##### `mem-request`
-- Type: string (optional)
-- Description: Memory resources requested for the satellite container (e.g., `200Mi`). Used to control the scheduling of nodes on workers and as a priority OOM killing level in case of memory exhaustion (e.g., see docker --memory-reservation).
-
-##### `cpu-limit`
-- Type: string (optional)
-- Description: CPU resources limit for the satellite container (e.g., `200m` for 0.2 CPU core). Used to cap the maximum CPU usage of the container (similar to Kubernetes CPU limits).
-
-##### `mem-limit`
-- Type: string (optional)
-- Description: Memory resources limit for the satellite container (e.g., `400Mi`). Used to cap the maximum memory usage of the container (similar to Kubernetes memory limits).
-
-##### `subnet_cidr`
-- Type: string (CIDR notation, optional)  
-- Description: Internal IP subnet assigned to the satellite node. The subnet must be at least a `/30`. The last usable IP address within this subnet is assigned to the node’s loopback interface and is used for routing over the L2/VXLAN network fabric. If this field is omitted, no internal subnet is assigned to the node.
-
-##### `L3-config`
-- Type: object (optional)  
-- Description: Per-node Layer-3 configuration overrides.  
-- Fields: use the same fields and semantics as `L3-config-common`.
-
----
-
-#### `grounds`
-Defines the set of ground station nodes connected to the constellation.  
-Ground stations use the same fields and semantics as satellites.
-
----
-
-#### `users`
-Defines the set of user nodes connected to the constellation.  
-Users use the same fields and semantics as satellites.
-
----
-### Example
-
-```json  
-{
-  "L3-config-common": {
-    "enable-netem"  : true,
-    "enable-routing" : true,
-    "routing-module": "extra.isis",
-    "isis-area-id": "0001",
-    "auto-assign-ips": true,
-    "auto-assign-cidr": "192.168.0.0/16"
-  },
-  "epoch-config": {
-    "epoch-dir": "examples/10nodes/constellation-epochs",
-    "file-pattern": "NetSatBench-epoch*.json"
-  },
-  "satellites": {
-    "sat1": {
-      "image": "msvcbench/sat-container:latest",
-      "cpu-request": "100m",
-      "mem-request": "200Mi",
-      "cpu-limit": "200m",
-      "mem-limit": "400Mi"
-    }
-  },
-  "grounds": {
-    "grd1": {
-      "image": "msvcbench/sat-container:latest",
-      "cpu-request": "100m",
-      "mem-request": "200Mi",
-      "cpu-limit": "200m",
-      "mem-limit": "400Mi"
-    }
-  },
-  "users": {
-    "usr1": {
-      "image": "msvcbench/sat-container:latest",
-      "cpu-request": "100m",
-      "mem-request": "200Mi",
-      "cpu-limit": "200m",
-      "mem-limit": "400Mi",
-      "subnet_cidr": "172.99.0.0/30",
-      "L3-config": {
-        "enable-netem": false,
-        "auto-assign-ips": false
-      }
-    }
-  }
-}
-```
 ---
 ## Epoch Configuration File 
 
 ### Overview
 
-An epoch configuration file defines:
+An epoch configuration file defines dynamic events that modify the constellation state at specific emulation times.
+Each epoch file can specify:
 
 - The relative emulation time at which the epoch is applied  
 - Links to be added between emulated nodes  
@@ -381,6 +436,47 @@ Empty arrays or empty objects indicate that no action of that type is performed 
 
 ---
 
+### Example
+
+```json  
+{  
+  "time": "2024-06-01T12:02:00Z",  
+
+  "links-add": [  
+    {  
+      "endpoint1": "usr1",  
+      "endpoint2": "sat2",  
+      "rate": "50mbit",  
+      "loss": 0,  
+      "delay": "5ms"  
+    }  
+  ],  
+
+  "links-update": [  
+    {  
+      "endpoint1": "grd1",  
+      "endpoint2": "usr1",  
+      "rate": "20mbit",  
+      "delay": "10ms"  
+    }  
+  ],  
+
+  "links-del": [  
+    {  
+      "endpoint1": "usr1",  
+      "endpoint2": "sat1"  
+    }  
+  ],  
+
+  "run": {  
+    "grd1": [
+      "screen -dmS iperf_test iperf3 -s"  
+    ]  
+  }  
+}  
+```
+---
+
 ### Fields Description
 
 #### `time`
@@ -397,25 +493,25 @@ Defines a list of **new links** to be created between pairs of emulated nodes at
 
 Each entry describes a <u>bidirectional</u> Layer-2 overlay link implemented via a VXLAN tunnel between two emulated nodes.
 
-##### Fields
+#### `links-add` Fields
 
-- `endpoint1`  
+##### `endpoint1`  
   - Type: string  
   - Description: Logical name of the first endpoint (e.g., `sat1`, `grd1`).
 
-- `endpoint2`  
+##### `endpoint2`  
   - Type: string  
   - Description: Logical name of the second endpoint.
 
-- `rate`  
+##### `rate`  
   - Type: string  
   - Description: Link bandwidth, expressed using Linux tc syntax (e.g., `10mbit`).
 
-- `loss`  
+##### `loss`  
   - Type: number  
   - Description: Packet loss probability (percentage).
 
-- `delay`  
+##### `delay`  
   - Type: string  
   - Description: One-way link delay (e.g., `5ms`).
 
@@ -480,46 +576,7 @@ Each key represents the logical name of an emulated node, and its value is an or
 
 ---
 
-### Example
 
-```json  
-{  
-  "time": "2024-06-01T12:02:00Z",  
-
-  "links-add": [  
-    {  
-      "endpoint1": "usr1",  
-      "endpoint2": "sat2",  
-      "rate": "50mbit",  
-      "loss": 0,  
-      "delay": "5ms"  
-    }  
-  ],  
-
-  "links-update": [  
-    {  
-      "endpoint1": "grd1",  
-      "endpoint2": "usr1",  
-      "rate": "20mbit",  
-      "delay": "10ms"  
-    }  
-  ],  
-
-  "links-del": [  
-    {  
-      "endpoint1": "usr1",  
-      "endpoint2": "sat1"  
-    }  
-  ],  
-
-  "run": {  
-    "grd1": [  
-      "sleep 10",  
-      "screen -dmS iperf_test iperf3 -s"  
-    ]  
-  }  
-}  
-```
 
 ---
 
