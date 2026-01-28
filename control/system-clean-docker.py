@@ -163,7 +163,7 @@ def main():
             ssh_key = worker.get("ssh-key", "~/.ssh/id_rsa")
             remote_str = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
             sat_vnet = worker.get("sat-vnet", "sat-vnet")
-            sat_vnet_supercidr = worker.get("sat-vnet-supernet", "172.0.0.0/8")
+            sat_vnet_supercidr = worker.get("sat-vnet-super-cidr", "172.0.0.0/8")
             log.info(f"🧹 Cleaning worker {worker_name} at {ssh_ip}")
             
             # Verify connectivity

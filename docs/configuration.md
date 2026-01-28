@@ -50,7 +50,7 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
       "ssh-key": "<path-to-private-key>",
       "sat-vnet": "<bridge-name>",
       "sat-vnet-cidr": "<container-subnet>",
-      "sat-vnet-supernet": "<containers-supernet>",
+      "sat-vnet-super-cidr": "<containers-supernet>",
       "cpu": "<num-cpu-cores>",
       "mem": "<memory-available>"
     }
@@ -68,7 +68,7 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
       "ssh-key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.100.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8",
+      "sat-vnet-super-cidr": "172.0.0.0/8",
       "cpu": "4",
       "mem": "6GiB"
     },
@@ -78,7 +78,7 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
       "ssh-key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
       "sat-vnet-cidr":"172.101.0.0/16",
-      "sat-vnet-supernet": "172.0.0.0/8",
+      "sat-vnet-super-cidr": "172.0.0.0/8",
       "cpu": "4",
       "mem": "6GiB"
     }
@@ -121,9 +121,9 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
 ##### `sat-vnet-cidr`
 
 * **Type**: string (CIDR notation)
-* **Description**: Underlay IP subnet assigned eth0 interfaces of containers deployed on the worker. Must be unique per worker and must be a subnet of `sat-vnet-supernet`.
+* **Description**: Underlay IP subnet assigned eth0 interfaces of containers deployed on the worker. Must be unique per worker and must be a subnet of `sat-vnet-super-cidr`.
 
-##### `sat-vnet-supernet`
+##### `sat-vnet-super-cidr`
 
 * **Type**: string (CIDR notation)
 * **Description**: Underlay supernet encompassing all worker container subnets. Used to configure IPTABLES rules for enabling direct IP routing between containers across workers without NAT; the underlying infrastructure must permit unrestricted connectivity within this range.
@@ -367,7 +367,7 @@ Each rule object:
 * `super-cidr`
 
   * **Type**: string (CIDR notation)
-  * **Description**: Base CIDR block used to allocate sequential /30 overlay subnets for nodes of the matched type. This CIDR must not overlap with underlay address space (e.g., worker `sat-vnet-supernet`) or host physical networks.
+  * **Description**: Base CIDR block used to allocate sequential /30 overlay subnets for nodes of the matched type. This CIDR must not overlap with underlay address space (e.g., worker `sat-vnet-super-cidr`) or host physical networks.
 
 ---
 

@@ -64,7 +64,7 @@ These entries are automatically created and managed by the `control/system-init-
   "ssh-key": "/home/ubuntu/.ssh/id_rsa",
   "sat-vnet": "sat-vnet",
   "sat-vnet-cidr": "172.100.0.0/16",
-  "sat-vnet-supernet": "172.0.0.0/8",
+  "sat-vnet-super-cidr": "172.0.0.0/8",
   "cpu": "4",
   "mem": "6GiB"
 }

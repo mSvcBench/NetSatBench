@@ -10,13 +10,13 @@
 
 </div>
 
-**NetSatBench** is a distributed emulation framework for evaluating communication and application workloads over large-scale satellite constellations.
+**NetSatBench** is a distributed emulation framework for evaluating communication and application workloads over large-scale satellite systems.
 
 Emulated systems consist of satellites, ground stations, and user terminals, each implemented as a **Linux container** and distributed across a cluster of bare-metal or virtual machines. This design enables a high degree of parallelism and scalability.  
 
-The satellite network is implemented as an **overlay Layer-2 fabric** whose connections (satellite-to-satellite, satellite-to-ground, etc.) are **VXLAN** tunnels.  Their lifecycle and performance characteristics (e.g., latency, bandwidth, loss) follow those of the connections in the constellation under consideration in real time.  
+The satellite network is implemented as an **overlay Layer-2 fabric** whose connections (satellite-to-satellite, satellite-to-ground, etc.) are **VXLAN** tunnels.  Their lifecycle and performance characteristics (e.g., latency, bandwidth, loss) follow those of the connections in the satellite system under consideration in real time.  
 
-NetSatBench is **layer 3 and application agnostic**: any routing protocol (e.g., OSPF, BGP, IS-IS), addressing scheme, or user-defined application can be evaluated without modification on the emulated constellation. However, automatic IP addressing, an ideal *oracle-routing* protocol, and real IS-IS routing are supported out of the box, if desired.
+NetSatBench is **layer 3 and application agnostic**: any routing protocol (e.g., OSPF, BGP, IS-IS), addressing scheme, or user-defined application can be evaluated without modification on the emulated satellite system. However, automatic IP addressing, an ideal *oracle-routing* protocol, and real IS-IS routing are supported out of the box, if desired.
 
 ---
 
@@ -37,14 +37,12 @@ resource requirements (requests and limits) specified for each emulated node.
 
 ### Distributed Control
 
-The global state of the emulated constellation is continuously maintained in a
+The global state of the satellite system is continuously maintained in a
 distributed **Etcd** key–value store, which acts as the coordination backbone of
-NetSatBench. Information about nodes, links, and scheduled tasks is published to
-Etcd, while each emulated node runs an internal `sat-agent` that subscribes to the
-relevant portions of the store.
-
-Based on these updates, each `sat-agent` enforces the desired local state, such as
-creating, deleting, or updating links, and executing requested tasks.
+NetSatBench. State information describing nodes, links, and scheduled tasks is
+published to **Etcd**. Each emulated node runs a local sat-agent that subscribes
+to the relevant portions of the store and translates state changes into local
+actions, such as link reconfiguration or task execution.
 
 ---
 
@@ -52,7 +50,7 @@ creating, deleting, or updating links, and executing requested tasks.
 
 Node-to-node links, including inter-satellite links (ISLs) and satellite-to-ground
 links (SGLs), are modeled as VXLAN tunnels that are dynamically created and managed
-by each node’s `sat-agent` according to the constellation state stored in Etcd.
+by each node’s `sat-agent` according to the system state stored in **Etcd**.
 
 This overlay fabric provides transparent Layer-2 connectivity among emulated
 nodes, independently of their physical placement within the cluster.
@@ -67,16 +65,14 @@ the routing daemon or performing custom routing actions over the VXLAN fabric.
 
 A built-in IS-IS routing module for FRR is provided
 (see `sat-container/extra/isis.py`), serving both as a reference implementation
-and as an example of how routing logic can be integrated with the `sat-agent`.
+and as an example of how custom routing logic can be integrated with the `sat-agent`.
 
 ---
 
 ### Automatic IP Addressing and Built-in Name Resolution
 
-NetSatBench can optionally assign IP addresses automatically to all emulated
-nodes. When this feature is enabled, the `/etc/hosts` file of each container is
-automatically populated with the names and IP addresses of all nodes in the
-constellation, enabling name resolution without requiring a dedicated DNS server.
+NetSatBench can optionally assign overlay IP addresses automatically to all emulated
+nodes, which are routed over the VXLAN fabric. When this feature is enabled, the `/etc/hosts` file of each container is automatically populated with the names and overlay IP addresses of all nodes, enabling name resolution without requiring a dedicated DNS server.
 
 ---
 
@@ -84,11 +80,9 @@ constellation, enabling name resolution without requiring a dedicated DNS server
 
 User-defined applications and tasks can be executed on any node at specific times
 during the emulation, as specified in epoch files. The container image used for
-each emulated node (see [sat-container/Dockerfile](sat-container/Dockerfile)) is based on `python:3.11-slim`
-and includes additional networking utilities.
+each emulated node (see [sat-container/Dockerfile](sat-container/Dockerfile)) uses the Debian-based  `python:3.11-slim` and also includes ping, tcpdump and iperf3 networking utilities.
 
-Additional software can be installed dynamically by scheduling `apt-get` tasks,
-followed by tasks that execute the newly installed applications.
+Additional software can be installed dynamically by scheduling software installation (e.g., `apt-get`) tasks, followed by tasks that execute the newly installed applications.
 
 ---
 
@@ -103,7 +97,7 @@ scenarios.
 ## 📁 Repository Structure
 
 **control/**  
-Python scripts implementing constellation-wide orchestration, including cluster configuration and run-time control of constellation evolution.
+Python scripts implementing orchestration functions, including cluster configuration and run-time control of the evolution of the satellite system.
 
 **sat-container/**  
 Software used to build the container image for each emulated node of the satellite system.
@@ -115,11 +109,11 @@ Sample emulated satellite systems used for validation and benchmarking. Configur
 Utility scripts for analysis, routing and data processing.
 
 **docs/**  
-Documentation assets, including images, diagrams, and architectural descriptions.
+Documentation files, including:
 - [Control Commands](docs/commands.md) — detailed description of the control scripts available in the `control/` directory.
-- [Configuration Files](docs/configuration.md) — how to customize JSON files describing the computing system (`worker-config.json`), static data of the constellation (`sat-config.json`), and dynamic constellation behavior (epoch files).
-- [Etcd Key-Value Store](docs/etcd.md) — structure and organization of the Etcd key-value store used for constellation state management.
-- [Routing Interface](docs/routing-interface.md) — specification of the routing module interface
+- [Configuration Files](docs/configuration.md) — how to customize JSON files describing the computing system (`worker-config.json`), static data of the satellite system (`sat-config.json`), and dynamic satellite system behavior (epoch files).
+- [Etcd Key-Value Store](docs/etcd.md) — structure and organization of the Etcd key-value store used for satellite system state management.
+- [Routing Interface](docs/routing-interface.md) — specification of the routing module interface.
 - [Utils](docs/utils.md) — description of the utility scripts available in the `utils/` directory, including:
     - [constellation-exec](utils/constellation-exec.py), a simplified CLI for executing bash commands within emulated nodes regardless of their working host, similar to the `docker exec` syntax.  
     - [oracle-routing](utils/oracle-routing.py), an ideal L3 shortest path routing with optional drain-before-break functinality.
@@ -141,7 +135,7 @@ In our experiments, we used OpenStack virtual machines running Ubuntu 24.04.
 
 > **No IP Spoofing**  
 > VXLAN tunnels use the IP addresses of the containers’ `eth0` interfaces as tunnel endpoints. Therefore, the underlying network must allow direct IP connectivity between container subnets (`sat-vnet`) across different worker hosts, without IP spoofing protection mechanisms.  
-> In cloud environments, this implies that security policies applied to host interfaces must allow unrestricted traffic among all container subnets (`sat-vnet-supernet`).
+> In cloud environments, this implies that security policies applied to host interfaces must allow unrestricted traffic among all container subnets (`sat-vnet-super-cidr`).
 
 ---
 
@@ -180,24 +174,25 @@ The cluster consists of two workers, `host-1` and `host-2`, defined in [`workers
 
 The emulated system includes 8 satellites, 1 ground station and 1 user, as defined in [`sat-config.json`](examples/10nodes/sat-config.json). IP addressing is automatically managed and IS-IS routing is used for L3 connectivity.
 
-Constellation dynamics (link creation, updates, removal, and task execution) are specified through epoch files located in [`examples/10nodes/constellation-epochs`](examples/10nodes/constellation-epochs). The ground station `gdr1` run an `iperf3` server starting at the initial epoch.
+The dynamic evolution of the satellite system (link creation, updates, removal, and task execution) is specified through epoch files located in [`examples/10nodes/constellation-epochs`](examples/10nodes/constellation-epochs). The ground station `gdr1` run an `iperf3` server starting at the initial epoch.
 
 ### 1. Customize Configuration
 - Mandatory - Edit `workers-config.json` to specify worker IP addresses and SSH parameters.
-- Optional - Edit `sat-config.json` to customize static constellation parameters (e.g., node names, container images, etc.).
-- Optional - Edit epoch files in `constellation-epochs/` to modify dynamic constellation parameters such as link creation, updates, removal, and task scheduling.
+- Optional - Edit `sat-config.json` to customize static satellite system parameters (e.g., node names, container images, etc.).
+- Optional - Edit epoch files in `constellation-epochs/` to modify dynamic satellite system parameters such as link creation, updates, removal, and task scheduling.
 
 ### 2. Cluster Initialization
 From the control host, configure the environment variables necessary to access the Etcd store:
 ```bash
 export ETCD_HOST="10.0.1.215" # IP address of the control host, where Etcd runs. Change as needed.
 export ETCD_PORT="2379" # Default Etcd client port. Change as needed.
-
+```
+If **Etcd** authentication or TLS is enabled, set the following optional parameters:
+```bash
 # Optional authentication parameters:
 export ETCD_USER="username" # Etcd username, if authentication is enabled. Change as needed.
 export ETCD_PASSWORD="password" # Etcd password, if authentication is enabled. Change as needed.
 export ETCD_CA_CERT="/path/to/ca.crt" # Path to Etcd CA certificate, if TLS is enabled. Change as needed.
-
 ```
 
 Initialize the workers' network and computing environment to prepare them for hosting emulated nodes:
@@ -206,14 +201,16 @@ python3 control/system-init-docker.py --config ./examples/10nodes/workers-config
 ```
 
 ### 3. Initialize, Deploy and Run the Emulated Satellite System
-Execute the `constellation-init.py` script to push the *static* information of constellation in the Etcd key-value store:
+Execute the `constellation-init.py` script to push the *static* information of satellite system in the Etcd key-value store:
 ```bash
 python3 control/constellation-init.py --config ./examples/10nodes/sat-config.json
 ```
+
 Then, execute the `constellation-deploy.py` script to deploy the containers of satellite nodes across the cluster:
 ```bash
 python3 control/constellation-deploy.py
 ```
+
 Finally, execute the `constellation-run.py` script to start the emulation by applying *dynamic* configurations related on links and tasks based on the epoch files.
 ```bash
 python3 control/constellation-run.py --loop-delay 60
