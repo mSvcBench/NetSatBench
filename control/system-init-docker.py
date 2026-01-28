@@ -169,9 +169,9 @@ def main():
 
     workers = get_prefix_data('/config/workers/')
     for worker_name, worker in workers.items():
-        ssh_user = worker.get('ssh_user', 'ubuntu')
+        ssh_user = worker.get('ssh-user', 'ubuntu')
         ssh_ip = worker.get('ip', worker_name)
-        ssh_key = worker.get('ssh_key', '~/.ssh/id_rsa')
+        ssh_key = worker.get('ssh-key', '~/.ssh/id_rsa')
         ssh_interface_name = interface_from_ip_ssh(ssh_user, ssh_ip, ssh_key, worker.get('ip', worker_name))
         sat_vnet_cidr = worker.get('sat-vnet-cidr', None)
         sat_vnet = worker.get('sat-vnet', 'sat-vnet')
@@ -186,6 +186,7 @@ def main():
                         shell=True, check=True)
         except subprocess.CalledProcessError as e:
             log.error(f"    ❌ Failed to connect to worker {worker_name} at {ssh_ip}: {e}")
+            continue
 
         # === Create or verify Docker network remotely ===
         inspect_cmd = f"ssh {remote_str} docker network inspect {sat_vnet}"
@@ -237,9 +238,9 @@ def main():
             forwarded = run(forward_cmd)
             if forwarded.returncode != 0:
                 log.error(f"    ❌ Failed to enable DOCKER-USER iptables rule."
-                    f"CMD: {forward_cmd}\n"
-                    f"STDOUT:\n{forwarded.stdout}\n"
-                    f"STDERR:\n{forwarded.stderr}")
+                    f"\t\tCMD: {forward_cmd}\n"
+                    f"\t\tSTDOUT:\n{forwarded.stdout}\n"
+                    f"\t\tSTDERR:\n{forwarded.stderr}")
             else:
                 log.info(f"    ✅ DOCKER-USER iptables rule enabled successfully.")
 
@@ -249,9 +250,9 @@ def main():
         default_interface_result = run(default_interface_cmd)
         if default_interface_result.returncode != 0:
             log.error(f"    ❌ Failed to discover default interface on worker {worker_name}, using fallback eth0."
-                f"CMD: {default_interface_cmd}\n"
-                f"STDOUT:\n{default_interface_result.stdout}\n"
-                f"STDERR:\n{default_interface_result.stderr}")
+                f"\t\tCMD: {default_interface_cmd}\n"
+                f"\t\tSTDOUT:\n{default_interface_result.stdout}\n"
+                f"\t\tSTDERR:\n{default_interface_result.stderr}")
             default_interface = "eth0"  # fallback
         else:
             default_interface = default_interface_result.stdout.strip()
@@ -274,9 +275,9 @@ def main():
             nat_added = run(nat_add_cmd)
             if nat_added.returncode != 0:
                 log.error(f"    ❌ Failed to add POSTROUTING iptables NAT rule."
-                    f"CMD: {nat_add_cmd}\n"
-                    f"STDOUT:\n{nat_added.stdout}\n"
-                    f"STDERR:\n{nat_added.stderr}")
+                    f"\t\tCMD: {nat_add_cmd}\n"
+                    f"\t\tSTDOUT:\n{nat_added.stdout}\n"
+                    f"\t\tSTDERR:\n{nat_added.stderr}")
             else:
                 log.info(f"    ✅ POSTROUTING iptables NAT rule added successfully.")
 
@@ -294,12 +295,13 @@ def main():
             routed = run(route_cmd)
             if routed.returncode != 0:
                 log.error(f"    ❌ Failed to add route to {other_worker_name}."
-                    f"CMD: {route_cmd}\n"
-                    f"STDOUT:\n{routed.stdout}\n"
-                    f"STDERR:\n{routed.stderr}")
+                    f"\t\tCMD: {route_cmd}\n"
+                    f"\t\tSTDOUT:\n{routed.stdout}\n"
+                    f"\t\tSTDERR:\n{routed.stderr}")
             else:
                 log.info(f"    ✅ IP route to containers in {other_worker_name} added successfully")
     log.info("👍 All workers configured successfully.")
+    log.info("ℹ️ Proceed with constellation-init.py to upload constellation configuration to Etcd.")
         
 
 if __name__ == "__main__":

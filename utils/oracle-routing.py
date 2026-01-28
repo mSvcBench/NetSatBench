@@ -216,7 +216,7 @@ def compute_routes_single_epoch(
     route_string: Dict[int, str] = {}   # keys are src_idx (int), values are route cmd strings
     for target_node in node_to_route:
         if target_node not in node_map:
-            log.warning(f"⚠️ Node '{target_node}' not found in configuration, skipping routing.")
+            log.warning(f"\t ⚠️ Node '{target_node}' not found in configuration, skipping routing.")
             continue
         target_idx = node_map[target_node]
         for src_idx in range(num_nodes):
@@ -228,12 +228,12 @@ def compute_routes_single_epoch(
                 continue  # no change in next hops, skip
             previous_next_hops.setdefault(src_idx, {})[target_idx] = next_hops
             if not next_hops:
-                log.warning(f"⚠️ No path from {inv_node_map[src_idx]} to {target_node}, skipping.")
+                log.warning(f"\t ⚠️ No path from {inv_node_map[src_idx]} to {target_node}, skipping.")
                 continue
 
             dst_ip = ip_map.get(target_node, "UNKNOWN")
             if dst_ip == "UNKNOWN":
-                log.warning(f"⚠️ No IP found for target node '{target_node}', skipping route entry.")
+                log.warning(f"\t ⚠️ No IP found for target node '{target_node}', skipping route entry.")
                 continue
 
             if src_idx not in route_string:
@@ -251,7 +251,7 @@ def compute_routes_single_epoch(
             # Primary (lowest metric)
             cmd1 = mk_cmd(next_hops[0], metric=100)
             if not cmd1:
-                log.warning(f"⚠️ Missing IP for primary next hop from {inv_node_map[src_idx]} to {target_node}, skipping.")
+                log.warning(f"\t ⚠️ Missing IP for primary next hop from {inv_node_map[src_idx]} to {target_node}, skipping.")
                 continue
             route_string[src_idx] = route_string[src_idx] + "; " + cmd1
 
@@ -277,7 +277,7 @@ def compute_routes_single_epoch(
             run.append(routes)
             new_epoch_data["run"][src_name] = run
     except ValueError as ve:
-        log.warning(f"⚠️ Error parsing time '{new_epoch_data['time']}': {ve}")
+        log.warning(f"\t ⚠️ Error parsing time '{new_epoch_data['time']}': {ve}")
     return new_epoch_data
 
 def compute_routes(etcd_client, 
@@ -290,87 +290,112 @@ def compute_routes(etcd_client,
                    link_creation_offset: int
                    ) -> None:
 
-    # Load configuration and build node_map (same logic you already have)
-    log.info("📁 Loading configuration from etcd...")
-    satellites = get_prefix_data(etcd_client, "/config/satellites")
-    if not satellites:
-        raise ValueError("No /config/satellites found in Etcd.")
-    users = get_prefix_data(etcd_client, "/config/users")
-    if not users:
-        raise ValueError("No /config/users found in Etcd.")
-    grounds = get_prefix_data(etcd_client, "/config/grounds")
-    if not grounds:
-        raise ValueError("No /config/grounds found in Etcd.")
-    log.info(f"🔎 Found {len(satellites)} satellites, {len(users)} users, {len(grounds)} ground stations in configuration.")
+    try:
+        # Load configuration and build node_map (same logic you already have)
+        log.info("📁 Loading configuration from etcd...")
+        nodes = get_prefix_data(etcd_client, "/config/nodes")
+        log.info(f"🔎 Found {len(nodes)} nodes in configuration.")
+        log.info(f"ℹ️ Node type to route: {node_type_to_route}")
 
-    node_map: dict[str, int] = {}
-    idx = 0
-    for name in satellites.keys():
-        node_map[name] = idx; idx += 1
-    for name in users.keys():
-        node_map[name] = idx; idx += 1
-    for name in grounds.keys():
-        node_map[name] = idx; idx += 1
-    
-    ip_map: dict[str, str] = {}
-        ## Configure /etc/hosts entries for all known satellites/grounds/users
-    log.info("📝 Loading /etchosts from etcd for satellites, grounds and users IP addressing...")
-    prefix = "/config/etchosts/"
-    for value, meta in etcd_client.get_prefix(prefix):
-        node_name = meta.key.decode().split('/')[-1]
-        ip_addr = value.decode().strip()
-        if ip_addr:
-            ip_map[node_name] = ip_addr
+        node_map: dict[str, int] = {}
+        idx = 0
+        node_to_route = []
+        for name, node_info in nodes.items():
+            node_map[name] = idx; idx += 1
+            if node_info.get("type") in node_type_to_route or "any" in node_type_to_route:
+                node_to_route.append(name)
+        
+        ip_map: dict[str, str] = {}
+            ## Configure /etc/hosts entries for all known satellites/grounds/users
+        prefix = "/config/etchosts/"
+        for value, meta in etcd_client.get_prefix(prefix):
+            node_name = meta.key.decode().split('/')[-1]
+            ip_addr = value.decode().strip()
+            if ip_addr:
+                ip_map[node_name] = ip_addr
 
-    inv_node_map = {i: name for name, i in node_map.items()}
-    num_nodes = len(node_map)
-    if num_nodes == 0:
-        raise ValueError("Configuration has 0 nodes.")
-    
-    # build node_to_route as set by adding all nodes of the node_to_route classes
-    log.info(f"Node class to route: {node_type_to_route}")
-    if node_type_to_route:
-        if "satellites" in node_type_to_route or "all" in node_type_to_route:
-            for name in satellites.keys():
-                if name not in node_to_route:
-                    node_to_route.append(name)
-        if "users" in node_type_to_route or "all" in node_type_to_route:
-            for name in users.keys():
-                if name not in node_to_route:
-                    node_to_route.append(name)
-        if "grounds" in node_type_to_route or "all" in node_type_to_route:
-            for name in grounds.keys():
-                if name not in node_to_route:
-                    node_to_route.append(name)
-    # remove empty strings
-    node_to_route = [n for n in node_to_route if n]
-    # remove duplicates
-    node_to_route = list(set(node_to_route))
-    log.info(f"🛣️ Computing routes to the following nodes: {node_to_route}")
-          
-    # ---------------------------
-    # A as a sparse adjacency matrix
-    # - Use LIL while mutating (fast incremental set)
-    # - Convert to CSR when running graph algorithms (fast traversal)
-    # ---------------------------
-    A_lil = lil_matrix((num_nodes, num_nodes), dtype="uint8")  # 0/1 adjacency
-    unnumbered_file_pattern = file_pattern.replace("*", "??????")
-    epoch_files = list_epoch_files(epoch_dir, file_pattern)
-    log.info(f"🔎 Found {len(epoch_files)} epoch files to process.")
-    if not epoch_files:
-        raise FileNotFoundError(f"No epoch files found in '{epoch_dir}' with pattern '{file_pattern}'")
+        inv_node_map = {i: name for name, i in node_map.items()}
+        num_nodes = len(node_map)
+        if num_nodes == 0:
+            raise ValueError("Configuration has 0 nodes.")
+        
+        log.info(f"🛣️ Computing routes ...")    
+        # ---------------------------
+        # A as a sparse adjacency matrix
+        # - Use LIL while mutating (fast incremental set)
+        # - Convert to CSR when running graph algorithms (fast traversal)
+        # ---------------------------
+        A_lil = lil_matrix((num_nodes, num_nodes), dtype="uint8")  # 0/1 adjacency
+        unnumbered_file_pattern = file_pattern.replace("*", "??????")
+        epoch_files = list_epoch_files(epoch_dir, file_pattern)
+        log.info(f"\t 🔎 Found {len(epoch_files)} epoch files to process.")
+        if not epoch_files:
+            raise FileNotFoundError(f"\t No epoch files found in '{epoch_dir}' with pattern '{file_pattern}'")
 
-    # Basic stats
-    num_epochs = 0
-
-    previous_next_hops: Dict[int,Dict[int,list]] = {} # keys are src_idx (int) and target_node (int), values are next_hops tupla
-    file_counter = 1
-    for path in epoch_files:
-        with open(path, "r", encoding="utf-8") as f:
-            epoch_data = json.load(f)
-        log.info(f"💾 Processing epoch file: {path} (time: {epoch_data.get('time','UNKNOWN')})")
+        # Basic stats
+        num_epochs = 0
+        previous_next_hops: Dict[int,Dict[int,list]] = {} # keys are src_idx (int) and target_node (int), values are next_hops tupla
+        file_counter = 1
+        for path in epoch_files:
+            with open(path, "r", encoding="utf-8") as f:
+                epoch_data = json.load(f)
+            log.info(f"\t 💾 Processing epoch file: {path} (time: {epoch_data.get('time','UNKNOWN')})")
+            if drain_before_break_offset > 0:
+                # Create drain-before-break epoch first
+                dbb_epoch_data = compute_routes_single_epoch(
+                    epoch_data = epoch_data,
+                    node_map = node_map,
+                    A_lil = A_lil,
+                    node_to_route = node_to_route,
+                    previous_next_hops = previous_next_hops,
+                    drain_before_break = True,
+                    offset_seconds = drain_before_break_offset,
+                    num_nodes = num_nodes,
+                    inv_node_map = inv_node_map,
+                    ip_map = ip_map
+                )
+                if dbb_epoch_data['run'] != {}:
+                    file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
+                    file_counter+=1
+                    out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
+                        # Write out new epoch file with routes added
+                    with open(out_epoch_path, "w", encoding="utf-8") as f_out:
+                        json.dump(dbb_epoch_data, f_out, indent=2)
+            
+            # Add original epoch
+            file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
+            file_counter+=1
+            out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
+            with open(out_epoch_path, "w", encoding="utf-8") as f_out:
+                json.dump(epoch_data, f_out, indent=2)
+            
+            # Add routes to original epoch
+            new_epoch_data = compute_routes_single_epoch(
+                epoch_data = epoch_data,
+                node_map = node_map,
+                A_lil = A_lil,
+                node_to_route = node_to_route,
+                previous_next_hops = previous_next_hops,
+                drain_before_break = False,
+                offset_seconds = -link_creation_offset,
+                num_nodes = num_nodes,
+                inv_node_map = inv_node_map,
+                ip_map = ip_map
+            )
+            file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
+            file_counter+=1
+            out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
+            with open(out_epoch_path, "w", encoding="utf-8") as f_out:
+                json.dump(new_epoch_data, f_out, indent=2)
+            num_epochs += 1
+            if num_epochs % 10 == 0:
+                log.info(f"\t … processed {num_epochs}/{len(epoch_files)} epochs; ")            
+        
+        # For drain before break add additional epochs to support loop runs
         if drain_before_break_offset > 0:
-            # Create drain-before-break epoch first
+            path = epoch_files[0] # first epoch
+            with open(path, "r", encoding="utf-8") as f:
+                epoch_data = json.load(f)
             dbb_epoch_data = compute_routes_single_epoch(
                 epoch_data = epoch_data,
                 node_map = node_map,
@@ -383,66 +408,14 @@ def compute_routes(etcd_client,
                 inv_node_map = inv_node_map,
                 ip_map = ip_map
             )
-            if dbb_epoch_data['run'] != {}:
-                file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
-                file_counter+=1
-                out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
-                    # Write out new epoch file with routes added
-                with open(out_epoch_path, "w", encoding="utf-8") as f_out:
-                    json.dump(dbb_epoch_data, f_out, indent=2)
-        
-        # Add original epoch
-        file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
-        file_counter+=1
-        out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
-        with open(out_epoch_path, "w", encoding="utf-8") as f_out:
-            json.dump(epoch_data, f_out, indent=2)
-        
-        # Add routes to original epoch
-        new_epoch_data = compute_routes_single_epoch(
-            epoch_data = epoch_data,
-            node_map = node_map,
-            A_lil = A_lil,
-            node_to_route = node_to_route,
-            previous_next_hops = previous_next_hops,
-            drain_before_break = False,
-            offset_seconds = -link_creation_offset,
-            num_nodes = num_nodes,
-            inv_node_map = inv_node_map,
-            ip_map = ip_map
-        )
-        file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
-        file_counter+=1
-        out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
-        with open(out_epoch_path, "w", encoding="utf-8") as f_out:
-            json.dump(new_epoch_data, f_out, indent=2)
-        num_epochs += 1
-        if num_epochs % 10 == 0:
-            log.info(f"… processed {num_epochs}/{len(epoch_files)} epochs; ")            
-    
-    # For drain before break add additional epochs to support loop runs
-    if drain_before_break_offset > 0:
-        path = epoch_files[0] # first epoch
-        with open(path, "r", encoding="utf-8") as f:
-            epoch_data = json.load(f)
-        dbb_epoch_data = compute_routes_single_epoch(
-            epoch_data = epoch_data,
-            node_map = node_map,
-            A_lil = A_lil,
-            node_to_route = node_to_route,
-            previous_next_hops = previous_next_hops,
-            drain_before_break = True,
-            offset_seconds = drain_before_break_offset,
-            num_nodes = num_nodes,
-            inv_node_map = inv_node_map,
-            ip_map = ip_map
-        )
-        file_counter = 0
-        file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
-        out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
-        # Write out new epoch file with routes added
-        with open(out_epoch_path, "w", encoding="utf-8") as f_out:
-            json.dump(dbb_epoch_data, f_out, indent=2)
+            file_counter = 0
+            file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
+            out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
+            # Write out new epoch file with routes added
+            with open(out_epoch_path, "w", encoding="utf-8") as f_out:
+                json.dump(dbb_epoch_data, f_out, indent=2)
+    except Exception as e:
+        raise e
 
 # ==========================================
 # MAIN
@@ -499,8 +472,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--node-type-to-route",
-        default="all",
-        help="Comma-separated list of node types to route [satellites, grounds, users, all] (default: all).",
+        default="any",
+        help="Comma-separated list of node types to route [e.g., satellite, ground, user, any] (default: any).",
     )
     parser.add_argument(
         "--drain-before-break-offset",
@@ -511,7 +484,7 @@ def main() -> int:
     parser.add_argument(
         "--link-creation-offset",
         type=int,
-        default=1,
+        default=2,
         help="Offset in seconds for route replacement after link creation (default: 2).",
     )
     parser.add_argument(
@@ -565,16 +538,22 @@ def main() -> int:
             log.error("❌ Please specify an empty output directory to proceed.")    
             return 3
         
-    compute_routes(
-        etcd_client = etcd_client,
-        epoch_dir = epoch_dir,
-        file_pattern = file_pattern,
-        out_epoch_dir=args.out_epoch_dir,
-        node_to_route = args.node_to_route.split(','),
-        node_type_to_route = args.node_type_to_route.split(','),
-        drain_before_break_offset = args.drain_before_break_offset,
-        link_creation_offset = args.link_creation_offset
-    )
+    try:
+        compute_routes(
+            etcd_client = etcd_client,
+            epoch_dir = epoch_dir,
+            file_pattern = file_pattern,
+            out_epoch_dir=args.out_epoch_dir,
+            node_to_route = args.node_to_route.split(','),
+            node_type_to_route = args.node_type_to_route.split(','),
+            drain_before_break_offset = args.drain_before_break_offset,
+            link_creation_offset = args.link_creation_offset
+        )
+    except Exception as e:
+        log.error(f"❌ Error during route computation: {e}")
+        return 1
+    log.info("👍 Route computation completed.")
+    log.info(f"👉 Processed epochs with routing info are in directory: {args.out_epoch_dir}")
     return 0
 
 

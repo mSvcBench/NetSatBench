@@ -25,6 +25,10 @@ log = logging.getLogger(__name__)
 # Helpers
 # --------------------------
 def run(cmd: str) -> subprocess.CompletedProcess:
+    """
+    Run a shell command and return the CompletedProcess.
+    Uses bash so you can pass a full command string.
+    """
     return subprocess.run(
         cmd,
         shell=True,
@@ -74,16 +78,6 @@ def iptables_delete_rule_loop(remote: str, rule_check: str, rule_delete: str) ->
             # if deletion failed, stop to avoid infinite loop
             log.warning(f"⚠️  Failed deleting iptables rule.\nCMD: {del_cmd}\nSTDERR:\n{out.stderr}")
             break
-
-
-def run_command(remote: str, cmd: str) -> None:
-    full = ssh(remote, cmd)
-    res = run(full)
-    if res.returncode != 0:
-        # "best effort": print warning but continue
-        msg = (res.stderr or res.stdout).strip()
-        if msg:
-            log.warning(f"⚠️  Command failed (continuing): {cmd}\n    {msg}")
 
 
 # --------------------------
@@ -164,26 +158,38 @@ def main():
     else:
         # 1) Remove routes (all-to-all)
         for worker_name, worker in workers.items():
-            ssh_user = worker.get("ssh_user", "ubuntu")
+            ssh_user = worker.get("ssh-user", "ubuntu")
             ssh_ip = worker.get("ip", worker_name)
-            ssh_key = worker.get("ssh_key", "~/.ssh/id_rsa")
+            ssh_key = worker.get("ssh-key", "~/.ssh/id_rsa")
             remote_str = f"{ssh_user}@{ssh_ip} -i {ssh_key}"
             sat_vnet = worker.get("sat-vnet", "sat-vnet")
             sat_vnet_supercidr = worker.get("sat-vnet-supernet", "172.0.0.0/8")
             log.info(f"🧹 Cleaning worker {worker_name} at {ssh_ip}")
+            
             # Verify connectivity
             try:
                 subprocess.run(f"ssh -o StrictHostKeyChecking=no -i {ssh_key} {ssh_user}@{ssh_ip} 'echo > /dev/null'", 
                             shell=True, check=True)
             except subprocess.CalledProcessError as e:
                 log.error(f"    ❌ Failed to connect to worker {worker_name} at {ssh_ip}: {e}")
+                continue
             
             # remove docker network
-            run_command(
-                remote_str,
-                f"sudo docker network rm {sat_vnet} || true"
-            )
-            log.info(f"    ✅ Docker network {sat_vnet} removed successfully.")
+            remote_cmd = f"ssh {remote_str} docker network inspect {sat_vnet}"
+            remote_cmd_res = run(remote_cmd)
+            if remote_cmd_res.returncode == 0:
+                # docker network exist, remove it
+                remote_cmd = f"ssh {remote_str} docker network rm {sat_vnet}"
+                remote_cmd_res = run(remote_cmd)
+                if remote_cmd_res.returncode != 0:
+                    log.error(
+                        "    ❌ Failed to remove existing remote docker network.\n"
+                        f"\t\tCMD: {remote_cmd}\n"
+                        f"\t\tSTDOUT: {remote_cmd_res.stdout}\n"
+                        f"\t\tSTDERR: {remote_cmd_res.stderr}"
+                    )
+                else:
+                    log.info(f"    ✅ Docker network {sat_vnet} removed successfully.")
 
             # remove routes to other workers' containers
             for other_name, other_worker in workers.items():
@@ -194,39 +200,71 @@ def main():
                 if not other_cidr:
                     continue
 
-                run_command(
-                    remote_str,
-                    f"sudo ip route del {other_cidr} via {other_ip} || true"
-                )
-                log.info(f"    ✅ IP route to containers in {other_name} removed succcesfully.")
+                remote_cmd = f"ssh {remote_str} sudo ip route del {other_cidr} via {other_ip}"
+                remote_cmd_res = run(remote_cmd)
+                if remote_cmd_res.returncode != 0:
+                    log.error(
+                         "    ❌ Failed to remove IP route to other worker's containers.\n"
+                        f"\t\tCMD: {remote_cmd}\n"
+                        f"\t\tSTDOUT: {remote_cmd_res.stdout}\n"
+                        f"\t\tSTDERR: {remote_cmd_res.stderr}"
+                    )
+                else:
+                    log.info(f"    ✅ IP route to containers in {other_name} removed successfully.")
 
             # cleaning iptables rules
             # inserted rule was: -I DOCKER-USER -s super -d super -j ACCEPT
             # delete all matches:
             rule_check = f"sudo iptables -C DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
-            rule_delete = f"sudo iptables -D DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
-            iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
-            log.info(f"    ✅ DOCKER-USER iptables rule removed successfully.")
-            
+            remote_cmd = f"ssh {remote_str} {rule_check}"
+            remote_cmd_res = run(remote_cmd)
+            if remote_cmd_res.returncode == 0:
+                # rule exists remove it
+                rule_delete = f"sudo iptables -D DOCKER-USER -s {sat_vnet_supercidr} -d {sat_vnet_supercidr} -j ACCEPT"
+                remote_cmd = f"ssh {remote_str} {rule_delete}"
+                remote_cmd_res = run(remote_cmd)
+                if remote_cmd_res.returncode != 0:
+                    log.error(
+                         "    ❌ Failed to remove DOCKER-USER iptables rule.\n"
+                        f"\t\tCMD: {remote_cmd}\n"
+                        f"\t\tSTDOUT: {remote_cmd_res.stdout}\n"
+                        f"\t\tSTDERR: {remote_cmd_res.stderr}"
+                    )
+                else:
+                    log.info(f"    ✅ DOCKER-USER iptables rule removed successfully.")
+
             # inserted rule was: -A POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE
             default_interface_cmd = f"ssh {remote_str} ip route show default | awk '/default/ {{print $5}}'"
             default_interface_result = run(default_interface_cmd)
             if default_interface_result.returncode != 0:
                 log.error(f"    ❌ Failed to discover default interface on worker {worker_name}, using fallback eth0."
-                    f"CMD: {default_interface_cmd}\n"
-                    f"STDOUT:\n{default_interface_result.stdout}\n"
-                    f"STDERR:\n{default_interface_result.stderr}")
+                          f"\t\tCMD: {default_interface_cmd}\n"
+                          f"\t\tSTDOUT: {default_interface_result.stdout}\n"
+                          f"\t\tSTDERR: {default_interface_result.stderr}")
                 default_interface = "eth0"  # fallback
             else:
                 default_interface = default_interface_result.stdout.strip()
             rule_check = f"sudo iptables -C POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
-            rule_delete = f"sudo iptables -D POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
-            iptables_delete_rule_loop(remote_str, rule_check, rule_delete)
-            log.info(f"    ✅ POSTROUTING iptables NAT rule removed successfully.")
-
+            remote_cmd = f"ssh {remote_str} {rule_check}"
+            remote_cmd_res = run(remote_cmd)
+            if remote_cmd_res.returncode == 0:
+                # rule exists remove it
+                rule_delete = f"sudo iptables -D POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE"
+                remote_cmd = f"ssh {remote_str} {rule_delete}"
+                remote_cmd_res = run(remote_cmd)
+                if remote_cmd_res.returncode != 0:
+                    log.error(
+                         "    ❌ Failed to remove POSTROUTING NAT iptables rule.\n"
+                        f"\t\tCMD: {remote_cmd}\n"
+                        f"\t\tSTDOUT: {remote_cmd_res.stdout}\n"
+                        f"\t\tSTDERR: {remote_cmd_res.stderr}"
+                    )
+                else:
+                    log.info(f"    ✅ POSTROUTING NAT iptables rule removed successfully.")
+            
     # 4) Remove ETCD keys that your script created/overwrote
-    log.info("✅ Removed /config/workers/ prefix")
     etcd_client.delete_prefix("/config/workers/")
+    log.info("✅ Removed /config/workers/ prefix")
     log.info("👍 Cleaning completed.")
 
 

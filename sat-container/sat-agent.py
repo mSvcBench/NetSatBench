@@ -81,39 +81,14 @@ def build_netem_opts(l):
 
     # One-argument netem options
     for key in [
+        "limit",
+        "delay",
         "rate",
         "loss",
-        "duplicate",
-        "corrupt",
     ]:
         val = l.get(key)
         if val not in (None, "", []):
             netem_opts[key] = val
-
-    # Delay can be multi-argument (delay + jitter + distribution)
-    delay = l.get("delay")
-    if delay not in (None, "", []):
-        delay_opts = [delay]
-
-        jitter = l.get("jitter")
-        if jitter not in (None, "", []):
-            delay_opts.append(jitter)
-
-            distribution = l.get("distribution")
-            if distribution not in (None, "", []):
-                delay_opts.extend(["distribution", distribution])
-
-        netem_opts["delay"] = delay_opts
-
-    # Reordering can be multi-argument
-    reorder = l.get("reorder")
-    if reorder not in (None, "", []):
-        gap = l.get("gap")
-        if gap not in (None, "", []):
-            netem_opts["reorder"] = [reorder, gap]
-        else:
-            netem_opts["reorder"] = reorder
-
     return netem_opts
 
 
@@ -287,41 +262,41 @@ def delete_vxlan_link(
 
 def apply_tc_settings(vxlan_if, netem_opts):
     """
-    Apply tc netem settings to an interface.
-
-    Parameters
-    ----------
-    vxlan_if : str
-        Interface name (e.g., vxlan100)
-    netem_opts : dict
-        Dictionary of netem options, e.g.:
-        {
-            "delay": "50ms",
-            "loss": "1%",
-            "rate": "10mbit",
-            "duplicate": "0.1%",
-            "reorder": "25% 50%",
-            "corrupt": "0.01%"
-        }
+    Apply tc netem settings to an interface, using:
+      - change if a netem root qdisc already exists
+      - add if no root qdisc exists
+      - replace (or del+add fallback) if a non-netem root exists
     """
+    if not netem_opts:
+        log.info(f" 🎛️ No netem options provided for {vxlan_if}, skipping tc.")
+        return
+    
     log.info(f"  🎛️ Applying TC netem on {vxlan_if}: {netem_opts}")
 
-    # Remove existing qdisc (ignore errors)
-    run(["tc", "qdisc", "del", "dev", vxlan_if, "root"], log_errors=False)
+    # Build netem command args (shared by add/change/replace)
+    netem_args = ["netem"]
+    if "rate" in netem_opts:
+        netem_args += ["rate", str(netem_opts["rate"])]
+    if "delay" in netem_opts:
+        netem_args += ["delay", str(netem_opts["delay"])]
+    if "loss" in netem_opts:
+        netem_args += ["loss", "random", str(netem_opts["loss"])]
+    if "limit" in netem_opts:
+        netem_args += ["limit", str(netem_opts["limit"])]
 
-    # Add new netem qdisc with specified options
-    cmd = ["tc", "qdisc", "add", "dev", vxlan_if, "root", "netem"]
-    for key, value in netem_opts.items():
-        if value is None:
-            continue
-        # Allow both scalar and multi-argument options
-        if isinstance(value, (list, tuple)):
-            cmd.append(key)
-            cmd.extend(str(v) for v in value)
-        else:
-            cmd.extend([key, str(value)])
-
-    run(cmd)
+    # --- Detect current root qdisc ---
+    # Expect your run() to return stdout as a string when capture_output=True
+    out = run(["tc", "qdisc", "show", "dev", vxlan_if], log_errors=False) or ""
+    
+    if "netem" in out.stdout:
+        # Fast path: existing netem root -> change options in place
+        cmd = ["tc", "qdisc", "change", "dev", vxlan_if, "root"] + netem_args
+        run(cmd)
+        return
+    else: 
+        cmd = ["tc", "qdisc", "add", "dev", vxlan_if, "root"] + netem_args
+        run(cmd)
+        return
 
 def process_link_action(etcd_client, event):
     try:
@@ -450,7 +425,7 @@ def watch_etchosts_loop():
                                     with open("/etc/hosts", "w") as f:
                                         f.write(hosts_content)
                                         f.write(f"{ip_addr}\t{node_name}\n")
-                                    log.info(f"✅ Updated /etc/hosts entry: {ip_addr} {node_name}")
+                                    log.info(f"✅  Updated /etc/hosts entry: {ip_addr} {node_name}")
                             except Exception as e:
                                 log.error(f"❌ Failed to update /etc/hosts for {node_name}: {e}")
                     elif isinstance(event, etcd3.events.DeleteEvent):

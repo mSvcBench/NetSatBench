@@ -45,7 +45,7 @@ A routing module compatible with NetSatBench must expose exactly the following f
 
 #### Invocation Time
 - Called once during node startup
-- Triggered after node configuration is available in etcd
+- Triggered after node configuration is available in Etcd
 
 #### Purpose
 This function initializes the routing subsystem for the node.
@@ -56,7 +56,7 @@ For instance, in case of FRR routing, this function may set up initial configura
 
 #### Expected Responsibilities
 Typical actions include:
-- Reading global and node-specific configuration from etcd
+- Reading global and node-specific configuration from Etcd
 - Assigning router identifiers or loopback addresses
 - Generating routing configuration files
 - Starting or restarting routing services

@@ -6,9 +6,9 @@
     "image": "msvcbench/sat-container:latest",
     "sidecars": [],
     "cpu-request": "100m",
-    "mem-request": "200Mi",
+    "mem-request": "200MiB",
     "cpu-limit": "200m",
-    "mem-limit": "400Mi",
+    "mem-limit": "400MiB",
     "L3-config": {
       "enable-netem"  : true,
       "enable-routing" : true,
@@ -76,9 +76,9 @@
       "type": "gateway",
       "n_antennas": 2,
       "cpu-request": "200m",
-      "mem-request": "400Mi",
+      "mem-request": "400MiB",
       "cpu-limit": "400m",
-      "mem-limit": "800Mi",
+      "mem-limit": "800MiB",
       "metadata": {
         "location": {
           "latitude": 37.4275,
@@ -104,7 +104,6 @@
         }
       },
       "L3-config": {
-        "enable-netem": false,
         "auto-assign-ips": false,
         "cidr": "172.99.0.0/30"
       }

@@ -230,9 +230,9 @@ def main():
                 continue
             future = executor.submit(
                 node_removal,
-                ssh_user=workers.get(worker, {}).get('ssh_user', 'ubuntu'),
+                ssh_user=workers.get(worker, {}).get('ssh-user', 'ubuntu'),
                 ssh_host=workers.get(worker, {}).get('ip', worker),
-                ssh_key=workers.get(worker, {}).get('ssh_key', '~/.ssh/id_rsa'),
+                ssh_key=workers.get(worker, {}).get('ssh-key', '~/.ssh/id_rsa'),
                 name=name, worker=worker
             )
             futures[future] = name

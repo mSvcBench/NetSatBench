@@ -142,9 +142,9 @@ def main():
         log.error(f"❌ Failed to parse worker '{worker_name}' configuration: {e}")
         sys.exit(1)
 
-    ssh_user = worker.get("ssh_user", "ubuntu")
+    ssh_user = worker.get("ssh-user", "ubuntu")
     worker_ip = worker.get("ip", worker_name)
-    ssh_key = worker.get("ssh_key", "~/.ssh/id_rsa")
+    ssh_key = worker.get("ssh-key", "~/.ssh/id_rsa")
     ssh_key = os.path.expanduser(ssh_key)
     
     if node_cfg.get("type") == "satellite":

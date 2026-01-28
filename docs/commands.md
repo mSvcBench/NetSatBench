@@ -39,6 +39,7 @@ For each worker defined in the configuration file, the script:
   - trusted host interface binding
 - Ensures packet forwarding is allowed via the `DOCKER-USER` iptables chain for the `sat-vnet-supernet`
 - Installs static IP routes so that containers running on different workers can reach each other **without NAT**
+- Enable NAT for outbound traffic to the Internet from within the containers
 
 The result is a fully connected **Layer-3 container-to-container network** across all workers, which serves as the substrate for creating VXLAN overlay tunnels used to emulate satellite links.
 
@@ -67,7 +68,7 @@ Run with `--help` to see the full list of available options.
 
 This Python script cleans up the emulation worker nodes by removing the Docker network and associated iptables rules created during initialization. It is intended to be executed when the emulation is no longer needed, to free up resources on the worker hosts.
 
-It is intended to be executed after the constellation has been torn down using the `control/constellation-rm.py` script.
+It is intended to be executed after the satellite system has been torn down using the `control/constellation-rm.py` script.
 
 ---
 
@@ -82,13 +83,11 @@ All parameters are optional since necessary information are retrieved from the d
 ## Constellation Initialization  
 `control/constellation-init.py`
 
-This Python script initializes the *static* information about the constellation (worker nodes, IP addresses, etc. ) in the **Etcd** key–value store based on a satellite configuration file (`sat-config.json`), as described in the configuration manual (see [configuration.md](configuration.md)).
+This Python script initializes the *static* information about the emulated satellite system (worker nodes, IP addresses, etc. ) in the **Etcd** key–value store based on a satellite configuration file (`sat-config.json`), as described in the configuration manual (see [configuration.md](configuration.md)).
 
-The script prepares all metadata required to deploy the constellation containers but does **not** start any containers.
+The script prepares all metadata required to deploy the node containers but does **not** start any containers.
 
-It is intended to be executed before deploying the constellation using the
-`control/constellation-deploy.py` script and after the worker nodes have been
-initialized using the `control/system-init-docker.py` script.
+It is intended to be executed before deploying the nodes of the satellite system using the `control/constellation-deploy.py` script and after the worker nodes have been initialized using the `control/system-init-docker.py` script.
 
 ---
 
@@ -96,9 +95,9 @@ initialized using the `control/system-init-docker.py` script.
 
 For each node defined in the configuration file, the script:
 
-- Automatically assigns overlay IP addresses and network masks to each node
-- Automatically selects worker hosts based on available resources
-- Stores per-node and global constellation metadata in Etcd for later consumption
+- Automatically selects worker hosts based on available resources.
+- Automatically assigns overlay IP addresses and network masks to each node.
+- Stores per-node static configuration data in **Etcd** for later consumption
   by other control scripts (e.g., `control/constellation-deploy.py`) and by
   `sat-agent` instances running inside the node containers
 
@@ -120,11 +119,11 @@ Run with `--help` to see the full list of available options.
 ## Constellation Deployment  
 `control/constellation-deploy.py`
 
-This Python script deploys the satellite constellation by creating and starting the necessary Docker containers on the worker hosts, based on the constellation state stored in **Etcd**. It is intended to be executed after the constellation has been initialized using the `control/constellation-init.py` script.
+This Python script deploys the satellite system by creating and starting the necessary Docker containers on the worker hosts, based on the system configuration stored in **Etcd**. It is intended to be executed after the satellite system has been initialized using the `control/constellation-init.py` script.
 
 ---
 ### What the Script Does
-For each node defined in the constellation state stored in Etcd, the script:
+For each node defined in the satellite system, the script:
 - Connects to the assigned worker host via SSH
 - Creates and starts a Docker container for the node with the appropriate resource limits and network configuration
 - Ensures that each container runs the `sat-agent` process to manage node lifecycle and be ready to contact **Etcd** for dynamic link management during emulation.
@@ -140,12 +139,11 @@ All parameters are optional since necessary information are retrieved from the d
 ## Constellation Execution
 `control/constellation-run.py`
 
-This Python script manages the *dynamic* information of the satellite constellation, such as links or commands, based on epoch files whose format is described in the configuration manual (see [configuration.md](configuration.md)). 
+This Python script manages the *dynamic* information of the satellite system, such as links or commands, based on epoch files whose format is described in the configuration manual (see [configuration.md](configuration.md)). 
 
-It is responsible for applying configuration changes, including link additions/removals and command execution within node containers, at the appropriate times during the emulation. It is intended to be executed after the constellation has been deployed using the `control/constellation-deploy.py` script.
+It is responsible for applying configuration changes, including link additions/removals and command execution within node containers, at the appropriate times during the emulation. It is intended to be executed after the satellite system has been deployed using the `control/constellation-deploy.py` script.
 
-It is intended to be executed after the constellation has been deployed using the `control/constellation-deploy.py` script.
-
+It is intended to be executed after the satellite system has been deployed using the `control/constellation-deploy.py` script.
 ---
 ### What the Script Does
 The script read epoch files from a specified directory and, for each epoch file:
@@ -159,7 +157,7 @@ The script can be configured to loop indefinitely over the epoch files, restarti
 
 The script can be configured to use a fixed wait time between epochs instead of synchronizing virtual time with real time (`--fixed-wait`).
 
-The script can be configured to work in an *interactive-mode* (`--interactive`), where it process only epoch file injected manually by the user in the epoch-queue directory instead of reading from a predefined epoch directory. In this case the script does not perform any time synchronization, simply processing each injected epoch file as soon as it appears in the queue directory. This mode is useful for **digital twin** scenarios where the user update constellation state at runtime.
+The script can be configured to work in an *interactive-mode* (`--interactive`), where it process only epoch file injected manually by the user in the epoch-queue directory instead of reading from a predefined epoch directory. In this case the script does not perform any time synchronization, simply processing each injected epoch file as soon as it appears in the queue directory. This mode is useful for **digital twin** scenarios where the user update satellite system state at runtime.
 
 ---
 ### Usage
@@ -172,7 +170,7 @@ All parameters are optional since necessary information are retrieved from the d
 
 ## Constellation Removal
 `control/constellation-rm.py`
-This Python script removes all constellation-related information from the **Etcd** key–value store and removes all Docker containers associated with the constellation. 
+This Python script removes all information related to the satellite system from the **Etcd** key–value store and removes all Docker containers. 
 
 It is intended to be executed when the emulation is no longer needed, to free up resources on the worker hosts.
 

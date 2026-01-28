@@ -240,8 +240,8 @@ def create_one_node(
         return name, False, f"❌ Unknown worker '{worker}' (node assigned to non-existing /config/workers entry)"
 
     worker_info = workers[worker]
-    ssh_user = worker_info.get('ssh_user', 'ubuntu')
-    ssh_key = worker_info.get('ssh_key', '~/.ssh/id_rsa')
+    ssh_user = worker_info.get('ssh-user', 'ubuntu')
+    ssh_key = worker_info.get('ssh-key', '~/.ssh/id_rsa')
     worker_bridge = worker_info.get('sat-vnet', 'sat-vnet')
     image = node.get('image', 'msvcbench/sat-container:latest')
     cpu_requested = float(node.get('cpu-request', 0.0))
@@ -419,6 +419,7 @@ def main() -> int:
                 time.sleep(1)
     time.sleep(5)  # extra wait to ensure all services inside the containers are up
     log.info("👍 Constellation deployment completed and all nodes running.")
+    log.info("ℹ️ Proceed with constellation-run.py to parse epoch files and start the emulation.")
 
 if __name__ == "__main__":
     raise SystemExit(main())
