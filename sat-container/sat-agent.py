@@ -53,6 +53,7 @@ def get_etcd_client():
                 etcd_client = etcd3.client(host=ETCD_HOST, port=ETCD_PORT, user=ETCD_USER, password=ETCD_PASSWORD, ca_cert=ETCD_CA_CERT)
             else:
                 etcd_client = etcd3.client(host=ETCD_HOST, port=ETCD_PORT)
+            etcd_client.status()  # Test connection, if fail will raise
             log.info(f" ✅ Connected to Etcd at {ETCD_HOST}:{ETCD_PORT}.")
             return etcd_client
         except:

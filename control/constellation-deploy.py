@@ -21,9 +21,13 @@ def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password
     try:
         log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
-            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
+            client = etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
+            client.status()  # Test connection, if fail will raise
+            return client
         else:
-            return etcd3.client(host=etcd_host, port=etcd_port)
+            client = etcd3.client(host=etcd_host, port=etcd_port)
+            client.status()  # Test connection, if fail will raise
+            return client
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
@@ -409,17 +413,24 @@ def main() -> int:
         return 3
 
     # wait that all deployed node have put their eth0_ip in etcd
-    for name, node in all_nodes_filtered.items():
-        while True:
+    all_ready = False
+    for _ in range(60):  # wait up to 60 seconds for all nodes to report in
+        all_ready = True
+        for name, node in all_nodes_filtered.items():
             val, _ = etcd_client.get(f"/config/nodes/{name}")   
             val = json.loads(val.decode('utf-8')) if val else None
-            if 'eth0_ip' in val:
+            if 'eth0_ip' not in val:
+                all_ready = False
                 break
-            else:
-                time.sleep(1)
+        if all_ready:
+            break
+        time.sleep(1)
     time.sleep(5)  # extra wait to ensure all services inside the containers are up
-    log.info("👍 Constellation deployment completed and all nodes running.")
-    log.info("ℹ️ Proceed with constellation-run.py to parse epoch files and start the emulation.")
+    if not all_ready:
+        log.warning("⚠️ Some nodes did not report their eth0_ip in Etcd within the expected time. Could be an Etcd connection problem")
+    else:
+        log.info("👍 Constellation deployment completed and all nodes running.")
+        log.info("ℹ️ Proceed with constellation-run.py to parse epoch files and start the emulation.")
 
 if __name__ == "__main__":
     raise SystemExit(main())

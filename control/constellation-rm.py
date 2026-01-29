@@ -18,9 +18,13 @@ def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password
     try:
         log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
-            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
-        else:
-            return etcd3.client(host=etcd_host, port=etcd_port)
+            client = etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
+            client.status()  # Test connection, if fail will raise
+            return client
+        else:       
+            client = etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
+            client.status()  # Test connection, if fail will raise
+            return client
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)

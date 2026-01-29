@@ -262,19 +262,11 @@ def apply_metis_worker_assignment(
     in_json_path: str,
     out_json_path: str,
     node_to_part: Dict[str, int],
-    *,
-    node_sections: List[str] = ("satellites", "users", "grounds"),
-    worker_field: str = "worker",
+    workers_file: str = None
 ) -> None:
     """
     Updates a NetSatBench-style config JSON by assigning each node's `worker_field`
     according to its METIS partition id.
-
-    - Input JSON must contain:
-        cfg["workers"] as a dict with keys = available worker names (groups)
-      and node sections like cfg["satellites"], cfg["users"], cfg["grounds"] (configurable).
-
-    - node_to_part maps node_name -> partition_id (0..k-1)
 
     Writes the updated JSON to out_json_path.
 
@@ -283,21 +275,26 @@ def apply_metis_worker_assignment(
       - if a node is missing from node_to_part -> error (fail-fast)
       - if p is outside range -> error
     """
+    if workers_file is None:
+        log.error("❌ workers_config must be provided to map partitions to workers.")
+        exit(1)
+    
     with open(in_json_path, "r", encoding="utf-8") as f:
-        cfg: Dict[str, Any] = json.load(f)
-
-    satellites = cfg.get("satellites", {})
-    users = cfg.get("users", {})
-    grounds = cfg.get("grounds", {})
-    all = {**satellites, **users, **grounds}
-    workers = set()
-    for n in all.values():
-        worker = n.get("worker", {})
-        workers.add(worker)
-
-
+        node_cfg: Dict[str, Any] = json.load(f)
+    
+    with open(workers_file, "r", encoding="utf-8") as f:
+        workers_cfg: Dict[str, Any] = json.load(f)  
+    
+    worker_field = workers_cfg.get("workers")
+    if not worker_field:
+        log.error("❌ workers_config must contain a 'workers' field with worker names.")
+        exit(1)
+    
+    workers = worker_field.keys()
     k = len(workers)
     workers = sorted(list(workers))
+
+    log.info(f"🔎 Found {len(workers)} workers")
 
     # Validate partition ids
     for n, p in node_to_part.items():
@@ -311,23 +308,20 @@ def apply_metis_worker_assignment(
     updated = 0
     missing = []
 
-    for section in node_sections:
-        block = cfg.get(section, {})
-        if not block:
+    block = node_cfg.get("nodes", {})
+    if not isinstance(block, dict):
+        raise ValueError(f"Section nodes must be a dict of node_name -> node_config.")
+
+    for node_name, node_cfg in block.items():
+        if node_name not in node_to_part:
+            missing.append(node_name)
             continue
-        if not isinstance(block, dict):
-            raise ValueError(f"Section '{section}' must be a dict of node_name -> node_config.")
+        if not isinstance(node_cfg, dict):
+            raise ValueError(f"Node '{node_name}' in section 'nodes' must map to a dict.")
 
-        for node_name, node_cfg in block.items():
-            if node_name not in node_to_part:
-                missing.append(node_name)
-                continue
-            if not isinstance(node_cfg, dict):
-                raise ValueError(f"Node '{node_name}' in section '{section}' must map to a dict.")
-
-            part = node_to_part[node_name]
-            node_cfg[worker_field] = workers[part]
-            updated += 1
+        part = node_to_part[node_name]
+        node_cfg[worker_field] = workers[part]
+        updated += 1
 
     if missing:
         raise KeyError(
@@ -336,37 +330,33 @@ def apply_metis_worker_assignment(
         )
 
     with open(out_json_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, sort_keys=False)
+        json.dump(node_cfg, f, indent=2, sort_keys=False)
 
     log.info(f"✅ Wrote updated config to {out_json_path} (assigned {updated} nodes, k={k} groups)")
 
-def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
+def compute_streaming_stats(config_file: str, 
+                            epoch_dir: str, 
+                            file_pattern: str,
                             nclusters: int = 0,
                             cluster_weighted: bool = True,
                             cluster_contiguous: bool = False,
-                            worker_config_in: Optional[str] = None,
-                            sat_config_out: Optional[str] = None
+                            sat_config_out: Optional[str] = None,
+                            workers_file: str = "worker-config.json",
                             ) -> None:
 
-    # Load configuration and build node_map (same logic you already have)
+    # Load configurations
     with open(config_file, "r", encoding="utf-8") as f:
         config = json.load(f)
+    nodes = config.get("nodes", {})
 
-    satellites = config.get("satellites", {})
-    users = config.get("users", {})
-    grounds = config.get("grounds", {})
 
-    log.info("📁 Loading configuration from file...")
-    log.info(f"🔎 Found {len(satellites)} satellites, {len(users)} users, {len(grounds)} ground stations in configuration.")
+    log.info("📁 Loading configuration from files...")
+    log.info(f"🔎 Found {len(nodes)} nodes")
 
     node_map = {}
     node_map.clear()
     idx = 0
-    for name in satellites.keys():
-        node_map[name] = idx; idx += 1
-    for name in users.keys():
-        node_map[name] = idx; idx += 1
-    for name in grounds.keys():
+    for name in nodes.keys():
         node_map[name] = idx; idx += 1
 
     inv_node_map = {i: name for name, i in node_map.items()}
@@ -390,6 +380,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
     num_epochs = 0
     total_links_over_time = 0.0          # sum of active link count each epoch
     total_churn = 0.0                    # adds+removes per epoch (undirected)
+    churn_per_second: Dict[int, int] = defaultdict(int)  # floor(ts) -> churn events in that second
     first_ts = None
     last_ts = None
 
@@ -398,15 +389,11 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
     duration_count = 0
     duration_min = None
     duration_max = None
-    partition_epochs = 0
-    worst_components = 1
-    worst_largest_cc = num_nodes
     partition_log: List[Dict] = []
 
     # For METIS clustering (time-weighted adjacency):
     # counts how many epochs each undirected edge was active
     edge_active_count: Dict[Tuple[int, int], int] = defaultdict(int)
-
 
     for path in epoch_files:
         epoch_data = load_json_file_or_report(path)
@@ -455,7 +442,6 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
             if key in active_links:
                 active_links.remove(key)
                 dels += 1
-                log.info(f"🛜 Removing link {key} at time {ts_raw}")
 
                 # Close duration
                 start = link_start_time.pop(key, None)
@@ -468,11 +454,15 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
                         duration_max = dt if duration_max is None else max(duration_max, dt)
 
         # Update per-epoch stats
-        num_epochs += 1
         total_links_over_time += float(len(active_links))
-        total_churn += float(adds + dels)
+        if (num_epochs>0): 
+            # skip first epoch for churn stats (no prior state)
+            total_churn += float(adds + dels)
+            churn_per_second[int(ts)] += (adds + dels)
+        num_epochs += 1
 
         # --- accumulate time-weighted adjacency (one count per epoch an edge is active)
+        # TODO: change with epoch duration if epochs are irregularly spaced
         for key in active_links:
             edge_active_count[key] += 1
 
@@ -514,7 +504,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
             contiguous=cluster_contiguous,
         )
 
-        log.info("\n🧱 METIS Clustering ফল (k-way partition):")
+        log.info("🧱 METIS Clustering (k-way partition):")
         log.info(f"   - k (groups): {nclusters}")
         log.info(f"   - edge-weighted over time: {bool(cluster_weighted)}")
         log.info(f"   - cut edges (objective): {res['cut']}")
@@ -529,6 +519,7 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
                 in_json_path=config_file,
                 out_json_path=sat_config_out,
                 node_to_part=node_to_part,
+                workers_file=workers_file,
             )
     
 
@@ -551,24 +542,40 @@ def compute_streaming_stats(config_file: str, epoch_dir: str, file_pattern: str,
     avg_degree = (2.0 * avg_links_per_epoch) / num_nodes
     avg_churn = total_churn / num_epochs
 
-    log.info("\n📊 Basic Statistics:")
+    log.info("📊 Basic Statistics:")
     log.info(f"   - Number of epochs: {num_epochs}")
+    log.info(f"   - Observation duration: "
+             f"{(last_ts - first_ts) if first_ts is not None and last_ts is not None else 0:.2f} s")
     log.info(f"   - Number of nodes: {num_nodes}")
     log.info(f"   - Average links per epoch: {avg_links_per_epoch:.2f}")
     log.info(f"   - Average degree: {avg_degree:.2f}")
     log.info(f"   - Average link churn (add+del per epoch): {avg_churn:.2f}")
+    # Observation duration in seconds
+    if first_ts is None or last_ts is None or last_ts <= first_ts:
+        obs_dur = 0.0
+    else:
+        obs_dur = float(last_ts - first_ts)
 
-    log.info("\n📊 Link Duration Statistics")
+    avg_churn_per_sec = (total_churn / obs_dur) if obs_dur > 0 else float("nan")
+    log.info(f"   - Average link churn (add+del per second): {avg_churn_per_sec:.4f}")
+    if churn_per_second:
+        series = np.array(list(churn_per_second.values()), dtype=float)
+        log.info("📈 Churn-per-second summary (1s bins):")
+        log.info(f"   - seconds observed (with churn events): {len(series)}")
+        log.info(f"   - max churn/s: {series.max():.0f}")
+        log.info(f"   - p95 churn/s: {np.percentile(series, 95):.0f}")
+        log.info(f"   - p99 churn/s: {np.percentile(series, 99):.0f}")
+
+    log.info("📊 Link Duration Statistics")
     if duration_count == 0:
         log.info("   - No link durations measured.")
     else:
         avg_dur = duration_sum_sec / duration_count
-        log.info(f"   - Number of link lifetimes: {duration_count}")
         log.info(f"   - Average link duration: {avg_dur:.2f} s")
         log.info(f"   - Min duration: {duration_min:.2f} s")
         log.info(f"   - Max duration: {duration_max:.2f} s")
 
-    log.info("\n🧩 Connectivity Statistics:")
+    log.info("𐄳 Connectivity Statistics:")
     if not partition_log:
         log.info("   - Constellation never partitioned.")
     else:
@@ -582,17 +589,10 @@ def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, ou
     with open(config_file, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
-    satellites = cfg.get("satellites", {})
-    users = cfg.get("users", {})
-    grounds = cfg.get("grounds", {})
-
+    nodes = cfg.get("nodes", {})
     node_map = {}
     idx = 0
-    for name in satellites.keys():
-        node_map[name] = idx; idx += 1
-    for name in users.keys():
-        node_map[name] = idx; idx += 1
-    for name in grounds.keys():
+    for name in nodes.keys():
         node_map[name] = idx; idx += 1
 
     # write node map
@@ -606,7 +606,7 @@ def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, ou
     events_path = os.path.join(out_dir, "link_events.csv")
     with open(events_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["t_sec", "t_iso", "src_id", "dst_id", "action", "rate", "delay", "loss"])
+        w.writerow(["t_sec", "t_iso", "src_id", "dst_id", "action", "rate", "delay", "loss","limit"])
 
         files = list_epoch_files(epoch_dir, file_pattern)
         for path in files:
@@ -622,7 +622,7 @@ def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, ou
                 if s not in node_map or d not in node_map:
                     continue
                 w.writerow([t_sec, t_iso, node_map[s], node_map[d], "add",
-                            l.get("rate", ""), l.get("delay", ""), l.get("loss", "")])
+                            l.get("rate", ""), l.get("delay", ""), l.get("loss", ""), l.get("limit", "")])
 
             # DEL
             for l in epoch.get("links-del", []):
@@ -630,7 +630,7 @@ def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, ou
                 if s not in node_map or d not in node_map:
                     continue
                 w.writerow([t_sec, t_iso, node_map[s], node_map[d], "del",
-                            "", "", ""])
+                            "", "", "", ""])
 
             # UPDATE
             for l in epoch.get("links-update", []):
@@ -638,7 +638,7 @@ def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, ou
                 if s not in node_map or d not in node_map:
                     continue
                 w.writerow([t_sec, t_iso, node_map[s], node_map[d], "update",
-                            l.get("rate", ""), l.get("delay", ""), l.get("loss", "")])
+                            l.get("rate", ""), l.get("delay", ""), l.get("loss", ""), l.get("limit", "")])
 
     log.info(f"✅ Exported:\n  - {nodes_path}\n  - {events_path}")
 
@@ -664,6 +664,11 @@ def main() -> int:
         help="Epoch filename glob pattern (inside epoch-dir).",
     )
     parser.add_argument(
+        "-w", "--worker-config",
+        default=None,
+        help="Path to the JSON worker configuration file.",
+    )
+    parser.add_argument(
         "--nclusters",
         type=int,
         default=0,
@@ -681,7 +686,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--sat-config-out",
-        type=str,default=None,
+        type=str,default="sat-config-metis.json",
         help="If set, output config JSON with METIS worker assignment applied (no resource assurance !!).",
     )
     parser.add_argument(
@@ -701,6 +706,7 @@ def main() -> int:
         cluster_weighted=args.cluster_weighted,
         cluster_contiguous=args.cluster_contiguous,
         sat_config_out=args.sat_config_out,
+        workers_file=args.worker_config,
     )
 
     return 0

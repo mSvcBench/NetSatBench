@@ -22,9 +22,13 @@ def connect_etcd(etcd_host: str, etcd_port: int, etcd_user=None, etcd_password=N
     try:
         log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
-            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
-        else:
-            return etcd3.client(host=etcd_host, port=etcd_port)
+            client = etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
+            client.status()  # Test connection, if fail will raise
+            return client
+        else:    
+            client = etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
+            client.status()  # Test connection, if fail will raise
+            return client
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
@@ -134,14 +138,14 @@ def apply_config_to_etcd(etcd, config_data: dict):
                                 supercidr_type = "any"
                             l3_cfg["cidr"] = generate_subnet(super_cidr_vector[supercidr_type][0], super_cidr_vector[supercidr_type][1])
                             super_cidr_vector[supercidr_type] = (super_cidr_vector[supercidr_type][0] + 1, super_cidr_vector[supercidr_type][1])    
-                    log.info(f"    ➞ Assigned CIDR {l3_cfg.get('cidr', None)} to node {name} of type {node_cfg.get("type")}")
+                    log.info(f"    ➞ Assigned CIDR {l3_cfg.get('cidr', None)} to node {name} of type {node_cfg.get('type')}")
                     etcd.put(
                         f"/config/{key}/{name}",
                         json.dumps(node_cfg),
                     )
                 log.info(f"✅ IP assignment process completed.")
-        log.info(f"👍 Successfully injected constellation config to Etcd.")
-        log.info("ℹ️ Proceed with constellation-deploy.py to deploy node containers on workers.")
+        log.info(f"👍 Successfully injected satellite system config to Etcd.")
+        log.info("ℹ️  Proceed with constellation-deploy.py to deploy node containers on workers.")
 
     except Exception as e:
         log.error(f"❌ Error in apply_config_to_etcd: {e}")
@@ -152,7 +156,7 @@ def apply_config_to_etcd(etcd, config_data: dict):
 # ==========================================
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Inject constellation configuration into Etcd"
+        description="Inject satellite system configuration into Etcd"
     )
     parser.add_argument(
         "-c", "--config",
@@ -192,10 +196,32 @@ def main() -> int:
         help="Logging level (default: INFO)",
     )
     args = parser.parse_args()
-
     log.setLevel(args.log_level.upper())
-    
+
+    # if ETCG host is localhost, suggest to set env variable and ask to continue
+    if args.etcd_host in ["127.0.0.1", "localhost"]:
+        log.warning("⚠️ Etcd host is set to localhost. Set ETCD_HOST to the actual Etcd server IP if remote workers are used.")
+        cont = input("Do you want to continue? (y/n): ")
+        if cont.lower() != 'y':
+            log.info("Exiting as per user request.")
+            sys.exit(0)
+
     etcd = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
+    
+    # check that workers exist in etcd otherwise ask to proceed with system-init-docker.py first
+    try:
+            existing_workers = etcd.get_prefix("/config/workers/")
+            if not existing_workers:
+                log.warning("⚠️  Workers do not found in Etcd under /config/workers/. This may indicate system init-docker.py has not been run.")
+                cont = input("Do you want to continue with constellation init? (y/n): ")
+                if cont.lower() != 'y':
+                    log.info("Exiting as per user request.")
+                    sys.exit(0)
+    except Exception as e:
+        log.error(f"❌ Error checking existing nodes in Etcd: {e}")
+        sys.exit(1)
+
+
     config_file = args.config
 
     # check that "/config/workers" exists in etcd and it is not void

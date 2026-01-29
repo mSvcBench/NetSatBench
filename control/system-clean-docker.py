@@ -144,10 +144,24 @@ def main():
             etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port, user=args.etcd_user, password=args.etcd_password, ca_cert=args.etcd_ca_cert)
         else:
             etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port)
+        etcd_client.status()  # Test connection, if fail will raise
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
 
+    # if nodes are in Etdc, raise a warning and ask to proceed
+    try:
+            existing_nodes = get_prefix_data(etcd_client, "/config/nodes/")
+            if existing_nodes:
+                log.warning("⚠️  Existing nodes found in Etcd under /config/nodes/. This may indicate an active constellation.")
+                cont = input("Do you want to continue with the cleanup? (y/n): ")
+                if cont.lower() != 'y':
+                    log.info("Exiting as per user request.")
+                    sys.exit(0)
+    except Exception as e:
+        log.error(f"❌ Error checking existing nodes in Etcd: {e}")
+        sys.exit(1)
+    
     # Read hosts from etcd (same as your script)
     if cfg is not None and "workers" in cfg:
         workers = cfg["workers"]

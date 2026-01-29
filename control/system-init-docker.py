@@ -138,6 +138,7 @@ def main():
             etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port, user=args.etcd_user, password=args.etcd_password, ca_cert=args.etcd_ca_cert)
         else:
             etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port)
+        etcd_client.status()  # Test connection, if fail will raise
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
