@@ -473,7 +473,7 @@ def main() -> int:
     parser.add_argument(
         "--node-type-to-route",
         default="any",
-        help="Comma-separated list of node types to route [e.g., satellite, ground, user, any] (default: any).",
+        help="Comma-separated list of node types to route [e.g., satellite, gateway, user, any] (default: any).",
     )
     parser.add_argument(
         "--drain-before-break-offset",

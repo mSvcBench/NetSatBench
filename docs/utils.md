@@ -3,7 +3,6 @@
 </div>
 
 
-
 # Exec CLI
 `constellation-exec.py`
 
@@ -15,12 +14,83 @@ This utility script allows executing commands on emulated satellite nodes by con
 ```bash
 python3 utils/constellation-exec.py [-it] [-d] <node-name> <command> [args...]
 ```
+
+Full command-line help is available via:
+```bash
+python3 utils/constellation-cp.py --help
+```
+
 ---
 ## Examples
 - To run a bash shell on a satellite container named `usr1`:
 ```bash
 python3 utils/constellation-exec.py -it usr1 bash
 ```
+
+
+---
+
+# Copy CLI
+
+`constellation-cp.py`
+
+This utility script allows copying files and directories between the local host and emulated constellation nodes by transparently accessing the containers running on remote workers.
+Its syntax and behavior closely mimic `docker cp`, while resolving node placement via Etcd and handling remote execution internally.
+
+The copy operation always reads from and writes to the host where `constellation-cp` is executed, preserving standard Docker semantics.
+
+---
+
+## Usage
+
+```bash
+python3 utils/constellation-cp.py [OPTIONS] <src> <dest>
+```
+
+Where exactly **one** of `<src>` or `<dest>` must be specified in the form:
+
+```text
+<node-name>:<path>
+```
+
+Full command-line help is available via:
+```bash
+python3 utils/constellation-cp.py --help
+```
+
+---
+
+## Examples
+
+### Copy a file from a node to the local host
+
+```bash
+python3 utils/constellation-cp.py sat1:/var/log/app.log ./app.log
+```
+
+This copies `/var/log/app.log` from container `sat1` to the current local directory.
+
+---
+
+### Copy a local file to a node
+
+```bash
+python3 utils/constellation-cp.py ./config.json sat1:/etc/app/config.json
+```
+
+This transfers `config.json` from the local host into the container filesystem of `sat1`.
+
+---
+
+### Copy a directory recursively
+
+```bash
+python3 utils/constellation-cp.py -a ./configs sat1:/opt/app/configs
+```
+
+---
+
+
 
 # Constellation Statistics
 `constellation-stats.py`

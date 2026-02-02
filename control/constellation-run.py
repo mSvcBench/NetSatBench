@@ -206,8 +206,10 @@ def process_epoch_from_queue(json_path: str) -> None:
     update = epoch_dict.get("links-update", [])       # fixed key name vs your current "link-update"
 
     for l in add:
-        ep2_antenna = l.get("endpoint2_antenna", 1)
-        ep1_antenna = l.get("endpoint1_antenna", 1)
+        #ep2_antenna = l.get("endpoint2_antenna", 1) # removed antenna support for now
+        #ep1_antenna = l.get("endpoint1_antenna", 1)
+        ep2_antenna = 1
+        ep1_antenna = 1
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
         vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
         etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
@@ -224,8 +226,11 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_client.put(etcd_key2, json.dumps(l))
 
     for l in delete:
-        ep2_antenna = l.get("endpoint2_antenna", 1)
-        ep1_antenna = l.get("endpoint1_antenna", 1)
+        # ep2_antenna = l.get("endpoint2_antenna", 1) # removed antenna support for now
+        # ep1_antenna = l.get("endpoint1_antenna", 1)
+        ep2_antenna = 1
+        ep1_antenna = 1
+        
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
         vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
         etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
@@ -241,8 +246,10 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_client.delete(etcd_key2)
 
     for l in update:
-        ep2_antenna = l.get("endpoint2_antenna", 1)
-        ep1_antenna = l.get("endpoint1_antenna", 1)
+        # ep2_antenna = l.get("endpoint2_antenna", 1) # removed antenna support for now
+        # ep1_antenna = l.get("endpoint1_antenna", 1)
+        ep2_antenna = 1
+        ep1_antenna = 1
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
         vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
         etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
