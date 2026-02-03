@@ -1,24 +1,40 @@
 #!/usr/bin/env python3
+"""
+Epoch applier (cross-platform)
+
+Key change vs inotify(IN_CLOSE_WRITE):
+- Uses watchdog (Linux/macOS/Windows) for filesystem events.
+- Uses a write-then-atomic-rename (“.tmp” -> final) pattern when enqueueing epoch files,
+  so the watcher never processes a partially-written file.
+
+Producer side (this script):
+- Copies epoch JSON into epoch-queue as <name>.tmp
+- fsync()s the tmp file
+- atomically publishes it with os.replace(tmp, final)
+
+Consumer side (this script):
+- Watches epoch-queue for created/moved files that do NOT end with ".tmp"
+- Processes + deletes them
+"""
+
 import argparse
-import asyncio
+import calendar
+import glob
 import json
+import logging
 import os
+import re
+import shutil
 import sys
 import threading
 import time
-import calendar
-import glob
-import re
-import etcd3
 import zlib
-import shutil
-import logging
+from pathlib import Path
 from typing import Optional, Tuple, List
-from pathlib import Path
-import os
-import pyinotify
-from pathlib import Path
 
+import etcd3
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -30,9 +46,8 @@ TIME_OFFSET: Optional[float] = None
 etcd_client = None
 writing_lock = threading.Lock()
 
-
 # ==========================================
-# 🧮 HELPERS
+# HELPERS
 # ==========================================
 def calculate_vni(ep1, ant1, ep2, ant2) -> int:
     """
@@ -49,10 +64,14 @@ def calculate_vni(ep1, ant1, ep2, ant2) -> int:
 
 
 def smart_wait(target_virtual_time_str, filename: str, fixed_wait: int = -1) -> None:
+    """
+    Sleeps according to delta between consecutive epoch times (virtual time),
+    unless fixed_wait is set (>=0), in which case it sleeps fixed_wait seconds.
+    """
     global TIME_OFFSET
-    
+
     if fixed_wait != -1:
-        time.sleep(fixed_wait)  
+        time.sleep(fixed_wait)
         return
 
     if not target_virtual_time_str:
@@ -72,26 +91,38 @@ def smart_wait(target_virtual_time_str, filename: str, fixed_wait: int = -1) -> 
 
         if delay > 0:
             time.sleep(delay)
-            log.debug(f"⏳ [{filename}] Waiting {delay:.1f}s to sync epoch...")
+            log.debug(f"⏳ [{filename}] Waiting {delay:.3f}s to sync epoch...")
 
     except ValueError:
         log.warning(f"⚠️ [{filename}] Invalid time format: {target_virtual_time_str}")
 
 
-def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None, etcd_ca_cert = None):
+def connect_etcd(
+    etcd_host: str,
+    etcd_port: int,
+    etcd_user: Optional[str] = None,
+    etcd_password: Optional[str] = None,
+    etcd_ca_cert: Optional[str] = None,
+):
     try:
         log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
         if etcd_user and etcd_password:
-            client = etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
-            client.status()  # Test connection, if fail will raise
-            return client
+            client = etcd3.client(
+                host=etcd_host,
+                port=etcd_port,
+                user=etcd_user,
+                password=etcd_password,
+                ca_cert=etcd_ca_cert,
+            )
         else:
             client = etcd3.client(host=etcd_host, port=etcd_port)
-            client.status()  # Test connection, if fail will raise
-            return client
+
+        client.status()  # Test connection
+        return client
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
+
 
 def load_epoch_dir_and_pattern_from_etcd() -> Tuple[str, str]:
     """
@@ -124,8 +155,7 @@ def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
     def last_numeric_suffix(path: str) -> int:
         """
         Extracts the last contiguous sequence of digits from the filename
-        and returns it as an integer.
-        If no digits are found, returns -1.
+        and returns it as an integer. If no digits are found, returns -1.
         """
         basename = os.path.basename(path)
         matches = re.findall(r"(\d+)", basename)
@@ -134,10 +164,10 @@ def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
     files = sorted(glob.glob(search_path), key=last_numeric_suffix)
     return files
 
+
 def convert_time_epoch_to_timestamp(time_str: str) -> float:
     """
-    Converts an ISO-8601 UTC time string
-    'YYYY-MM-DDTHH:MM:SSZ'
+    Converts an ISO-8601 UTC time string 'YYYY-MM-DDTHH:MM:SSZ'
     to a Unix timestamp (seconds since epoch).
     """
     try:
@@ -145,42 +175,98 @@ def convert_time_epoch_to_timestamp(time_str: str) -> float:
         return calendar.timegm(struct_time)  # UTC-safe
     except ValueError:
         raise ValueError(
-            f"❌ Invalid time format: {time_str}. "
-            "Expected 'YYYY-MM-DDTHH:MM:SSZ'."
+            f"❌ Invalid time format: {time_str}. Expected 'YYYY-MM-DDTHH:MM:SSZ'."
         )
 
 
+def atomic_enqueue(src_path: str, queue_dir: str) -> str:
+    """
+    Copy src_path into queue_dir in a cross-platform safe way that prevents
+    consumers from seeing partial files:
 
-class NewEpochFileHandler(pyinotify.ProcessEvent):
-    def process_IN_CLOSE_WRITE(self, event):
-        # Ignore directories
-        if event.dir:
-            return
-        path = event.pathname
-        process_epoch_from_queue(path)
-        # delete the file after processing
-        os.remove(path)
+    - copy to <dst>.tmp
+    - fsync tmp
+    - os.replace(tmp, final)  (atomic publish)
 
+    Returns the final destination path.
+    """
+    filename = os.path.basename(src_path)
+    dst_final = os.path.join(queue_dir, filename)
+    dst_tmp = dst_final + ".tmp"
 
-def start_queue_watcher(path: Path):
-    wm = pyinotify.WatchManager()
-    handler = NewEpochFileHandler()
-    notifier = pyinotify.ThreadedNotifier(wm, handler)
-    notifier.daemon = True
-    notifier.start()
-    mask = pyinotify.IN_CLOSE_WRITE
-    wm.add_watch(str(path), mask, rec=False)
-    log.info(f"👀 Watching epoch queue (IN_CLOSE_WRITE): {path}")
-    return notifier
+    # Copy to tmp
+    shutil.copy2(src_path, dst_tmp)
+
+    # Flush to disk (best-effort)
+    try:
+        with open(dst_tmp, "rb") as f:
+            os.fsync(f.fileno())
+    except Exception as e:
+        # Not fatal, but useful to know (some filesystems may not support fsync well)
+        log.debug(f"fsync() skipped/failed for {dst_tmp}: {e}")
+
+    # Atomic publish
+    os.replace(dst_tmp, dst_final)
+    return dst_final
 
 
 # ==========================================
-# 🚀 CORE LOGIC
+# WATCHDOG HANDLER (cross-platform)
+# ==========================================
+class EpochQueueHandler(FileSystemEventHandler):
+    """
+    Processes epoch files only once they are fully "published".
+    We consider a file published if it does NOT end with .tmp.
+    """
+
+    def _handle_path(self, path: str) -> None:
+        if not path or path.endswith(".tmp"):
+            return
+        if not os.path.isfile(path):
+            return
+        try:
+            process_epoch_from_queue(path)
+        finally:
+            # Best-effort deletion (ignore if already removed)
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                log.warning(f"⚠️ Could not delete processed epoch file {path}: {e}")
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        self._handle_path(event.src_path)
+
+    def on_moved(self, event):
+        if event.is_directory:
+            return
+        # When atomic replace occurs, some backends may surface it as a move
+        self._handle_path(getattr(event, "dest_path", None))
+
+
+def start_queue_watcher(path: Path) -> Observer:
+    observer = Observer()
+    handler = EpochQueueHandler()
+    observer.schedule(handler, str(path), recursive=False)
+    observer.daemon = True
+    observer.start()
+    log.info(f"👀 Watching epoch queue (watchdog): {path}")
+    return observer
+
+
+# ==========================================
+# CORE LOGIC
 # ==========================================
 def process_epoch_from_queue(json_path: str) -> None:
+    """
+    Reads an epoch file and applies updates into etcd.
+    """
     with open(json_path, "r", encoding="utf-8") as f:
-            epoch_dict = json.load(f)
-    # Allowed keys in epoch file
+        epoch_dict = json.load(f)
+
     allowed_keys = [
         "epoch-time",
         "links-add",
@@ -192,22 +278,23 @@ def process_epoch_from_queue(json_path: str) -> None:
         "grounds",
         "time",
     ]
+
     # A. Push epoch-time and sanity check
     for key, value in epoch_dict.items():
         if key not in allowed_keys:
-            log.warning(f"❌ [{os.path.basename(json_path)}] Unexpected key '{key}' found in epoch file, skipping...")
+            log.warning(
+                f"❌ [{os.path.basename(json_path)}] Unexpected key '{key}' found in epoch file, skipping..."
+            )
             continue
         if key == "epoch-time":
-            etcd_client.put("/config/epoch-time", str(value).strip().replace('"', ''))
+            etcd_client.put("/config/epoch-time", str(value).strip().replace('"', ""))
 
     # B. Push Dynamic Actions
     add = epoch_dict.get("links-add", [])
-    delete = epoch_dict.get("links-del", [])          # fixed key name vs your current "link-delete"
-    update = epoch_dict.get("links-update", [])       # fixed key name vs your current "link-update"
+    delete = epoch_dict.get("links-del", [])
+    update = epoch_dict.get("links-update", [])
 
     for l in add:
-        #ep2_antenna = l.get("endpoint2_antenna", 1) # removed antenna support for now
-        #ep1_antenna = l.get("endpoint1_antenna", 1)
         ep2_antenna = 1
         ep1_antenna = 1
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
@@ -215,39 +302,34 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
         etcd_key2 = f"/config/links/{l['endpoint2']}/{vxlan_iface_name2}"
 
-        vni = calculate_vni(
-            l["endpoint1"], ep1_antenna,
-            l["endpoint2"], ep2_antenna,
-        )
+        vni = calculate_vni(l["endpoint1"], ep1_antenna, l["endpoint2"], ep2_antenna)
         l["vni"] = vni
-        log.debug(f"🛜  [{os.path.basename(json_path)}] Syncing link-add {l['endpoint1']} - {l['endpoint2']} with VNI {vni}")
+        log.debug(
+            f"🛜  [{os.path.basename(json_path)}] Syncing link-add "
+            f"{l['endpoint1']} - {l['endpoint2']} with VNI {vni}"
+        )
 
         etcd_client.put(etcd_key1, json.dumps(l))
         etcd_client.put(etcd_key2, json.dumps(l))
 
     for l in delete:
-        # ep2_antenna = l.get("endpoint2_antenna", 1) # removed antenna support for now
-        # ep1_antenna = l.get("endpoint1_antenna", 1)
         ep2_antenna = 1
         ep1_antenna = 1
-        
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
         vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
         etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
         etcd_key2 = f"/config/links/{l['endpoint2']}/{vxlan_iface_name2}"
 
-        vni = calculate_vni(
-            l["endpoint1"], ep1_antenna,
-            l["endpoint2"], ep2_antenna,
+        vni = calculate_vni(l["endpoint1"], ep1_antenna, l["endpoint2"], ep2_antenna)
+        log.debug(
+            f"✂️  [{os.path.basename(json_path)}] Syncing link-del "
+            f"{l['endpoint1']} - {l['endpoint2']} (VNI {vni})"
         )
-        log.debug(f"✂️  [{os.path.basename(json_path)}] Syncing link-del {l['endpoint1']} - {l['endpoint2']} (VNI {vni})")
 
         etcd_client.delete(etcd_key1)
         etcd_client.delete(etcd_key2)
 
     for l in update:
-        # ep2_antenna = l.get("endpoint2_antenna", 1) # removed antenna support for now
-        # ep1_antenna = l.get("endpoint1_antenna", 1)
         ep2_antenna = 1
         ep1_antenna = 1
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
@@ -259,39 +341,54 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_value1, _ = etcd_client.get(etcd_key1)
         etcd_value2, _ = etcd_client.get(etcd_key2)
         if not etcd_value1 or not etcd_value2:
-            log.warning(f"⚠️  [{os.path.basename(json_path)}] Link not found in Etcd for {l['endpoint1']} - {l['endpoint2']}. Skipping update.")
+            log.warning(
+                f"⚠️  [{os.path.basename(json_path)}] Link not found in Etcd for "
+                f"{l['endpoint1']} - {l['endpoint2']}. Skipping update."
+            )
             continue
 
-        vni = calculate_vni(
-            l["endpoint1"], ep1_antenna,
-            l["endpoint2"], ep2_antenna,
-        )
+        vni = calculate_vni(l["endpoint1"], ep1_antenna, l["endpoint2"], ep2_antenna)
         l["vni"] = vni
 
-        log.debug(f"♻️  [{os.path.basename(json_path)}] Syncing link-update {l['endpoint1']} - {l['endpoint2']} (VNI {vni})")
+        log.debug(
+            f"♻️  [{os.path.basename(json_path)}] Syncing link-update "
+            f"{l['endpoint1']} - {l['endpoint2']} (VNI {vni})"
+        )
         etcd_client.put(etcd_key1, json.dumps(l))
         etcd_client.put(etcd_key2, json.dumps(l))
 
     # D. Push Runtime Commands
     for node, cmds in epoch_dict.get("run", {}).items():
-        log.debug(f"▶️  [{os.path.basename(json_path)}] Pushing run commands to node {node}: {cmds}")
+        log.debug(
+            f"▶️  [{os.path.basename(json_path)}] Pushing run commands to node {node}: {cmds}"
+        )
         etcd_client.put(f"/config/run/{node}", json.dumps(cmds))
 
-    log.info(f" ✅ [{os.path.basename(json_path)}] Epoch applied successfully.")
+    log.info(f"✅ [{os.path.basename(json_path)}] Epoch applied successfully.")
+
 
 def process_epoch_from_dir(json_path: str, queue_path: str, fixed_wait: int = -1) -> None:
+    """
+    Reads an epoch file from epoch_dir, waits according to epoch time, then enqueues it
+    into epoch-queue using atomic publish.
+    """
     filename = os.path.basename(json_path)
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
         # WAIT FOR SCHEDULED TIME (virtual -> real time sync)
-        epoch_time = config.get("epoch-time") if config.get("epoch-time") else convert_time_epoch_to_timestamp(config.get("time"))
+        epoch_time = config.get("epoch-time")
+        if not epoch_time:
+            # fallback to ISO time
+            epoch_time = convert_time_epoch_to_timestamp(config.get("time"))
+
         smart_wait(epoch_time, filename, fixed_wait=fixed_wait)
+
         log.info(f"🚩 Applying epoch configuration {filename}...")
+
         with writing_lock:
-            # copy epoch file in the queque directory
-            shutil.copy2(json_path, os.path.join(queue_path, filename))
+            atomic_enqueue(json_path, queue_path)
 
     except Exception as e:
         log.error(f"❌ Error processing {filename}: {e}")
@@ -301,11 +398,11 @@ def run_all_epochs(
     epoch_dir: str,
     file_pattern: str,
     queue_path: str,
-    fixed_wait: bool = True,
+    fixed_wait: int = -1,
     loop_delay: Optional[int] = None,
 ) -> int:
-
     global TIME_OFFSET
+
     files = list_epoch_files(epoch_dir, file_pattern)
     if not files:
         log.warning(f"⚠️ No epoch files found in {os.path.join(epoch_dir, file_pattern)}")
@@ -315,31 +412,20 @@ def run_all_epochs(
     while True:
         for f in files:
             process_epoch_from_dir(json_path=f, queue_path=queue_path, fixed_wait=fixed_wait)
+
         if loop_delay is not None:
             log.info(f"🔄 Looping emulation after {loop_delay} seconds...")
             time.sleep(loop_delay)
             TIME_OFFSET = None  # reset time offset for next loop
         else:
-            time.sleep(30)  # brief pause before exiting to allow final epoch processing
+            # brief pause before exiting to allow final epoch processing
+            time.sleep(30)
             break
     return 0
 
 
-async def watch_epoch_queue(path: Path):
-    loop = asyncio.get_running_loop()
-    handler = NewEpochFileHandler()
-    observer = Observer()
-    observer.schedule(handler, str(path), recursive=False)
-    observer.start()
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    finally:
-        observer.stop()
-        observer.join()
-    
 # ==========================================
-# 🏁 MAIN
+# MAIN
 # ==========================================
 def main() -> int:
     global etcd_client
@@ -360,12 +446,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--etcd-user",
-        default=os.getenv("ETCD_USER", None ),
+        default=os.getenv("ETCD_USER", None),
         help="Etcd user (default: env ETCD_USER or None)",
     )
     parser.add_argument(
         "--etcd-password",
-        default=os.getenv("ETCD_PASSWORD", None ),
+        default=os.getenv("ETCD_PASSWORD", None),
         help="Etcd password (default: env ETCD_PASSWORD or None)",
     )
     parser.add_argument(
@@ -380,18 +466,19 @@ def main() -> int:
         "--fixed-wait",
         default=-1,
         type=int,
-        help="Disable virtual-time synchronization (do constant sleep on epoch-time).",
+        help="Disable virtual-time synchronization (do constant sleep on epoch-time). "
+             "If set to N>=0, sleep N seconds between epochs.",
     )
     parser.add_argument(
         "--loop-delay",
         default=None,
         type=int,
-        help="Enable loop repeat with a fixed delay between last and first epochs (in seconds)."
+        help="Enable loop repeat with a fixed delay between last and first epochs (in seconds).",
     )
     parser.add_argument(
         "--interactive",
         action="store_true",
-        help="Enable interactive mode to watch epoch-queue folder for new epochs. No epoch directory scanning.",
+        help="Enable interactive mode: only watch epoch-queue for new epochs. No epoch directory scanning.",
     )
     parser.add_argument(
         "--log-level",
@@ -402,41 +489,40 @@ def main() -> int:
     args = parser.parse_args()
     log.setLevel(args.log_level.upper())
 
-    etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port)
-    try:
-        etcd_client.status()
-    except Exception as e:
-        log.error(f"❌ Could not connect to Etcd at {args.etcd_host}:{args.etcd_port}. Is it running?")
-        log.error(f"Details: {e}")
-        return 2
+    etcd_client = connect_etcd(
+        etcd_host=args.etcd_host,
+        etcd_port=args.etcd_port,
+        etcd_user=args.etcd_user,
+        etcd_password=args.etcd_password,
+    )
 
-    # If an epoch-config file is provided, load it and use it unless user overrides epoch-dir/pattern explicitly.
+    # Load epoch dir/pattern from etcd unless overridden.
     epoch_dir = args.epoch_dir
     file_pattern = args.file_pattern
     if epoch_dir is None or file_pattern is None:
         epoch_dir_etcd, file_pattern_etcd = load_epoch_dir_and_pattern_from_etcd()
         epoch_dir = epoch_dir or epoch_dir_etcd
         file_pattern = file_pattern or file_pattern_etcd
+
     epoch_queue_dir = os.path.join(epoch_dir, "epoch-queue")
-    # Ensure the queue directory exists
     os.makedirs(epoch_queue_dir, exist_ok=True)
-    
-    # Start watching the queue directory in a separate thread
+
+    # Start watcher
     queue_observer = start_queue_watcher(Path(epoch_queue_dir))
 
-    fixed_wait = args.fixed_wait
-    # Start Event Loops
     try:
         if args.interactive:
             log.info("🖥️  Running in interactive mode. Watching epoch-queue for new epochs...")
             while True:
                 time.sleep(3600)
-        else:                           
-            return run_all_epochs(epoch_dir=epoch_dir, 
-                              file_pattern=file_pattern, 
-                              queue_path=epoch_queue_dir, 
-                              fixed_wait=fixed_wait, 
-                              loop_delay=args.loop_delay)
+        else:
+            return run_all_epochs(
+                epoch_dir=epoch_dir,
+                file_pattern=file_pattern,
+                queue_path=epoch_queue_dir,
+                fixed_wait=args.fixed_wait,
+                loop_delay=args.loop_delay,
+            )
     finally:
         queue_observer.stop()
         queue_observer.join()

@@ -244,6 +244,7 @@ def create_one_node(
         return name, False, f"❌ Unknown worker '{worker}' (node assigned to non-existing /config/workers entry)"
 
     worker_info = workers[worker]
+    worker_ip = worker_info.get('ip', None)
     ssh_user = worker_info.get('ssh-user', 'ubuntu')
     ssh_key = worker_info.get('ssh-key', '~/.ssh/id_rsa')
     worker_bridge = worker_info.get('sat-vnet', 'sat-vnet')
@@ -256,7 +257,7 @@ def create_one_node(
     try:
         cmd = recreate_and_run_container(
             node_name=name,
-            worker=worker,
+            worker=worker_ip,
             ssh_username=ssh_user,
             ssh_key_path=ssh_key,
             worker_bridge=worker_bridge,
