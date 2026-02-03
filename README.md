@@ -115,7 +115,8 @@ Documentation files, including:
 - [Etcd Key-Value Store](docs/etcd.md) — structure and organization of the Etcd key-value store used for satellite system state management.
 - [Routing Interface](docs/routing-interface.md) — specification of the routing module interface.
 - [Utils](docs/utils.md) — description of the utility scripts available in the `utils/` directory, including:
-    - [constellation-exec](utils/constellation-exec.py), a simplified CLI for executing bash commands within emulated nodes regardless of their working host, similar to the `docker exec` syntax.  
+    - [constellation-exec](utils/constellation-exec.py), a simplified CLI for executing bash commands within emulated nodes regardless of their working host, similar to the `docker exec` syntax.
+    - [constellation-cp](utils/constellation-cp.py), a simplified CLI for copying files to/from emulated nodes regardless of their working host, similar to the `docker cp` syntax.  
     - [oracle-routing](utils/oracle-routing.py), an ideal L3 shortest path routing with optional drain-before-break functinality.
     - [constellation-stats](utils/constellation-stats.py) for extracting constellation network statistics, such as the presence of network partitions, link drop rates, etc.
 
