@@ -145,8 +145,8 @@ def main():
     parser.add_argument(
         "-t", "--threads",
         type=int,
-        default=max(1, (os.cpu_count() or 4)),
-        help="Number of worker threads for parallel container removal (default: CPU count).",
+        default=4,
+        help="Number of worker threads for parallel container removal (default: 4).",
     )
     parser.add_argument(
         "--type",

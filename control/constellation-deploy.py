@@ -288,8 +288,8 @@ def main() -> int:
     parser.add_argument(
         "-t", "--threads",
         type=int,
-        default=max(1, (os.cpu_count() or 4)),
-        help="Number of worker threads for parallel container creation (default: CPU count).",
+        default=4,
+        help="Number of worker threads for parallel container creation (default: 4).",
     )
     parser.add_argument(
         "--type",
@@ -299,13 +299,24 @@ def main() -> int:
     parser.add_argument(
         "--etcd-host",
         default=os.getenv("ETCD_HOST", "127.0.0.1"),
-        help="Etcd host (default: env ETCD_HOST or 127.0.0.1)",
+        help="Etcd host used by control host (default: env ETCD_HOST or 127.0.0.1)",
     )
     parser.add_argument(
         "--etcd-port",
         type=int,
         default=int(os.getenv("ETCD_PORT", 2379)),
-        help="Etcd port (default: env ETCD_PORT or 2379)",
+        help="Etcd port used by control host (default: env ETCD_PORT or 2379)",
+    )
+    parser.add_argument(
+        "--node-etcd-host",
+        default=os.getenv("NODE_ETCD_HOST", os.getenv("ETCD_HOST", "127.0.0.1")),
+        help="Etcd host used by nodes (default: env NODE_ETCD_HOST or env ETCD_HOST or 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--node-etcd-port",
+        type=int,
+        default=int(os.getenv("NODE_ETCD_PORT", os.getenv("ETCD_PORT", 2379))),
+        help="Etcd port used by nodes (default: env NODE_ETCD_PORT or env ETCD_PORT or 2379)",
     )
     parser.add_argument(
         "--etcd-user",
@@ -373,8 +384,8 @@ def main() -> int:
                 name,
                 node,
                 workers,
-                etcd_host=args.etcd_host,
-                etcd_port=args.etcd_port,
+                etcd_host=args.node_etcd_host,
+                etcd_port=args.node_etcd_port,
                 etcd_user=args.etcd_user,
                 etcd_password=args.etcd_password,
                 etcd_ca_cert=args.etcd_ca_cert,
@@ -431,7 +442,7 @@ def main() -> int:
         log.warning("⚠️ Some nodes did not report their eth0_ip in Etcd within the expected time. Could be an Etcd connection problem")
     else:
         log.info("👍 Constellation deployment completed and all nodes running.")
-        log.info("▶️  Proceed with constellation-run.py to parse epoch files and start the emulation.")
+        log.info("▶️ Proceed with constellation-run.py to parse epoch files and start the emulation.")
 
 if __name__ == "__main__":
     raise SystemExit(main())

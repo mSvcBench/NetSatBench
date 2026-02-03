@@ -143,7 +143,7 @@ def apply_config_to_etcd(etcd, config_data: dict):
                     )
                 log.info(f"✅ IP assignment process completed.")
         log.info("👍 Successfully injected satellite system config to Etcd.")
-        log.info("▶️  Proceed with constellation-deploy.py to deploy node containers on workers.")
+        log.info("▶️ Proceed with constellation-deploy.py to deploy node containers on workers.")
 
     except Exception as e:
         log.error(f"❌ Error in apply_config_to_etcd: {e}")
