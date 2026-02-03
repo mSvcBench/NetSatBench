@@ -43,6 +43,14 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
 
 ```json
 {
+  "workers-common": {
+    "ssh-user": "<ssh-username>",
+    "ssh-key": "<path-to-private-key>",
+    "sat-vnet": "<bridge-name>",
+    "sat-vnet-super-cidr": "<containers-supernet>",
+    "cpu": "<num-cpu-cores>",
+    "mem": "<memory-available>"
+  }
   "workers": {
     "<worker-name>": {
       "ip": "<management-ip>",
@@ -50,7 +58,6 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
       "ssh-key": "<path-to-private-key>",
       "sat-vnet": "<bridge-name>",
       "sat-vnet-cidr": "<container-subnet>",
-      "sat-vnet-super-cidr": "<containers-supernet>",
       "cpu": "<num-cpu-cores>",
       "mem": "<memory-available>"
     }
@@ -61,33 +68,36 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
 ### Example
 ```json  
 {
-"workers": {
-    "host-1": {
-      "ip": "10.0.1.215",
+  "workers-common": {
       "ssh-user": "ubuntu",
       "ssh-key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
-      "sat-vnet-cidr":"172.100.0.0/16",
-      "sat-vnet-super-cidr": "172.0.0.0/8",
-      "cpu": "4",
-      "mem": "6GiB"
-    },
-    "host-2": {
-      "ip": "10.0.1.144",
-      "ssh-user": "ubuntu",
-      "ssh-key": "/home/ubuntu/.ssh/id_rsa",
-      "sat-vnet": "sat-vnet",
-      "sat-vnet-cidr":"172.101.0.0/16",
-      "sat-vnet-super-cidr": "172.0.0.0/8",
-      "cpu": "4",
-      "mem": "6GiB"
-    }
+      "sat-vnet-super-cidr": "172.20.0.0/16"
+  },
+  "workers": {
+      "host-1": {
+        "ip": "10.0.1.215",
+        "sat-vnet-cidr":"172.20.0.0/24",
+        "cpu": "2",
+        "mem": "2GiB"
+      },
+      "host-2": {
+        "ip": "10.0.1.144",
+        "sat-vnet-cidr":"172.20.1.0/24",
+        "cpu": "2",
+        "mem": "2GiB"
+      },
   }
 }
 ```
 ---
 
 ### Field Descriptions
+
+#### `workers-common`
+* **Type**: object
+* **Description**: Common configuration applied to all workers unless explicitly overridden in a specific entry under workers. Each field has the same semantics as the corresponding per-worker field described below. In addition, workers-common must define the `sat-vnet-super-cidr` field, whose value is a CIDR string representing the supernet encompassing all worker `sat-vnet-cidr` subnets. This field is global, cannot be overridden on a per-worker basis, and must not overlap with any underlay network (e.g., physical interfaces of worker hosts). This requirement ensures direct IP routing between containers across workers without the use of NAT.
+
 
 #### `workers`
 
@@ -121,12 +131,8 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
 ##### `sat-vnet-cidr`
 
 * **Type**: string (CIDR notation)
-* **Description**: Underlay IP subnet assigned eth0 interfaces of containers deployed on the worker. Must be unique per worker and must be a subnet of `sat-vnet-super-cidr`.
+* **Description**: Underlay IP subnet assigned eth0 interfaces of containers deployed on the worker and routed by the Docker bridge. Must be unique per worker and must be a subnet of `sat-vnet-super-cidr`. Its size must accommodate all containers deployed on the worker.
 
-##### `sat-vnet-super-cidr`
-
-* **Type**: string (CIDR notation)
-* **Description**: Underlay supernet encompassing all worker container subnets. Used to configure IPTABLES rules for enabling direct IP routing between containers across workers without NAT; the underlying infrastructure must permit unrestricted connectivity within this range.
 
 ##### `cpu`
 
@@ -186,13 +192,14 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
       "enable-routing" : true,
       "routing-module": "extra.isis",
       "routing-metadata": {
-        "isis-area-id": "0001"
+        "isis-area-id": "0001",
+        "advertize-default-route": false
       },
       "auto-assign-ips": true,
       "auto-assign-super-cidr": [
-          {"matchType":"satellite","super-cidr":"192.168.0.0/16"},
-          {"matchType":"gateway","super-cidr":"172.10.0.0/16"},
-          {"matchType":"user","super-cidr":"172.11.0.0/16"}
+          {"matchType":"satellite","super-cidr":"172.100.0.0/16"},
+          {"matchType":"gateway","super-cidr":"172.101.0.0/16"},
+          {"matchType":"user","super-cidr":"172.102.0.0/16"}
       ]
     }
   },
@@ -236,6 +243,11 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
         },
         "labels": {
           "name": "stanford_ground_station"
+        },
+        "L3-config": {
+          "routing-metadata": {
+            "advertize-default-route": true
+          }
         }
       }
     },
@@ -251,11 +263,6 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
         "labels": {
           "name": "san_francisco_user"
         }
-      },
-      "L3-config": {
-        "enable-netem": false,
-        "auto-assign-ips": false,
-        "cidr": "172.99.0.0/30"
       }
     }
   }

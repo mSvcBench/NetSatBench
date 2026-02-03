@@ -1,24 +1,22 @@
 {
-"workers": {
-    "host-1": {
-      "ip": "10.0.1.215",
+  "workers-common": {
       "ssh-user": "ubuntu",
       "ssh-key": "/home/ubuntu/.ssh/id_rsa",
       "sat-vnet": "sat-vnet",
-      "sat-vnet-cidr":"172.100.0.0/16",
-      "sat-vnet-super-cidr": "172.0.0.0/8",
-      "cpu": "4",
-      "mem": "6GiB"
-    },
-    "host-2": {
-      "ip": "10.0.1.144",
-      "ssh-user": "ubuntu",
-      "ssh-key": "/home/ubuntu/.ssh/id_rsa",
-      "sat-vnet": "sat-vnet",
-      "sat-vnet-cidr":"172.101.0.0/16",
-      "sat-vnet-super-cidr": "172.0.0.0/8",
-      "cpu": "4",
-      "mem": "6GiB"
-    }
+      "sat-vnet-super-cidr": "172.20.0.0/16"
+  },
+  "workers": {
+      "host-1": {
+        "ip": "10.0.1.215",
+        "sat-vnet-cidr":"172.20.0.0/24",
+        "cpu": "2",
+        "mem": "2GiB"
+      },
+      "host-2": {
+        "ip": "10.0.1.144",
+        "sat-vnet-cidr":"172.20.1.0/24",
+        "cpu": "2",
+        "mem": "2GiB"
+      }
   }
 }

@@ -21,8 +21,6 @@ The main prefixes are structured as follows:
 │   ├── ...
 │   └── <worker-name>
 │
-├── node-config-common
-│
 ├── epoch-config
 │
 ├── etchosts
@@ -63,15 +61,15 @@ These entries are automatically created and managed by the `control/system-init-
   "ssh-user": "ubuntu",
   "ssh-key": "/home/ubuntu/.ssh/id_rsa",
   "sat-vnet": "sat-vnet",
-  "sat-vnet-cidr": "172.100.0.0/16",
-  "sat-vnet-super-cidr": "172.0.0.0/8",
+  "sat-vnet-cidr": "172.20.0.0/24",
+  "sat-vnet-super-cidr": "172.20.0.0/16",
   "cpu": "4",
   "mem": "6GiB"
 }
 ```
 
 ---
-## /config/node-config-common|epoch-config|nodes
+## /config/epoch-config|nodes
 These prefixes contain the configuration data of the emulated node indexed by name as defined in the `sat-config.json` file (see the [configuration manual](configuration.md)). They are automatically created and managed by the `control/constellation-init.py` script.
 
 ### Example
@@ -96,32 +94,15 @@ These prefixes contain the configuration data of the emulated node indexed by na
     "mem-request": "200MiB", 
     "cpu-limit": 0.2, 
     "mem-limit": "400MiB", 
-    "L3-config": {"enable-netem": true, "enable-routing": true, "routing-module": "extra.isis", "routing-metadata": {"isis-area-id": "0001"}, "auto-assign-ips": true, "auto-assign-super-cidr": [{"matchType": "satellite", "super-cidr": "192.168.0.0/16"}, {"matchType": "gateway", "super-cidr": "172.10.0.0/16"}, {"matchType": "user", "super-cidr": "172.11.0.0/16"}], "cidr": "192.168.0.0/30"}, 
+    "L3-config": {"enable-netem": true, "enable-routing": true, "routing-module": "extra.isis", "routing-metadata": {"isis-area-id": "0001"}, "auto-assign-ips": true, "auto-assign-super-cidr": [{"matchType": "satellite", "super-cidr": "172.100.0.0/16"}, {"matchType": "gateway", "super-cidr": "172.101.0.0/16"}, {"matchType": "user", "super-cidr": "172.102.0.0/16"}], "cidr": "172.100.0.0/16"}, 
     "worker": "host-2", 
-    "eth0_ip": "172.101.0.2"
+    "eth0_ip": "172.20.0.2"
 }
 
 ```
 In addition to the parameters specified in `sat-config.json`, the `eth0_ip` field defines the IP address assigned to the eth0 interface of the node container. This address is used to establish the overlay VXLAN links between nodes and is automatically managed by the sat-agent running inside each container during initialization.
 The `L3-config:cidr` and `worker`fields can be automatically assigned if not set in the `sat-config.json` file.
 
-`/config/node-config-common`
-
-```json
-{
-  "type": "undefined", 
-  "n_antennas": 2, 
-  "metadata": {}, 
-  "image": "msvcbench/sat-container:latest", 
-  "sidecars": [], 
-  "cpu-request": "100m", 
-  "mem-request": "200MiB", 
-  "cpu-limit": "200m", 
-  "mem-limit": "400MiB", 
-  "L3-config": {"enable-netem": true, "enable-routing": true, "routing-module": "extra.isis", "routing-metadata": {"isis-area-id": "0001"}, "auto-assign-ips": true, "auto-assign-super-cidr": [{"matchType": "satellite", "super-cidr": "192.168.0.0/16"}, {"matchType": "gateway", "super-cidr": "172.10.0.0/16"}, {"matchType": "user", "super-cidr": "172.11.0.0/16"}]}
-}
-
-```
 
 `/config/epoch-config`
 
@@ -141,7 +122,7 @@ These entries are automatically created and managed by the `sat-agent`, which co
 `/config/etchosts/sat1`
 
 ```json
- 192.168.0.6
+ 172.100.0.1
 ```
 
 ## /config/links/

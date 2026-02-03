@@ -517,10 +517,7 @@ def main():
     l3_flags = my_config.get("L3-config", {})
     
     # Bootstrapping
-    ## Register my IP address in Etcd
-    while True:
-        if register_my_ip(etcd_client): break
-        time.sleep(2)
+
 
     # L3 Routing Init
     routing_flags = l3_flags.get("enable-routing", False)
@@ -537,11 +534,32 @@ def main():
         except Exception as e:
             log.error(f"❌ Failed to initialize L3 routing: {e}")
             routing = None
-
-    ## Publish node IP for etc hosts usage 
+    
+    ## Publish node IP for etc hosts usage
     available_ips = list(ipaddress.ip_network(my_config.get("L3-config", {}).get("cidr","")).hosts())
     if len(available_ips) > 0:
         etcd_client.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
+    
+    ## Insert sat-vnet-super-cidr route with default gateway as next hop. 
+    ## Necessary for vxlan setup in case of default gateway overriding to mimic satellite gateway behavior. 
+    worker_name = my_config.get("worker", {})
+    val, _ = etcd_client.get(f"/config/workers/{worker_name}")
+    if not val:
+        log.error(f"❌ Failed to fetch config data for worker {worker_name}. No config found.")
+        sys.exit(1)
+    worker_cfg = json.loads(val.decode())
+    if "sat-vnet-super-cidr" not in worker_cfg:
+        log.error(f"❌ Failed to fetch sat-vnet-super-cidr for worker {worker_name}. Key 'sat-vnet-super-cidr' not found.")
+        sys.exit(1)
+    sat_vnet_super_cidr = worker_cfg["sat-vnet-super-cidr"]
+    cmd = ["ip", "route", "show", "default"]
+    result = run(cmd)
+    if result.returncode != 0:
+        log.error("❌ Failed to fetch default gateway for sat-vnet-super-cidr route.")
+        sys.exit(1)
+    default_gw = result.stdout.strip().split()[2]
+    cmd = ["ip", "route", "add", sat_vnet_super_cidr, "via", default_gw]
+    run(cmd)
 
     # Start Event Loops
     threads = [
@@ -555,6 +573,11 @@ def main():
 
     # Initial Links Setup
     process_initial_topology(etcd_client)
+
+    ## Register my IP address in Etcd
+    while True:
+        if register_my_ip(etcd_client): break
+        time.sleep(2)
 
     while True: time.sleep(1)
 

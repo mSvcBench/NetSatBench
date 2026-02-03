@@ -111,13 +111,21 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
 
     workers_resources = []
     for name, cfg in workers.items():
+        sat_vnet_cidr = cfg.get('sat-vnet-cidr', None)
+        if not sat_vnet_cidr:
+            log.error(f"❌ Worker {name} missing 'sat-vnet-cidr' configuration. Cannot proceed with scheduling.")
+            sys.exit(1)
+        sat_vnet_cidr_mask = sat_vnet_cidr.split('/')[1]
+        max_nodes = 2**(32 - int(sat_vnet_cidr_mask)) - 3  # reserve 5 IPs for network, gateway, broadcast, etc.
         workers_resources.append({
             'name': name,
             'data': cfg,
             'cpu': parse_cpu(cfg.get('cpu', 0.0)),
             'mem': parse_mem(cfg.get('mem', 0.0)),
             'cpu-used': parse_cpu(cfg.get('cpu-used', 0.0)),
-            'mem-used': parse_mem(cfg.get('mem-used', 0.0))
+            'mem-used': parse_mem(cfg.get('mem-used', 0.0)),
+            "assigned-nodes": [],
+            "max-nodes": max_nodes
         })
 
     def get_worker_score(w):
@@ -151,24 +159,32 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
         for worker in workers_resources:
             free_cpu = worker['cpu'] - worker['cpu-used']
             free_mem = worker['mem'] - worker['mem-used']
-            if free_cpu >= node['cpu_req'] and free_mem >= node['mem_req']:
+            if free_cpu >= node['cpu_req'] and free_mem >= node['mem_req'] and len(worker["assigned-nodes"]) < worker["max-nodes"]:
                 # Allocate logic
                 worker['cpu-used'] += node['cpu_req'] if node['cpu_req']> 0.0 else 0.000001  # avoid zero cpu consumption for round-robin scheduling 
                 worker['mem-used'] += node['mem_req'] if node['mem_req'] > 0.0 else 0.000001  # avoid zero mem consumption for round-robin scheduling
-                
+                worker["assigned-nodes"].append(node['name'])
                 # Update the Config Dictionary directly
                 node['data']['worker'] = worker['name']
                 assigned = True
                 log.info(f"    ➞ Assigned Node: {node['name']} to Worker: {worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {round(node['mem_req'],4)}GiB)")
                 break
         if not assigned:
-            # Not enough resource found. Overcommit node with highest free resources
-            best_worker = workers_resources[0]
-            best_worker['cpu-used'] += node['cpu_req'] if node['cpu_req']> 0.0 else 0.000001  # avoid zero cpu consumption for round-robin scheduling 
-            best_worker['mem-used'] += node['mem_req'] if node['mem_req'] > 0.0 else 0.000001  # avoid zero mem consumption for round-robin scheduling
-            node['data']['worker'] = best_worker['name']
-            log.warning(f"    ⚠️ Overcommitted Node: {node['name']} to Worker: {best_worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {node['mem_req']}GiB)")
-
+            # Not enough resource found. Overcommit node with highest free resources but respect max-nodes
+            for worker in workers_resources:
+                if len(worker["assigned-nodes"]) < worker["max-nodes"]:
+                    best_worker = worker
+                    assigned = True
+                    break
+            if assigned:
+                best_worker['cpu-used'] += node['cpu_req'] if node['cpu_req']> 0.0 else 0.000001  # avoid zero cpu consumption for round-robin scheduling 
+                best_worker['mem-used'] += node['mem_req'] if node['mem_req'] > 0.0 else 0.000001  # avoid zero mem consumption for round-robin scheduling
+                best_worker["assigned-nodes"].append(node['name'])
+                node['data']['worker'] = best_worker['name']
+                log.warning(f"    ⚠️ Overcommitted Node: {node['name']} to Worker: {best_worker['name']} (CPU Req: {node['cpu_req']}, MEM Req: {node['mem_req']}GiB)")
+            else:
+                log.error(f"❌ Unable to schedule Node: {node['name']}. No available workers with available underlay IP address, extend sat-vnet-cidr.")
+                sys.exit(1)
     # update worker config in etcd with usage stats
     for worker in workers_resources:
         worker_cfg = worker['data'].copy()

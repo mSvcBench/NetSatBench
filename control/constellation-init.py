@@ -121,8 +121,6 @@ def apply_config_to_etcd(etcd, config_data: dict):
             if key not in allowed_keys:
                 log.warning(f"⚠️ Unexpected key '{key}', allowed keys are {allowed_keys}, skipping...")
                 continue
-            if key == "node-config-common":
-                etcd.put(f"/config/{key}", json.dumps(value))
             elif key in ["epoch-config"]:
                 etcd.put(f"/config/{key}", json.dumps(value))
             elif key == "nodes":
@@ -144,8 +142,8 @@ def apply_config_to_etcd(etcd, config_data: dict):
                         json.dumps(node_cfg),
                     )
                 log.info(f"✅ IP assignment process completed.")
-        log.info(f"👍 Successfully injected satellite system config to Etcd.")
-        log.info("ℹ️  Proceed with constellation-deploy.py to deploy node containers on workers.")
+        log.info("👍 Successfully injected satellite system config to Etcd.")
+        log.info("▶️  Proceed with constellation-deploy.py to deploy node containers on workers.")
 
     except Exception as e:
         log.error(f"❌ Error in apply_config_to_etcd: {e}")

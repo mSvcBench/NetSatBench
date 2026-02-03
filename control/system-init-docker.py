@@ -5,8 +5,9 @@ import subprocess
 import json
 import os
 import sys
-import re
 import logging
+import copy
+from typing import Any, Mapping
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -71,6 +72,41 @@ def run(cmd: str) -> subprocess.CompletedProcess:
 def load_json(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+def merge_worker_common_config(config_data: dict) -> dict:
+    worker_common_cfg = config_data.get("workers-common", {})
+    workers_cfg = config_data.get("workers", {})
+
+    merged_workers_cfg = {}
+    for name, worker_cfg in workers_cfg.items():
+        merged_workers_cfg[name] = deep_merge(worker_common_cfg, worker_cfg)
+
+    return {**config_data, "workers": merged_workers_cfg}
+
+def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Recursively merge override into base.
+    - Dict+dict: merge recursively
+    - Otherwise: override wins
+    Returns a NEW dict with NO shared nested dicts with inputs.
+    """
+    out: dict[str, Any] = {}
+
+    # Start with base (deep-copied structure)
+    for k, v in base.items():
+        if isinstance(v, dict):
+            out[k] = deep_merge(v, {})   # makes a fresh nested dict
+        else:
+            out[k] = copy.deepcopy(v)             # safe for lists/objects
+
+    # Apply override
+    for k, v in override.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = deep_merge(v, {}) if isinstance(v, dict) else copy.deepcopy(v)
+
+    return out
 
 # ==========================================
 # Main Init Logic
@@ -148,16 +184,30 @@ def main():
     # ==========================================
     ## load json from file config.json and apply to Etcd
 
-    allowed_keys = ["satellites", "users", "grounds", "L3-config-common", "workers", "epoch-config"]
+    allowed_keys = ["workers", "workers-common"]
 
     # A. Push Worker Config to Etcd
     if "workers" not in config:
         log.error(f"❌ Error: 'workers' key not found in {args.config}.")
         sys.exit(1)
-    for key, value in config.items():
+    if "workers-common" not in config:
+        log.error(f"❌ Error: 'workers-common' key not found in {args.config}.")
+    if "sat-vnet-super-cidr" not in config.get("workers-common", {}):
+        log.error(f"❌ Error: 'sat-vnet-super-cidr' not found in 'workers-common' in {args.config}.")
+        sys.exit(1)
+    
+    # merge config common into each worker, worker overrides common
+    merged_config = merge_worker_common_config(config)
+    workers = merged_config.get("workers", {})
+    # override sat-vnet-super-cidr back to common value
+    sat_vnet_super_cidr_common = config["workers-common"]["sat-vnet-super-cidr"]
+    for worker_name, worker in workers.items():
+        worker["sat-vnet-super-cidr"] = sat_vnet_super_cidr_common
+    
+    for key, value in merged_config.items():
         if key not in allowed_keys:
             # the key should not be present in epoch file, skip it
-            log.warning(f"❌ [{args.config}] Unexpected key '{key}' found in epoch file, skipping...")
+            log.warning(f"❌ [{args.config}] Unexpected key '{key}' found in worker-config, skipping...")
             continue
         elif key in ["workers"]:
             for k, v in value.items():
@@ -168,7 +218,14 @@ def main():
     # CONFIGURE WORKERS    
     # ==========================================
 
-    workers = get_prefix_data('/config/workers/')
+    workers = merged_config.get("workers", {})
+    mandatory_keys = ["ssh-user","ssh-key","ip", "cpu","mem","sat-vnet-cidr","sat-vnet","sat-vnet-super-cidr"]
+    for worker_name, worker in workers.items():
+        for key in mandatory_keys:
+            if key not in worker:
+                log.error(f"❌ Error: Mandatory key '{key}' missing in worker '{worker_name}'.")
+                sys.exit(1)
+
     for worker_name, worker in workers.items():
         ssh_user = worker.get('ssh-user', 'ubuntu')
         ssh_ip = worker.get('ip', worker_name)
@@ -302,7 +359,7 @@ def main():
             else:
                 log.info(f"    ✅ IP route to containers in {other_worker_name} added successfully")
     log.info("👍 All workers configured successfully.")
-    log.info("ℹ️ Proceed with constellation-init.py to upload constellation configuration to Etcd.")
+    log.info("▶️ Proceed with constellation-init.py to upload constellation configuration to Etcd.")
         
 
 if __name__ == "__main__":

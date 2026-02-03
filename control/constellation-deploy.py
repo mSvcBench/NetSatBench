@@ -430,7 +430,7 @@ def main() -> int:
         log.warning("⚠️ Some nodes did not report their eth0_ip in Etcd within the expected time. Could be an Etcd connection problem")
     else:
         log.info("👍 Constellation deployment completed and all nodes running.")
-        log.info("ℹ️ Proceed with constellation-run.py to parse epoch files and start the emulation.")
+        log.info("▶️  Proceed with constellation-run.py to parse epoch files and start the emulation.")
 
 if __name__ == "__main__":
     raise SystemExit(main())

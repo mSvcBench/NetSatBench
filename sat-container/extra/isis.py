@@ -57,7 +57,29 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
         cmd = ["service", "frr", "restart"]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1)  # Allow some time for FRR to restart
-        msg=f"  ✅ IS-IS configured (SysID: {sys_id}, AreaID: {area_id})"
+
+        ## Configure advertisement of default route if specified in config
+        if l3_config.get("routing-metadata", {}).get("advertize-default-route", False):
+            cmd = ["ip", "route", "show", "default"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                msg=f"  ❌ IS-IS default route advertisement failed: Unable to determine local default route."
+                return msg, False
+            default_gw = result.stdout.strip().split()[2]
+            cmd = [
+                "vtysh",
+                "-c", "conf t",
+                "-c", f"ip route 0.0.0.0/1 {default_gw}",
+                "-c", f"ip route 128.0.0.0/1 {default_gw}",
+                "-c", "router isis CORE",
+                "-c", "redistribute ipv4 static level-2",
+                "-c", "end"
+            ]
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ## enable NAT on eth0 interface for outgoing traffic
+            cmd = ["iptables", "-t", "nat", "-A", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE"]
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        msg=f"  ✅ IS-IS configured (SysID: {sys_id}, AreaID: {area_id}, Default route advertisement: {'enabled' if l3_config.get('routing-metadata', {}).get('advertize-default-route', False) else 'disabled'})"
         return msg, True 
     
     except Exception as e:

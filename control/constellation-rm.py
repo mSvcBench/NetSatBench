@@ -278,7 +278,7 @@ def main():
     # CLEAN ETCD ENTRIES
     # ==========================================
     log.info("🧼 Cleaning up Etcd entries...")
-    prefixes = ["/config/node-config-common", "/config/nodes/", "/config/epoch-config", "/config/links/", "/config/run","/config/etchosts/"]
+    prefixes = ["/config/nodes/", "/config/epoch-config", "/config/links/", "/config/run","/config/etchosts/"]
     for prefix in prefixes:
         log.info(f"   ➞ Deleting keys with prefix {prefix} ...")
         etcd_client.delete_prefix(prefix)
