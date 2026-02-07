@@ -29,11 +29,12 @@ import xml.etree.ElementTree as ET
 import sys
 # import from upper dir for constellation generation and connectivity plugins
 sys.path.append(str(Path(__file__).parent.parent))  # adjust as needed
+from NetSatBenchKit.process_one_shell import process_one_shell
 import src.XML_constellation.constellation_entity.ground_station as GS
 import src.XML_constellation.constellation_entity.satellite as SAT
 import src.XML_constellation.constellation_entity.user as USER
 import re
-from typing import List, Tuple, Dict, Optional
+from typing import List, Dict, Optional
 import importlib
 
 # ----------------------- 
@@ -60,49 +61,6 @@ def read_xml_file(file_path):
     tree = ET.parse(file_path)
     root = tree.getroot()
     return {root.tag: xml_to_dict(root)}
-
-## Convert lat/long/alt to ECEF coordinates
-def latilong_to_descartes(transformed_object):
-    a = 6371000.0  # Earth's equatorial radius in meters
-    e2 = 0.00669438002290 # Square of Earth's eccentricity
-    longitude = math.radians(transformed_object.longitude)
-    latitude = math.radians(transformed_object.latitude)
-    fac1 = 1 - e2 * math.sin(latitude) * math.sin(latitude)
-    N = a / math.sqrt(fac1)
-    # the unit of satellite height above the ground is meters
-    h = transformed_object.altitude * 1000
-    X = (N + h) * math.cos(latitude) * math.cos(longitude)
-    Y = (N + h) * math.cos(latitude) * math.sin(longitude)
-    Z = (N * (1 - e2) + h) * math.sin(latitude)
-    return X, Y, Z
-
-## Judge if satellite can see the point on the ground based on minimum elevation angle
-def judgePointToSatellite(sat_x , sat_y , sat_z , point_x , point_y , point_z , minimum_elevation):
-    A = 1.0 * point_x * (point_x - sat_x) + point_y * (point_y - sat_y) + point_z * (point_z - sat_z)
-    B = 1.0 * math.sqrt(point_x * point_x + point_y * point_y + point_z * point_z)
-    C = 1.0 * math.sqrt(math.pow(sat_x - point_x, 2) + math.pow(sat_y - point_y, 2) + math.pow(sat_z - point_z, 2))
-    angle = math.degrees(math.acos(A / (B * C))) # calculate angles and convert radians to degrees
-    if angle < 90 + minimum_elevation or math.fabs(angle - 90 - minimum_elevation) <= 1e-6:
-        return False, angle
-    else:
-        return True, angle
-
-# Find the corresponding satellite according to the satellite's ID.
-def search_satellite_by_id(sh , target_id):
-    # the total number of satellites contained in the sh layer shell
-    number_of_satellites_in_sh = sh.number_of_satellites
-    # the total number of tracks contained in the sh layer shell
-    number_of_orbits_in_sh = sh.number_of_orbits
-    # in the sh layer shell, the number of satellites contained in each orbit
-    number_of_satellites_per_orbit = (int)(number_of_satellites_in_sh / number_of_orbits_in_sh)
-    # find the corresponding satellite according to the satellite id
-    # traverse each orbit layer by layer, orbit_index starts from 1
-    for orbit_index in range(1, number_of_orbits_in_sh + 1, 1):
-        # traverse the satellites in each orbit, satellite_index starts from 1
-        for satellite_index in range(1, number_of_satellites_per_orbit + 1, 1):
-            satellite = sh.orbits[orbit_index - 1].satellites[satellite_index - 1]  # get satellite object
-            if satellite.id == target_id :
-                return satellite
 
 ## Create GroundStation and User objects from XML
 def read_ground_stations_xml(gs_xml_path: Path) -> List[GS.GroundStation]:
@@ -152,14 +110,14 @@ def create_exteded_h5(
     SATs: List[SAT.satellite],
     GSs: List[GS.ground_station],
     USERs: List[USER.user],
-    min_elevation_deg: float,
+    min_elevation_deg: float = 25.0,
     sat_ext_conn_function: Optional[Dict[str, callable]] = None,
     gs_ext_conn_function: Optional[callable] = None,
     usr_ext_conn_function: Optional[callable] = None,
     rate: Optional[dict] = None,
     loss: Optional[dict] = None,
-    overwrite: bool = False,
-    dT: Optional[int] = None
+    dT: Optional[int] = 15,
+    overwrite: bool = True
 ) -> None:
     
     if not GSs:
@@ -210,10 +168,11 @@ def create_exteded_h5(
                                   GSs=GSs,
                                   USERs=USERs,
                                   SATs=SATs,
-                                  h5_pos_root=h5_pos_shell, h5_del_root=h5_del_shell,
-                                  h5_pos_root_ext=h5_pos_shell_ext, h5_del_root_ext=h5_del_shell_ext, h5_type_root_ext=h5_type_shell_ext, h5_rate_root_ext=h5_rate_shell_ext, h5_loss_root_ext=h5_loss_shell_ext,
+                                  min_elevation_deg=min_elevation_deg,
+                                  h5_pos_root=h5_pos_root, h5_del_root=h5_del_root,
+                                  h5_pos_root_ext=h5_pos_root_ext, h5_del_root_ext=h5_del_root_ext, h5_type_root_ext=h5_type_root_ext, h5_rate_root_ext=h5_rate_root_ext, h5_loss_root_ext=h5_loss_root_ext,
                                   gs_ext_conn_function=gs_ext_conn_function, usr_ext_conn_function=usr_ext_conn_function, sat_ext_conn_function=sat_ext_conn_function,
-                                  rate=rate, loss=loss, dT=dT) 
+                                  rate=rate, loss=loss, dT=dT, overwrite=overwrite)
         else:
             for shell in sorted(h5_pos_root.keys()):
                 if shell not in h5_del_root:
@@ -254,10 +213,11 @@ def create_exteded_h5(
                                   GSs=GSs,
                                   USERs=USERs,
                                   SATs=SATs,
+                                  min_elevation_deg=min_elevation_deg,
                                   h5_pos_root=h5_pos_shell, h5_del_root=h5_del_shell,
                                   h5_pos_root_ext=h5_pos_shell_ext, h5_del_root_ext=h5_del_shell_ext, h5_type_root_ext=h5_type_shell_ext, h5_rate_root_ext=h5_rate_shell_ext, h5_loss_root_ext=h5_loss_shell_ext,
                                   gs_ext_conn_function=gs_ext_conn_function, usr_ext_conn_function=usr_ext_conn_function, sat_ext_conn_function=sat_ext_conn_function,
-                                  rate=rate, loss=loss, dT=dT)
+                                  rate=rate, loss=loss, dT=dT, overwrite=overwrite)
 ## build SatarPerf constellation from XML configuration. Wrote position group in h5 file 
 def build_constellation_xml(constellation_name: str, dT: int):
     from src.constellation_generation.by_XML import constellation_configuration
@@ -335,8 +295,8 @@ def main():
                     help="Timeslot interval in seconds")
     ap.add_argument("--isl-connectivity-plugin", default="positive_Grid",
                     help="Connectivity plugin name for ISL (default is positive_Grid)")
-    ap.add_argument("--gs-antenna-plugin", default="void_antenna",
-                    help="Antenna plugin name for ground station links (default is void_antenna)")
+    ap.add_argument("--gs-antenna-plugin", default="pass_antenna",
+                    help="Antenna plugin name for ground station links (default is pass_antenna)")
     ap.add_argument("--user-antenna-plugin", default="pass_antenna",
                     help="Antenna plugin name for user links (default is pass_antenna)")
     ap.add_argument("--isl-rate-plugin", default="pass_rate",
@@ -352,9 +312,9 @@ def main():
     ap.add_argument("--user-loss-plugin", default="pass_loss",
                     help="Loss plugin name for user links (default is pass_loss)")
     
-    ap.add_argument("--isl-rate", default="100mbit", help="Default rate of ISL links (default: 100mbit)")
-    ap.add_argument("--gs-rate", default="100mbit", help="Default rate of Sat to Ground Station (Gateway) Links (default: 100mbit)")
-    ap.add_argument("--user-rate", default="50mbit", help="Default rate of Sat to User links (default: 50mbit)")
+    ap.add_argument("--isl-rate", type=float, default=100.0, help="Default rate of ISL links in Mbits (default: 100)")
+    ap.add_argument("--gs-rate", type=float, default=100.0, help="Default rate of Sat to Ground Station (Gateway) Links in Mbits (default: 100)")
+    ap.add_argument("--user-rate", type=float, default=50.0, help="Default rate of Sat to User links in Mbits (default: 50)")
     ap.add_argument("--loss-isl", type=float, default=0.0, help="Default loss rate for ISL links (default: 0.0)")
     ap.add_argument("--loss-gs", type=float, default=0.0, help="Default loss rate for Sat to Ground Station (Gateway) Links (default: 0.0)")
     ap.add_argument("--loss-user", type=float, default=0.0, help="Default loss rate for Sat to User links (default: 0.0)")
@@ -413,29 +373,52 @@ def main():
     if args.include_ground_stations:
         gs_xml = Path("config") / "ground_stations" / f"{args.constellation_name}.xml"
         gs_conn_plugin_path_base = "NetSatBenchKit.ext_connectivity_plugin"
-        gs_ext_plugin = {}
+        gs_ext_conn_function = {}
         try:
             gs_list = read_ground_stations_xml(gs_xml)
-            gs_ext_plugin["antenna"] = importlib.import_module(gs_conn_plugin_path_base + "." + args.gs_antenna_plugin)
-            gs_conn_function = getattr(gs_ext_plugin, args.gs_conn_plugin)
+            gs_ext_plugin_antenna = importlib.import_module(gs_conn_plugin_path_base + "." + args.gs_antenna_plugin)
+            gs_ext_plugin_rate = importlib.import_module(gs_conn_plugin_path_base + "." + args.gs_rate_plugin)
+            gs_ext_plugin_loss = importlib.import_module(gs_conn_plugin_path_base + "." + args.gs_loss_plugin)
+            gs_ext_conn_function["antenna"] = getattr(gs_ext_plugin_antenna, args.gs_antenna_plugin)
+            gs_ext_conn_function["rate"] = getattr(gs_ext_plugin_rate, args.gs_rate_plugin)
+            gs_ext_conn_function["loss"] = getattr(gs_ext_plugin_loss, args.gs_loss_plugin)
         except Exception as e:
-            print(f"Error reading ground stations XML: {e} or importing connectivity plugin '{gs_conn_plugin_path}': {e}")
+            print(f"❌ Error reading ground stations XML: {e} or importing connectivity plugins in '{gs_conn_plugin_path_base}': {e}")
             gs_list = []
+            gs_ext_conn_function = {}
     else:
         gs_list = []
     
     if args.include_users:
         usr_xml = Path("config") / "users" / f"{args.constellation_name}.xml"
-        usr_conn_plugin_path = f"NetSatBenchKit.ext_connectivity_plugin.{args.user_conn_plugin}"
+        usr_conn_plugin_path_base = "NetSatBenchKit.ext_connectivity_plugin"
+        usr_ext_conn_function = {}
         try:
             usr_list = read_users_xml(usr_xml)
-            usr_connectivity_plugin = importlib.import_module(usr_conn_plugin_path)
-            usr_conn_function = getattr(usr_connectivity_plugin, args.user_conn_plugin)
+            usr_ext_plugin_antenna = importlib.import_module(usr_conn_plugin_path_base + "." + args.user_antenna_plugin)
+            usr_ext_plugin_rate = importlib.import_module(usr_conn_plugin_path_base + "." + args.user_rate_plugin)
+            usr_ext_plugin_loss = importlib.import_module(usr_conn_plugin_path_base + "." + args.user_loss_plugin)
+            usr_ext_conn_function["antenna"] = getattr(usr_ext_plugin_antenna, args.user_antenna_plugin)
+            usr_ext_conn_function["rate"] = getattr(usr_ext_plugin_rate, args.user_rate_plugin)
+            usr_ext_conn_function["loss"] = getattr(usr_ext_plugin_loss, args.user_loss_plugin)
         except Exception as e:
-            print(f"Error reading users XML: {e} or importing connectivity plugin '{usr_conn_plugin_path}': {e}")
+            print(f"❌ Error reading users XML: {e} or importing connectivity plugins in '{usr_conn_plugin_path_base}': {e}")
             usr_list = []
+            usr_ext_conn_function = {}
     else:
         usr_list = []
+    
+    # add extended conn plugin functions for ISL
+    sat_conn_plugin_path_base = "NetSatBenchKit.ext_connectivity_plugin"
+    sat_ext_conn_function = {}
+    try:
+        sat_ext_plugin_rate = importlib.import_module(sat_conn_plugin_path_base + "." + args.isl_rate_plugin)
+        sat_ext_plugin_loss = importlib.import_module(sat_conn_plugin_path_base + "." + args.isl_loss_plugin)
+        sat_ext_conn_function["rate"] = getattr(sat_ext_plugin_rate, args.isl_rate_plugin)
+        sat_ext_conn_function["loss"] = getattr(sat_ext_plugin_loss, args.isl_loss_plugin)
+    except Exception as e:
+        print(f"❌ Error importing ISL connectivity plugins in '{sat_conn_plugin_path_base}': {e}")
+        sat_ext_conn_function = {}
     
     # create SAT object list with consistent indexing as the /position datasets in the .h5 file (i.e. if satellite with id X is at index i in the /position/timeslotN dataset, then SATs[i-1] should be that satellite object since index 0 is reserved/void as per StarPerf convention)
     SATs = []
@@ -447,21 +430,21 @@ def main():
     create_exteded_h5(
         h5_path=out_h5,
         SATs=SATs,
-        GSs=gs_list,
-        USERs=usr_list,
+        GSs=gs_list if args.include_ground_stations else [],
+        USERs=usr_list if args.include_users else [],
         min_elevation_deg=args.minimum_elevation,
-        sat_conn_function=sat_conn_function,
-        gs_conn_function=gs_conn_function if args.include_ground_stations else None,
-        usr_conn_function=usr_conn_function if args.include_users else None,
+        sat_ext_conn_function=sat_ext_conn_function,
+        gs_ext_conn_function=gs_ext_conn_function if args.include_ground_stations else {},
+        usr_ext_conn_function=usr_ext_conn_function if args.include_users else {},
         dT=args.dT,
         rate=rate,
         loss=loss,
-        overwrite=args.overwrite_nsb_groups,
+        overwrite=args.overwrite_ext_groups,
     )
 
     # 3) Verify output
     verify_ext_h5(out_h5)
-    print(f"👍 Produced h5 matrix in: {out_h5}")
+    print(f"👍 Produced extended h5 matrix in: {out_h5}")
     print(f"▶️  Proceed with NetSatBenchExport.py to generate sat-config.json and epoch files.")
         
 if __name__ == "__main__":
