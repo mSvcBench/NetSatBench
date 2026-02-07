@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
-StarPerf 2.0 minimal simulation driver according to interface_convention.pdf.
+StarPerf 2.0 constellation generation with extended h5 data 
 
 Pipeline:
 1) Build constellation (XML or TLE)
-2) (Optional) beam placement (bent-pipe / GSL-related)
-3) ISL connectivity (positive_Grid by default)
-4) Verify HDF5 output contains delay/timeslot*
+2) ISL connectivity (positive_Grid by default)
+3) Add ground stations and users links
+4) Extend h5 with delay/rate/loss/type datasets for ISL, GS, and user links
 
-This follows the framework+plugin execution mechanism described in the PDF:
-- StarPerf.py is the official entry, but each module can be called independently. :contentReference[oaicite:5]{index=5}
-- Connectivity plugins are managed by connectivity_mode_plugin_manager and default to positive_Grid. :contentReference[oaicite:6]{index=6}
-- After ISL establishment, plugin must write delay matrices to data/*_constellation/*.h5 under group 'delay' with datasets 'timeslotN'. :contentReference[oaicite:7]{index=7}
+Conventions:
+- The output .h5 file must contain groups: /position_ext, /delay_ext, /type_ext, /rate_ext, /loss_ext. Each group should have the same internal structure as the input /position and /delay groups produced by StarPerf, with datasets named timeslot1, timeslot2, etc. corresponding to each timeslot.
+- First index are for satellites (starting at 0, followed by ground stations and users in the order they are defined in the input XML files if included.
+- The position_ext datasets has three columns for X/Y/Z ECEF coordinates. 
+- The delay_ext datasets is a square matrix where the value at [i,j] is the delay from node i to node j in seconds, or 0 if no link exists.
+- The rate_ext datasets is a square matrix where the value at [i,j] is the link rate in Mbps.
+- The loss_ext datasets is a square matrix where the value at [i,j] is the loss rate as a float between 0 and 1.
+- The type_ext datasets is a vector where the value at [i] is a string indicating the node type ("sat", "gs", or "user").
 """
 
 import argparse
@@ -30,8 +34,12 @@ import src.XML_constellation.constellation_entity.satellite as SAT
 import src.XML_constellation.constellation_entity.user as USER
 import re
 from typing import List, Tuple, Dict, Optional
+import importlib
 
-# Read xml document
+# ----------------------- 
+# HELPERS
+# -----------------------
+## Read xml document
 def xml_to_dict(element):
     if len(element) == 0:
         return element.text
@@ -47,12 +55,13 @@ def xml_to_dict(element):
             result[child.tag] = child_data
     return result
 
-# Read xml document
+## Read xml document
 def read_xml_file(file_path):
     tree = ET.parse(file_path)
     root = tree.getroot()
     return {root.tag: xml_to_dict(root)}
 
+## Convert lat/long/alt to ECEF coordinates
 def latilong_to_descartes(transformed_object):
     a = 6371000.0  # Earth's equatorial radius in meters
     e2 = 0.00669438002290 # Square of Earth's eccentricity
@@ -67,16 +76,35 @@ def latilong_to_descartes(transformed_object):
     Z = (N * (1 - e2) + h) * math.sin(latitude)
     return X, Y, Z
 
+## Judge if satellite can see the point on the ground based on minimum elevation angle
 def judgePointToSatellite(sat_x , sat_y , sat_z , point_x , point_y , point_z , minimum_elevation):
     A = 1.0 * point_x * (point_x - sat_x) + point_y * (point_y - sat_y) + point_z * (point_z - sat_z)
     B = 1.0 * math.sqrt(point_x * point_x + point_y * point_y + point_z * point_z)
     C = 1.0 * math.sqrt(math.pow(sat_x - point_x, 2) + math.pow(sat_y - point_y, 2) + math.pow(sat_z - point_z, 2))
     angle = math.degrees(math.acos(A / (B * C))) # calculate angles and convert radians to degrees
     if angle < 90 + minimum_elevation or math.fabs(angle - 90 - minimum_elevation) <= 1e-6:
-        return False
+        return False, angle
     else:
-        return True
+        return True, angle
 
+# Find the corresponding satellite according to the satellite's ID.
+def search_satellite_by_id(sh , target_id):
+    # the total number of satellites contained in the sh layer shell
+    number_of_satellites_in_sh = sh.number_of_satellites
+    # the total number of tracks contained in the sh layer shell
+    number_of_orbits_in_sh = sh.number_of_orbits
+    # in the sh layer shell, the number of satellites contained in each orbit
+    number_of_satellites_per_orbit = (int)(number_of_satellites_in_sh / number_of_orbits_in_sh)
+    # find the corresponding satellite according to the satellite id
+    # traverse each orbit layer by layer, orbit_index starts from 1
+    for orbit_index in range(1, number_of_orbits_in_sh + 1, 1):
+        # traverse the satellites in each orbit, satellite_index starts from 1
+        for satellite_index in range(1, number_of_satellites_per_orbit + 1, 1):
+            satellite = sh.orbits[orbit_index - 1].satellites[satellite_index - 1]  # get satellite object
+            if satellite.id == target_id :
+                return satellite
+
+## Create GroundStation and User objects from XML
 def read_ground_stations_xml(gs_xml_path: Path) -> List[GS.GroundStation]:
     """
     Parse StarPerf ground station XML (config/ground_stations/<Constellation>.xml).
@@ -115,14 +143,23 @@ def read_users_xml(users_xml_path: Path) -> List[USER.user]:
         USERs.append(user)
     return USERs
 
-def add_nsb_extension_to_h5(
+# -----------------------
+# MAIN FUNCTION
+# -----------------------
+
+def create_exteded_h5(
     h5_path: Path,
+    SATs: List[SAT.satellite],
     GSs: List[GS.ground_station],
     USERs: List[USER.user],
     min_elevation_deg: float,
-    out_position_group: str = "position_nsb",
-    out_delay_group: str = "delay_nsb",
+    sat_ext_conn_function: Optional[Dict[str, callable]] = None,
+    gs_ext_conn_function: Optional[callable] = None,
+    usr_ext_conn_function: Optional[callable] = None,
+    rate: Optional[dict] = None,
+    loss: Optional[dict] = None,
     overwrite: bool = False,
+    dT: Optional[int] = None
 ) -> None:
     
     if not GSs:
@@ -134,35 +171,23 @@ def add_nsb_extension_to_h5(
         print("👤 Empty user list; check your user XML or command line arguments.")
     else:
         print(f"👤 Adding {len(USERs)} users")
+    
+    if not SATs:
+        print("🛰️ Satellite list is empty; check your StarPerf constellation initialization")
+        exit(1)
 
     with h5py.File(h5_path, "a") as f:
         if "position" not in f or "delay" not in f:
             raise RuntimeError("Expected 'position' and 'delay' groups in the .h5 produced by StarPerf.")
 
-        pos_root = f["position"]
-        dly_root = f["delay"]
-        n_gs = len(GSs)
-        gs_pos = np.array([(0.0, 0.0, 0.0)] * n_gs)  # placeholder for GS positions in (longitude, latitude, altitude)
-        gs_pos_ecef = np.array([(0.0, 0.0, 0.0)] * n_gs)  # placeholder for GS positions in ECEF
-        n_usrs = len(USERs)
-        usr_pos = np.array([(0.0, 0.0, 0.0)] * n_usrs)  # placeholder for USER positions in (longitude, latitude, altitude) 
-        usr_pos_ecef = np.array([(0.0, 0.0, 0.0)] * n_usrs)  # placeholder for USER positions in ECEF
-
-        for i, gs in enumerate(GSs):
-            gs.altitude = 0.0  # Assuming GS altitude is 0 for simplicity; adjust if your XML includes altitude
-            gs_pos[i,:] = (gs.longitude, gs.latitude, gs.altitude)  # fill in (lon, lat, alt)
-            gs_pos_ecef[i,:] = latilong_to_descartes(gs)  # convert to (x,y,z) in ECEF
-
-        for i, usr in enumerate(USERs):
-            usr.altitude = 0.0  # Assuming USER altitude is 0 for simplicity; adjust if your XML includes altitude
-            usr_pos[i,:] = (usr.longitude, usr.latitude, usr.altitude)  # fill in (lon, lat, alt)
-            usr_pos_ecef[i,:] = latilong_to_descartes(usr)  # convert to (x,y,z) in ECEF
+        h5_pos_root = f["position"]
+        h5_del_root = f["delay"]
         
         # Detect layout: if /position contains timeslot datasets -> single-shell, else treat children as shells.
         def _is_timeslot_name(name: str) -> bool:
             return bool(re.match(r"^timeslot\d+$", name))
 
-        pos_children = list(pos_root.keys())
+        pos_children = list(h5_pos_root.keys())
         single_shell = any(_is_timeslot_name(k) for k in pos_children)
 
         # Create / reuse output groups at root
@@ -173,162 +198,69 @@ def add_nsb_extension_to_h5(
                     return f.create_group(name)
                 return f[name]
             return f.create_group(name)
-        out_type_root = _ensure_group_at_root("type_nsb")
-        out_pos_root = _ensure_group_at_root(out_position_group)
-        out_dly_root = _ensure_group_at_root(out_delay_group)
+        
+        h5_type_root_ext = _ensure_group_at_root("type_ext")
+        h5_rate_root_ext = _ensure_group_at_root("rate_ext")
+        h5_loss_root_ext = _ensure_group_at_root("loss_ext")
+        h5_pos_root_ext = _ensure_group_at_root("position_ext")
+        h5_del_root_ext = _ensure_group_at_root("delay_ext")
 
-        def process_one_shell(shell_name: Optional[str], pos_g, dly_g, out_pos_g, out_dly_g, out_type_g, gs_pos, gs_pos_ecef, usrs_pos, usrs_pos_ecef):
-            # Discover timeslots
-            timeslots = sorted(
-                pos_g.keys(),
-                key=lambda s: int("".join(ch for ch in s if ch.isdigit()) or "0"),
-            )
-            if not timeslots:
-                raise RuntimeError(f"No timeslot datasets under /position/{shell_name or ''}.")
-
-            # Satellite count from first timeslot
-            first_pos = pos_g[timeslots[0]][:]
-            n_sat = int(first_pos.shape[0])
-            n_gs = int(gs_pos.shape[0])
-            n_usrs = int(usrs_pos.shape[0])
-            n_tot = n_sat + n_gs + n_usrs
-
-            for ts in timeslots:
-                sat_pos = pos_g[ts][:]        # (n_sat, 3) longitude, latitude, altitude
-                sat_sat_delay = dly_g[ts][:,:]  # (n_sat+1, n_sat+1) #  first row/col left void by StarPerf
-
-                if n_gs > 0:
-                    pos_ext = np.vstack([sat_pos.astype("float64", copy=False), gs_pos])
-                else:
-                    pos_ext = sat_pos.astype("float64", copy=False)
-                
-                if n_usrs > 0:
-                    pos_ext =  np.vstack([pos_ext, usrs_pos])
-
-                # Extended delay: copy sat-sat then fill sat-gs
-                d_ext = np.zeros((n_tot+1, n_tot+1), dtype="float64")
-                d_ext[:n_sat+1, :n_sat+1] = sat_sat_delay
-
-                for gi, gsp_ecef in enumerate(gs_pos_ecef):
-                    gidx = n_sat + 1 + gi
-                    for si, satp in enumerate(sat_pos):
-                        sidx = si + 1
-                        transient_object = SAT.satellite(0,0,False)
-                        transient_object.longitude = float(satp[0])
-                        transient_object.latitude = float(satp[1])
-                        transient_object.altitude = float(satp[2])
-                        spos_ecef = latilong_to_descartes(transient_object)  # get GS position in ECEF
-                        elev_judge = judgePointToSatellite(spos_ecef[0] , spos_ecef[1] , spos_ecef[2] ,
-                                                           gsp_ecef[0] , gsp_ecef[1] , gsp_ecef[2] ,
-                                                           min_elevation_deg)
-                        if elev_judge:
-                            distance = math.sqrt(
-                                (spos_ecef[0] - gsp_ecef[0]) ** 2
-                                + (spos_ecef[1] - gsp_ecef[1]) ** 2
-                                + (spos_ecef[2] - gsp_ecef[2]) ** 2
-                            ) / 1000  # in km
-                            delay_s = distance / 300000
-                            d_ext[sidx, gidx] = delay_s
-                            d_ext[gidx, sidx] = delay_s 
-                
-                for ui, usp_ecef in enumerate(usrs_pos_ecef):
-                    uidx = n_sat + n_gs + 1 + ui
-                    for si, satp in enumerate(sat_pos):
-                        sidx = si + 1
-                        transient_object = SAT.satellite(0,0,False)
-                        transient_object.longitude = float(satp[0])
-                        transient_object.latitude = float(satp[1])
-                        transient_object.altitude = float(satp[2])
-                        spos_ecef = latilong_to_descartes(transient_object)  # get GS position in ECEF
-                        elev_judge = judgePointToSatellite(spos_ecef[0] , spos_ecef[1] , spos_ecef[2] ,
-                                                           usp_ecef[0] , usp_ecef[1] , usp_ecef[2] ,
-                                                           min_elevation_deg)
-                        if elev_judge:
-                            distance = math.sqrt(
-                                (spos_ecef[0] - usp_ecef[0]) ** 2
-                                + (spos_ecef[1] - usp_ecef[1]) ** 2
-                                + (spos_ecef[2] - usp_ecef[2]) ** 2
-                            ) / 1000  # in km
-                            delay_s = distance / 300000
-                            d_ext[sidx, uidx] = delay_s
-                            d_ext[uidx, sidx] = delay_s 
-                # Write datasets
-                if ts in out_pos_g:
-                    if overwrite:
-                        del out_pos_g[ts]
-                    else:
-                        raise RuntimeError(
-                            f"Dataset {out_pos_g.name}/{ts} already exists (use --overwrite-gs-groups)."
-                        )
-                if ts in out_dly_g:
-                    if overwrite:
-                        del out_dly_g[ts]
-                    else:
-                        raise RuntimeError(
-                            f"Dataset {out_dly_g.name}/{ts} already exists (use --overwrite-gs-groups)."
-                        )
-                out_dly_g.create_dataset(ts, data=d_ext, compression="gzip", compression_opts=4)
-                out_pos_g.create_dataset(ts,data=pos_ext, compression="gzip", compression_opts=4)              
-            
-            # Write type_nsb dataset
-            type_nsb = np.array([b"satellite"] * n_tot, dtype='S')
-            for gi in range(n_gs):
-                type_nsb[n_sat + gi] = b"gateway"
-            for ui in range(n_usrs):
-                type_nsb[n_sat + n_gs + ui] = b"user"
-            out_type_g.create_dataset("type_nsb", data=type_nsb, compression="gzip", compression_opts=4)
-            
         if single_shell:
-            # Input: /position/timeslot*, /delay/timeslot*
-            process_one_shell(None, pos_root, dly_root, out_pos_root, out_dly_root, out_type_root, gs_pos, gs_pos_ecef, usr_pos, usr_pos_ecef)
+            process_one_shell(shell_name=None,
+                                  GSs=GSs,
+                                  USERs=USERs,
+                                  SATs=SATs,
+                                  h5_pos_root=h5_pos_shell, h5_del_root=h5_del_shell,
+                                  h5_pos_root_ext=h5_pos_shell_ext, h5_del_root_ext=h5_del_shell_ext, h5_type_root_ext=h5_type_shell_ext, h5_rate_root_ext=h5_rate_shell_ext, h5_loss_root_ext=h5_loss_shell_ext,
+                                  gs_ext_conn_function=gs_ext_conn_function, usr_ext_conn_function=usr_ext_conn_function, sat_ext_conn_function=sat_ext_conn_function,
+                                  rate=rate, loss=loss, dT=dT) 
         else:
-            # Input: /position/shellX/timeslot*, /delay/shellX/timeslot*
-            for shell in sorted(pos_root.keys()):
-                if shell not in dly_root:
+            for shell in sorted(h5_pos_root.keys()):
+                if shell not in h5_del_root:
                     raise RuntimeError(f"Shell '{shell}' exists under /position but not under /delay.")
 
-                pos_g = pos_root[shell]
-                dly_g = dly_root[shell]
+                h5_pos_shell = h5_pos_root[shell]
+                h5_del_shell = h5_del_root[shell]
 
                 # Create corresponding output shell groups
-                if shell in out_pos_root:
+                if shell in h5_pos_root_ext:
                     if overwrite:
-                        del out_pos_root[shell]
+                        del h5_pos_root_ext[shell]
                     else:
                         raise RuntimeError(
-                            f"Output group {out_position_group}/{shell} already exists (use --overwrite-gs-groups)."
+                            f"Output group {h5_pos_root_ext.name}/{shell} already exists (use --overwrite-gs-groups)."
                         )
-                if shell in out_dly_root:
+                if shell in h5_del_root_ext:
                     if overwrite:
-                        del out_dly_root[shell]
+                        del h5_del_root_ext[shell]
                     else:
                         raise RuntimeError(
-                            f"Output group {out_delay_group}/{shell} already exists (use --overwrite-gs-groups)."
+                            f"Output group {h5_del_root_ext.name}/{shell} already exists (use --overwrite-gs-groups)."
                         )
-                if shell in out_type_root:
+                if shell in h5_type_root_ext:
                     if overwrite:
-                        del out_type_root[shell]
+                        del h5_type_root_ext[shell]
                     else:
                         raise RuntimeError(
-                            f"Output group type_nsb/{shell} already exists (use --overwrite-gs-groups)."
+                            f"Output group {h5_type_root_ext.name}/{shell} already exists (use --overwrite-gs-groups)."
                         )
 
-                out_pos_shell = out_pos_root.create_group(shell)
-                out_dly_shell = out_dly_root.create_group(shell)
-                out_type_shell = out_type_root.create_group(shell)
-                process_one_shell(shell, pos_g, dly_g, out_pos_shell, out_dly_shell, out_type_shell, gs_pos, gs_pos_ecef, usr_pos, usr_pos_ecef)
-
-
+                h5_pos_shell_ext = h5_pos_root_ext.create_group(shell)
+                h5_del_shell_ext = h5_del_root_ext.create_group(shell)
+                h5_type_shell_ext = h5_type_root_ext.create_group(shell)
+                h5_rate_shell_ext = h5_rate_root_ext.create_group(shell)
+                h5_loss_shell_ext = h5_loss_root_ext.create_group(shell)
+                process_one_shell(shell_name=shell,
+                                  GSs=GSs,
+                                  USERs=USERs,
+                                  SATs=SATs,
+                                  h5_pos_root=h5_pos_shell, h5_del_root=h5_del_shell,
+                                  h5_pos_root_ext=h5_pos_shell_ext, h5_del_root_ext=h5_del_shell_ext, h5_type_root_ext=h5_type_shell_ext, h5_rate_root_ext=h5_rate_shell_ext, h5_loss_root_ext=h5_loss_shell_ext,
+                                  gs_ext_conn_function=gs_ext_conn_function, usr_ext_conn_function=usr_ext_conn_function, sat_ext_conn_function=sat_ext_conn_function,
+                                  rate=rate, loss=loss, dT=dT)
+## build SatarPerf constellation from XML configuration. Wrote position group in h5 file 
 def build_constellation_xml(constellation_name: str, dT: int):
-    """
-    XML constellation generation: the PDF describes calling a constellation_configuration
-    function to build the constellation. :contentReference[oaicite:8]{index=8}
-
-    NOTE: exact import path depends on repo; adjust if needed.
-    """
     from src.constellation_generation.by_XML import constellation_configuration
-    
-    # generate the constellations
     constellation = constellation_configuration.constellation_configuration(dT=dT,
                                                                             constellation_name=constellation_name)
     print('==============================================')
@@ -347,13 +279,8 @@ def build_constellation_xml(constellation_name: str, dT: int):
         print('==============================================')
     return constellation
 
-
+## build SatarPerf constellation object from TLE configuration. Wrote position group in h5 file 
 def build_constellation_tle(constellation_name: str, dT: int):
-    """
-    TLE constellation generation is described as a 5-stage pipeline in the PDF. :contentReference[oaicite:9]{index=9}
-    If your repo exposes a single 'constellation_configuration' wrapper for TLE as well,
-    you can use it; otherwise you must run the stages (download_TLE_data, mapping, positions, etc.).
-    """
     from src.constellation_generation.by_TLE import constellation_configuration
     constellation = constellation_configuration.constellation_configuration(
         dT=dT,
@@ -361,15 +288,9 @@ def build_constellation_tle(constellation_name: str, dT: int):
     )
     return constellation
 
-
+## Run connectivity plugin to determine ISL connectivity and write delay/timeslotN datasets in h5 file. :contentReference[oaicite:14]{index=14}
 def run_connectivity(constellation, plugin_name: str, dT: int, mode: str):
-    """
-    Connectivity execution mechanism per PDF:
-    - instantiate connectivity_mode_plugin_manager
-    - optionally set_connection_mode(plugin_name)
-    - execute_connection_policy(constellation, dT)
-    Default mode after init is 'positive_Grid'. :contentReference[oaicite:10]{index=10}
-    """
+
     # TLE or XML manager lives under the corresponding tree; try both.
     if mode == "tle":
         from src.TLE_constellation.constellation_connectivity import connectivity_mode_plugin_manager
@@ -383,8 +304,8 @@ def run_connectivity(constellation, plugin_name: str, dT: int, mode: str):
         mgr.set_connection_mode(plugin_name)
     mgr.execute_connection_policy(constellation=constellation, dT=dT)
 
-
-def verify_delay_h5(h5_path: Path):
+## Verify the output .h5 file has the required groups and datasets as per the interface convention. :contentReference[oaicite:7]{index=7}
+def verify_ext_h5(h5_path: Path):
     """
     Verify the output contract required by the PDF:
     - Group name 'delay'
@@ -394,7 +315,7 @@ def verify_delay_h5(h5_path: Path):
         raise FileNotFoundError(f"Expected output file not found: {h5_path}")
 
     with h5py.File(h5_path, "r") as f:
-        groups = ["delay_nsb","position_nsb","type_nsb"]
+        groups = ["delay_ext","position_ext","type_ext","rate_ext","loss_ext"]
         for g in groups:
             if g not in f:
                 raise RuntimeError(f"{h5_path} has no '{g}' group")
@@ -412,8 +333,31 @@ def main():
                     help="Must match subfolder name in ./config/*_constellation/ (default: OneWeb)")
     ap.add_argument("--dT", type=int, default=15, 
                     help="Timeslot interval in seconds")
-    ap.add_argument("--connectivity-plugin", default="positive_Grid",
+    ap.add_argument("--isl-connectivity-plugin", default="positive_Grid",
                     help="Connectivity plugin name for ISL (default is positive_Grid)")
+    ap.add_argument("--gs-antenna-plugin", default="void_antenna",
+                    help="Antenna plugin name for ground station links (default is void_antenna)")
+    ap.add_argument("--user-antenna-plugin", default="pass_antenna",
+                    help="Antenna plugin name for user links (default is pass_antenna)")
+    ap.add_argument("--isl-rate-plugin", default="pass_rate",
+                    help="Rate plugin name for ISL (default is pass_rate)")
+    ap.add_argument("--gs-rate-plugin", default="pass_rate",
+                    help="Rate plugin name for ground station links (default is pass_rate)")
+    ap.add_argument("--user-rate-plugin", default="pass_rate",
+                    help="Rate plugin name for user links (default is pass_rate)")
+    ap.add_argument("--isl-loss-plugin", default="pass_loss",
+                    help="Loss plugin name for ISL (default is pass_loss)")
+    ap.add_argument("--gs-loss-plugin", default="pass_loss",
+                    help="Loss plugin name for ground station links (default is pass_loss)")
+    ap.add_argument("--user-loss-plugin", default="pass_loss",
+                    help="Loss plugin name for user links (default is pass_loss)")
+    
+    ap.add_argument("--isl-rate", default="100mbit", help="Default rate of ISL links (default: 100mbit)")
+    ap.add_argument("--gs-rate", default="100mbit", help="Default rate of Sat to Ground Station (Gateway) Links (default: 100mbit)")
+    ap.add_argument("--user-rate", default="50mbit", help="Default rate of Sat to User links (default: 50mbit)")
+    ap.add_argument("--loss-isl", type=float, default=0.0, help="Default loss rate for ISL links (default: 0.0)")
+    ap.add_argument("--loss-gs", type=float, default=0.0, help="Default loss rate for Sat to Ground Station (Gateway) Links (default: 0.0)")
+    ap.add_argument("--loss-user", type=float, default=0.0, help="Default loss rate for Sat to User links (default: 0.0)")
     ap.add_argument("--data-root", default="data", 
                     help="StarPerf data directory (default: ./data)")
     ap.add_argument("--include-ground-stations", action="store_true", 
@@ -422,10 +366,36 @@ def main():
                     help="Append users to the output .h5. requires ./config/users/<Constellation>.xml")
     ap.add_argument("--minimum-elevation", type=float, default=25.0,
                     help="Minimum elevation angle (deg) for a satellite to be considered visible from a ground node (GS or USER)")
-    ap.add_argument("--overwrite-nsb-groups", action="store_true",
-                    help="Overwrite NetSatBench h5 groups if they already exist.")
+    ap.add_argument("--overwrite-ext-groups", action="store_true",
+                    help="Overwrite NetSatBench extended h5 groups if they already exist.")
 
     args = ap.parse_args()
+
+    rate = {
+        "isl": args.isl_rate,
+        "gs": args.gs_rate,
+        "user": args.user_rate,
+    }
+    loss = {
+        "isl": args.loss_isl,
+        "gs": args.loss_gs,
+        "user": args.loss_user,
+    }
+
+    antenna_plugins = {
+        "gs": args.gs_antenna_plugin,
+        "user": args.user_antenna_plugin,
+    }
+    rate_plugins = {
+        "isl": args.isl_rate_plugin,
+        "gs": args.gs_rate_plugin,
+        "user": args.user_rate_plugin,
+    }
+    loss_plugins = {
+        "isl": args.isl_loss_plugin,
+        "gs": args.gs_loss_plugin,
+        "user": args.user_loss_plugin,
+    }
 
     # 1) Build constellation
     if args.mode == "xml":
@@ -436,43 +406,61 @@ def main():
         out_h5 = Path(args.data_root) / "TLE_constellation" / f"{args.constellation_name}.h5"
 
     # 2) Run ISL connectivity (writes delay/timeslotN into out_h5) :contentReference[oaicite:14]{index=14}
-    print(f"🛜 Running ISL connectivity plugin '{args.connectivity_plugin}' for constellation '{constellation.constellation_name}'...")
-    run_connectivity(constellation, args.connectivity_plugin, args.dT,  args.mode)
+    print(f"🛜 Running StarPerf ISL connectivity plugin '{args.isl_connectivity_plugin}' for constellation '{constellation.constellation_name}'...")
+    run_connectivity(constellation, args.isl_connectivity_plugin, args.dT,  args.mode)
 
-    # 4) Optionally append ground stations to delay/position matrices.
-    # Ground station XML layout is described in the interface convention. fileciteturn4file10
+    # Ground station XML layout is described in the interface convention.
     if args.include_ground_stations:
         gs_xml = Path("config") / "ground_stations" / f"{args.constellation_name}.xml"
+        gs_conn_plugin_path_base = "NetSatBenchKit.ext_connectivity_plugin"
+        gs_ext_plugin = {}
         try:
             gs_list = read_ground_stations_xml(gs_xml)
+            gs_ext_plugin["antenna"] = importlib.import_module(gs_conn_plugin_path_base + "." + args.gs_antenna_plugin)
+            gs_conn_function = getattr(gs_ext_plugin, args.gs_conn_plugin)
         except Exception as e:
-            print(f"Error reading ground stations XML: {e}")
+            print(f"Error reading ground stations XML: {e} or importing connectivity plugin '{gs_conn_plugin_path}': {e}")
             gs_list = []
     else:
         gs_list = []
     
     if args.include_users:
         usr_xml = Path("config") / "users" / f"{args.constellation_name}.xml"
+        usr_conn_plugin_path = f"NetSatBenchKit.ext_connectivity_plugin.{args.user_conn_plugin}"
         try:
             usr_list = read_users_xml(usr_xml)
+            usr_connectivity_plugin = importlib.import_module(usr_conn_plugin_path)
+            usr_conn_function = getattr(usr_connectivity_plugin, args.user_conn_plugin)
         except Exception as e:
-            print(f"Error reading users XML: {e}")
+            print(f"Error reading users XML: {e} or importing connectivity plugin '{usr_conn_plugin_path}': {e}")
             usr_list = []
     else:
         usr_list = []
+    
+    # create SAT object list with consistent indexing as the /position datasets in the .h5 file (i.e. if satellite with id X is at index i in the /position/timeslotN dataset, then SATs[i-1] should be that satellite object since index 0 is reserved/void as per StarPerf convention)
+    SATs = []
+    for sh in constellation.shells:
+        for orbit in sh.orbits:
+                for sat in orbit.satellites:
+                    SATs.append(sat)
 
-    add_nsb_extension_to_h5(
+    create_exteded_h5(
         h5_path=out_h5,
+        SATs=SATs,
         GSs=gs_list,
         USERs=usr_list,
         min_elevation_deg=args.minimum_elevation,
-        out_position_group="position_nsb",
-        out_delay_group="delay_nsb",
+        sat_conn_function=sat_conn_function,
+        gs_conn_function=gs_conn_function if args.include_ground_stations else None,
+        usr_conn_function=usr_conn_function if args.include_users else None,
+        dT=args.dT,
+        rate=rate,
+        loss=loss,
         overwrite=args.overwrite_nsb_groups,
     )
 
     # 3) Verify output
-    verify_delay_h5(out_h5)
+    verify_ext_h5(out_h5)
     print(f"👍 Produced h5 matrix in: {out_h5}")
     print(f"▶️  Proceed with NetSatBenchExport.py to generate sat-config.json and epoch files.")
         
