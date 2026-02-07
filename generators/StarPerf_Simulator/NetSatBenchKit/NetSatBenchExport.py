@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """
-Convert StarPerf 2.0 c:contentReference[oaicite:8]{index=8} (HDF5 delay matrices per timeslot)
-into epoch event files in NetSatBench-style format:
-  { time, links-del, links-add, links-update, run? }
-
-StarPerf notes:
-- StarPerf supports Grid / Grid+ fixed-neighbor ISL patterns. :contentReference[oaicite:9]{index=9}
-- Its interface convention describes writing per-timeslot delay matrices to HDF5. :contentReference[oaicite:10]{index=10}
+Convert StarPerf 2.0 HDF5 extended matrices into sat-config.json and epoch event files in NetSatBench-style format
 """
 
 import argparse
