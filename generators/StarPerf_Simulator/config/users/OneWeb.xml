@@ -3,7 +3,7 @@
     <Latitude>41.9028</Latitude>
     <Longitude>12.4964</Longitude>
     <Name>Rome (Italy)</Name>
-    <Antenna_Count>8</Antenna_Count>
+    <Antenna_Count>2</Antenna_Count>
     <Uplink_Ghz>2.1</Uplink_Ghz>
     <Downlink_Ghz>1.3</Downlink_Ghz>
   </USR1>
@@ -11,7 +11,7 @@
     <Latitude>51.5074</Latitude>
     <Longitude>-0.1278</Longitude>
     <Name>London (UK)</Name>
-    <Antenna_Count>8</Antenna_Count>
+    <Antenna_Count>2</Antenna_Count>
     <Uplink_Ghz>2.1</Uplink_Ghz>
     <Downlink_Ghz>1.3</Downlink_Ghz>
   </USR2>
@@ -19,7 +19,7 @@
     <Latitude>48.8566</Latitude>
     <Longitude>2.3522</Longitude>
     <Name>Paris (France)</Name>
-    <Antenna_Count>8</Antenna_Count>
+    <Antenna_Count>2</Antenna_Count>
     <Uplink_Ghz>2.1</Uplink_Ghz>
     <Downlink_Ghz>1.3</Downlink_Ghz>
   </USR3>
@@ -27,7 +27,7 @@
     <Latitude>40.4168</Latitude>
     <Longitude>-3.7038</Longitude>
     <Name>Madrid (Spain)</Name>
-    <Antenna_Count>8</Antenna_Count>
+    <Antenna_Count>2</Antenna_Count>
     <Uplink_Ghz>2.1</Uplink_Ghz>
     <Downlink_Ghz>1.3</Downlink_Ghz>
   </USR4>
@@ -35,7 +35,7 @@
     <Latitude>37.9838</Latitude>
     <Longitude>23.7275</Longitude>
     <Name>Athen (Greece)</Name>
-    <Antenna_Count>8</Antenna_Count>
+    <Antenna_Count>2</Antenna_Count>
     <Uplink_Ghz>2.1</Uplink_Ghz>
     <Downlink_Ghz>1.3</Downlink_Ghz>
   </USR5>
@@ -43,7 +43,7 @@
     <Latitude>47.4979</Latitude>
     <Longitude>19.0402</Longitude>
     <Name>Budapest (Hungary)</Name>
-    <Antenna_Count>8</Antenna_Count>
+    <Antenna_Count>2</Antenna_Count>
     <Uplink_Ghz>2.1</Uplink_Ghz>
     <Downlink_Ghz>1.3</Downlink_Ghz>
   </USR6>
