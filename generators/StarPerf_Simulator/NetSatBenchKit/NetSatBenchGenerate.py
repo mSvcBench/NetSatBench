@@ -4,18 +4,19 @@ StarPerf 2.0 constellation generation with extended h5 data
 
 Pipeline:
 1) Build constellation (XML or TLE)
-2) ISL connectivity (positive_Grid by default)
+2) ISL connectivity (positive_Grid by default with StarPerf's internal plugin manager)
 3) Add ground stations and users links
-4) Extend h5 with delay/rate/loss/type datasets for ISL, GS, and user links
+4) Extend h5 with delay/rate/loss/type/info datasets for ISL, GS, and user links
 
 Conventions:
-- The output .h5 file must contain groups: /position_ext, /delay_ext, /type_ext, /rate_ext, /loss_ext. Each group should have the same internal structure as the input /position and /delay groups produced by StarPerf, with datasets named timeslot1, timeslot2, etc. corresponding to each timeslot.
+- The output extended .h5 file must contain groups: /info /position, /delay, /type, /rate, /loss. Each group should have the same internal structure as the input /position and /delay groups produced by StarPerf, with datasets named timeslot1, timeslot2, etc. corresponding to each timeslot.
 - First index are for satellites (starting at 0, followed by ground stations and users in the order they are defined in the input XML files if included.
-- The position_ext datasets has three columns for X/Y/Z ECEF coordinates. 
-- The delay_ext datasets is a square matrix where the value at [i,j] is the delay from node i to node j in seconds, or 0 if no link exists.
-- The rate_ext datasets is a square matrix where the value at [i,j] is the link rate in Mbps.
-- The loss_ext datasets is a square matrix where the value at [i,j] is the loss rate as a float between 0 and 1.
-- The type_ext datasets is a vector where the value at [i] is a string indicating the node type ("sat", "gs", or "user").
+- The position datasets is a per-shell and per-timeslot dataset with three columns for X/Y/Z ECEF coordinates of the nodes [i]. 
+- The delay datasets is a per-shell and per-timeslot square matrix where the value at [i,j] is the delay from node i to node j in seconds, or 0 if no link exists.
+- The rate datasets is a per-shell and per-timeslot square matrix where the value at [i,j] is the link rate in Mbps.
+- The loss datasets is a per-shell and per-timeslot square matrix where the value at [i,j] is the loss rate as a float between 0 and 1.
+- The type datasets is a per-shell vector where the value at [i] is a string indicating the node type ("sat", "gs", or "user").
+- The info group contains attributes for metadata such as constellation name, generation timestamp, plugins used, and any other relevant information.
 """
 
 import argparse
@@ -122,6 +123,10 @@ def read_users_xml(users_xml_path: Path) -> List[USER.user]:
         USERs.append(usr)
     return USERs
 
+def ext_h5_path_from(base_h5_path: Path) -> Path:
+    # OneWeb.h5 -> OneWeb_ext.h5
+    return base_h5_path.with_name(base_h5_path.stem + "_ext" + base_h5_path.suffix)
+
 # -----------------------
 # MAIN FUNCTION
 # -----------------------
@@ -130,7 +135,7 @@ def create_exteded_h5(
     h5_path: Path,
     SATs: List[SAT.satellite],
     GSs: List[GS.ground_station],
-    USERs: List[USER.user],
+    USERs: List[user],
     min_elevation_deg: float = 25.0,
     sat_ext_conn_function: Optional[Dict[str, callable]] = None,
     gs_ext_conn_function: Optional[callable] = None,
@@ -155,12 +160,18 @@ def create_exteded_h5(
         print("🛰️ Satellite list is empty; check your StarPerf constellation initialization")
         exit(1)
 
-    with h5py.File(h5_path, "a") as f:
-        if "position" not in f or "delay" not in f:
-            raise RuntimeError("Expected 'position' and 'delay' groups in the .h5 produced by StarPerf.")
+    base_h5_path = Path(h5_path)
+    out_ext_h5_path = ext_h5_path_from(base_h5_path)
 
-        h5_pos_root = f["position"]
-        h5_del_root = f["delay"]
+    # Create/overwrite the ext file
+    ext_mode = "w" if overwrite else "x"
+
+    with h5py.File(base_h5_path, "r") as fin, h5py.File(out_ext_h5_path, ext_mode) as fout:
+        if "position" not in fin or "delay" not in fin:
+            raise RuntimeError("Expected 'position' and 'delay' groups in the .h5 produced by StarPerf not found.")
+
+        h5_pos_root = fin["position"]
+        h5_del_root = fin["delay"]
         
         # Detect layout: if /position contains timeslot datasets -> single-shell, else treat children as shells.
         def _is_timeslot_name(name: str) -> bool:
@@ -169,29 +180,40 @@ def create_exteded_h5(
         pos_children = list(h5_pos_root.keys())
         single_shell = any(_is_timeslot_name(k) for k in pos_children)
 
-        # Create / reuse output groups at root
+        # Create groups in output file, checking for existence if not overwriting
         def _ensure_group_at_root(name: str):
-            if name in f:
+            if name in fout:
                 if overwrite:
-                    del f[name]
-                    return f.create_group(name)
-                return f[name]
-            return f.create_group(name)
+                    del fout[name]
+                    return fout.create_group(name)
+                return fout[name]
+            return fout.create_group(name)
         
-        h5_type_root_ext = _ensure_group_at_root("type_ext")
-        h5_rate_root_ext = _ensure_group_at_root("rate_ext")
-        h5_loss_root_ext = _ensure_group_at_root("loss_ext")
-        h5_pos_root_ext = _ensure_group_at_root("position_ext")
-        h5_del_root_ext = _ensure_group_at_root("delay_ext")
+        
+        h5_type_root_ext = _ensure_group_at_root("type")
+        h5_rate_root_ext = _ensure_group_at_root("rate")
+        h5_loss_root_ext = _ensure_group_at_root("loss")
+        h5_pos_root_ext = _ensure_group_at_root("position")
+        h5_del_root_ext = _ensure_group_at_root("delay")
+
 
         if single_shell:
+            h5_root_in = {}
+            h5_root_in["position"] = h5_pos_root
+            h5_root_in["delay"] = h5_del_root
+            h5_root_ext = {}
+            h5_root_ext["position"] = h5_pos_root_ext
+            h5_root_ext["delay"] = h5_del_root_ext
+            h5_root_ext["type"] = h5_type_root_ext
+            h5_root_ext["rate"] = h5_rate_root_ext
+            h5_root_ext["loss"] = h5_loss_root_ext
             process_one_shell(shell_name=None,
                                   GSs=GSs,
                                   USERs=USERs,
                                   SATs=SATs,
                                   min_elevation_deg=min_elevation_deg,
-                                  h5_pos_root=h5_pos_root, h5_del_root=h5_del_root,
-                                  h5_pos_root_ext=h5_pos_root_ext, h5_del_root_ext=h5_del_root_ext, h5_type_root_ext=h5_type_root_ext, h5_rate_root_ext=h5_rate_root_ext, h5_loss_root_ext=h5_loss_root_ext,
+                                  h5_root_in=h5_root_in,
+                                  h5_root_ext=h5_root_ext,
                                   gs_ext_conn_function=gs_ext_conn_function, usr_ext_conn_function=usr_ext_conn_function, sat_ext_conn_function=sat_ext_conn_function,
                                   rate=rate, loss=loss, dT=dT, overwrite=overwrite)
         else:
@@ -201,6 +223,7 @@ def create_exteded_h5(
 
                 h5_pos_shell = h5_pos_root[shell]
                 h5_del_shell = h5_del_root[shell]
+
 
                 # Create corresponding output shell groups
                 if shell in h5_pos_root_ext:
@@ -230,15 +253,27 @@ def create_exteded_h5(
                 h5_type_shell_ext = h5_type_root_ext.create_group(shell)
                 h5_rate_shell_ext = h5_rate_root_ext.create_group(shell)
                 h5_loss_shell_ext = h5_loss_root_ext.create_group(shell)
+
+                h5_root_in = {}
+                h5_root_in["position"] = h5_pos_shell
+                h5_root_in["delay"] = h5_del_shell
+
+                h5_root_ext = {}
+                h5_root_ext["position"] = h5_pos_shell_ext
+                h5_root_ext["delay"] = h5_del_shell_ext
+                h5_root_ext["type"] = h5_type_shell_ext
+                h5_root_ext["rate"] = h5_rate_shell_ext
+                h5_root_ext["loss"] = h5_loss_shell_ext
+
                 process_one_shell(shell_name=shell,
                                   GSs=GSs,
                                   USERs=USERs,
                                   SATs=SATs,
                                   min_elevation_deg=min_elevation_deg,
-                                  h5_pos_root=h5_pos_shell, h5_del_root=h5_del_shell,
-                                  h5_pos_root_ext=h5_pos_shell_ext, h5_del_root_ext=h5_del_shell_ext, h5_type_root_ext=h5_type_shell_ext, h5_rate_root_ext=h5_rate_shell_ext, h5_loss_root_ext=h5_loss_shell_ext,
+                                  h5_root_in=h5_root_in,h5_root_ext=h5_root_ext, 
                                   gs_ext_conn_function=gs_ext_conn_function, usr_ext_conn_function=usr_ext_conn_function, sat_ext_conn_function=sat_ext_conn_function,
                                   rate=rate, loss=loss, dT=dT, overwrite=overwrite)
+
 ## build SatarPerf constellation from XML configuration. Wrote position group in h5 file 
 def build_constellation_xml(constellation_name: str, dT: int):
     from src.constellation_generation.by_XML import constellation_configuration
@@ -296,13 +331,10 @@ def verify_ext_h5(h5_path: Path):
         raise FileNotFoundError(f"Expected output file not found: {h5_path}")
 
     with h5py.File(h5_path, "r") as f:
-        groups = ["delay_ext","position_ext","type_ext","rate_ext","loss_ext"]
+        groups = ["delay","position","type","rate","loss", "info"]
         for g in groups:
             if g not in f:
                 raise RuntimeError(f"{h5_path} has no '{g}' group")
-            g_grpup = f[g]
-            if not g_grpup.keys():
-                raise RuntimeError(f"{h5_path} '{g}' group is empty")
     return
 
 
@@ -500,9 +532,61 @@ def main():
         overwrite=args.overwrite_ext_groups,
     )
 
+    # store h5 metadata about the generation in info group attributes
+    with h5py.File(ext_h5_path_from(base_h5_path=out_h5), "a") as f:
+        if "info" in f:
+            if args.overwrite_ext_groups:
+                del f["info"]
+            else:
+                raise RuntimeError(f"Output group {f.name}/info already exists (use --overwrite-ext-groups).")
+        h5_info_root_ext = f.create_group("info")
+        h5_info_root_ext.attrs["constellation_name"] = constellation.constellation_name
+        h5_info_root_ext.attrs["generation_mode"] = args.mode
+        h5_info_root_ext.attrs["generation_timestamp"] = str(np.datetime64("now"))
+        h5_info_root_ext.attrs["dT"] = args.dT
+        h5_info_root_ext.attrs["num_satellites"] = len(SATs)
+        h5_info_root_ext.attrs["num_ground_stations"] = len(gs_list) if args.include_ground_stations else 0
+        h5_info_root_ext.attrs["num_users"] = len(usr_list) if args.include_users else 0
+        h5_info_root_ext.attrs["minimum_elevation_deg"] = args.minimum_elevation
+        h5_info_root_ext.attrs["rate_isl_Mbps"] = args.isl_rate
+        h5_info_root_ext.attrs["rate_gs_Mbps"] = args.gs_rate
+        h5_info_root_ext.attrs["rate_user_Mbps"] = args.user_rate
+        h5_info_root_ext.attrs["loss_isl"] = args.loss_isl
+        h5_info_root_ext.attrs["loss_gs"] = args.loss_gs
+        h5_info_root_ext.attrs["loss_user"] = args.loss_user
+        h5_info_root_ext.attrs["isl_connectivity_plugin"] = args.isl_connectivity_plugin
+        h5_info_root_ext.attrs["isl_rate_plugin"] = args.isl_rate_plugin
+        if args.isl_rate_plugin_metadata is not None:
+            h5_info_root_ext.attrs["isl_rate_plugin_metadata"] = args.isl_rate_plugin_metadata
+        h5_info_root_ext.attrs["isl_loss_plugin"] = args.isl_loss_plugin
+        if args.isl_loss_plugin_metadata is not None:
+            h5_info_root_ext.attrs["isl_loss_plugin_metadata"] = args.isl_loss_plugin_metadata
+
+        if args.include_ground_stations:
+            h5_info_root_ext.attrs["gs_antenna_plugin"] = args.gs_antenna_plugin
+            if args.gs_antenna_plugin_metadata is not None:
+                h5_info_root_ext.attrs["gs_antenna_plugin_metadata"] = args.gs_antenna_plugin_metadata
+            h5_info_root_ext.attrs["gs_rate_plugin"] = args.gs_rate_plugin
+            if args.gs_rate_plugin_metadata is not None:
+                h5_info_root_ext.attrs["gs_rate_plugin_metadata"] = args.gs_rate_plugin_metadata
+            h5_info_root_ext.attrs["gs_loss_plugin"] = args.gs_loss_plugin
+            if args.gs_loss_plugin_metadata is not None:
+                h5_info_root_ext.attrs["gs_loss_plugin_metadata"] = args.gs_loss_plugin_metadata
+        if args.include_users:
+            h5_info_root_ext.attrs["user_antenna_plugin"] = args.user_antenna_plugin
+            if args.user_antenna_plugin_metadata is not None:
+                h5_info_root_ext.attrs["user_antenna_plugin_metadata"] = args.user_antenna_plugin_metadata
+            h5_info_root_ext.attrs["user_rate_plugin"] = args.user_rate_plugin
+            if args.user_rate_plugin_metadata is not None:
+                h5_info_root_ext.attrs["user_rate_plugin_metadata"] = args.user_rate_plugin_metadata
+            h5_info_root_ext.attrs["user_loss_plugin"] = args.user_loss_plugin
+            if args.user_loss_plugin_metadata is not None:
+                h5_info_root_ext.attrs["user_loss_plugin_metadata"] = args.user_loss_plugin_metadata
+
+       
     # 3) Verify output
-    verify_ext_h5(out_h5)
-    print(f"👍 Produced extended h5 matrix in: {out_h5}")
+    verify_ext_h5(ext_h5_path_from(base_h5_path=out_h5))
+    print(f"👍 Produced extended h5 matrix in: {ext_h5_path_from(base_h5_path=out_h5)}")
     print(f"▶️  Proceed with NetSatBenchExport.py to generate sat-config.json and epoch files.")
         
 if __name__ == "__main__":

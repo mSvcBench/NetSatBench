@@ -41,11 +41,20 @@ def process_one_shell(shell_name: Optional[str],
                               GSs, 
                               USERs, 
                               SATs,
-                              h5_pos_root, h5_del_root, 
-                              h5_pos_root_ext, h5_del_root_ext, h5_type_root_ext, h5_rate_root_ext, h5_loss_root_ext, 
+                              h5_root_in, h5_root_ext,
                               gs_ext_conn_function=None, usr_ext_conn_function=None, sat_ext_conn_function=None,
                               min_elevation_deg=25, rate=None, loss=None, dT=15, overwrite=True):
             
+            
+            # expand route dictionary
+            h5_pos_root = h5_root_in["position"]
+            h5_del_root = h5_root_in["delay"]
+            h5_pos_root_ext = h5_root_ext["position"]
+            h5_del_root_ext = h5_root_ext["delay"]
+            h5_type_root_ext = h5_root_ext["type"]
+            h5_rate_root_ext = h5_root_ext["rate"]
+            h5_loss_root_ext = h5_root_ext["loss"]
+
             # precompute Users and GSs ECEF 
             n_gs = len(GSs)
             n_usrs = len(USERs)
@@ -336,10 +345,12 @@ def process_one_shell(shell_name: Optional[str],
                 h5_rate_root_ext.create_dataset(ts, data=rate_ext, compression="gzip", compression_opts=4)
                 h5_loss_root_ext.create_dataset(ts, data=loss_ext, compression="gzip", compression_opts=4)
                 
-            # Write type_ext dataset
-            type_ext = np.array([b"sat"] * n_tot, dtype='S')
+            # Write type dataset
+            type = np.array([b"undefined"] * n_tot, dtype='S')
+            for si in range(n_sat):
+                type[si] = b"sat"
             for gi in range(n_gs):
-                type_ext[n_sat + gi] = b"gs"
+                type[n_sat + gi] = b"gs"
             for ui in range(n_usrs):
-                type_ext[n_sat + n_gs + ui] = b"user"
-            h5_type_root_ext.create_dataset("type_ext", data=type_ext, compression="gzip", compression_opts=4)
+                type[n_sat + n_gs + ui] = b"user"
+            h5_type_root_ext.create_dataset("type", data=type, compression="gzip", compression_opts=4)
