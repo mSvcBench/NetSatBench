@@ -80,6 +80,9 @@ def process_one_shell(shell_name: Optional[str],
             pos_ext_previous = None
             rate_ext_previous = None
             loss_ext_previous = None
+            angle_ext_previous = None
+
+            NODEs = SATs + GSs + USERs  # combined list of all objects for plugin processing, ordered by satellite first then GS then USER as per extended matrix construction
 
             for ts in timeslots:
                 sat_pos = h5_pos_root[ts][:]        # (n_sat, 3) longitude, latitude, altitude
@@ -106,16 +109,23 @@ def process_one_shell(shell_name: Optional[str],
                 rate_ext = np.zeros((n_tot, n_tot), dtype="float64")  # store bit rate in Mbps and first row/col void as per StarPerf convention
                 loss_ext = np.zeros((n_tot, n_tot), dtype="float64")  # store loss rate as float between 0 and 1 and first row/col void as per StarPerf convention
 
+                # Supporting anngles for potential use in connectivity plugins without redundant calculations
+                angle_ext = np.zeros((n_tot, n_tot), dtype="float64")  # store elevation angle in degrees and first row/col void as per StarPerf convention
                 # Add rate and loss for ISLs based on sat_conn_function if provided
-                data_ext_dict = {"delay": del_ext, "rate": rate_ext, "loss": loss_ext, "pos": pos_ext}
-                data_ext_prev_dict = {"delay": del_ext_previous, "rate": rate_ext_previous, "loss": loss_ext_previous, "pos": pos_ext_previous}
+                
+                data_ext_dict = {"delay": del_ext, "rate": rate_ext, "loss": loss_ext, "pos": pos_ext, "angle": angle_ext}
+                data_ext_prev_dict = {"delay": del_ext_previous, "rate": rate_ext_previous, "loss": loss_ext_previous, "pos": pos_ext_previous, "angle": angle_ext_previous}
                 for i in range(0, n_sat):    # skip index 0 as per StarPerf delay h5 convention
                     linked_sats = np.where(del_ext[i,:] != 0)[0]  # check which satellites are linked to satellite i based on delay matrix (non-zero entries)
                     if sat_ext_conn_function.get("rate", None) is not None:
-                        new_rate_ext_values = sat_ext_conn_function["rate"](OBJs=SATs, oi=i, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, dT=dT, type="sat")
+                        new_rate_ext_values = sat_ext_conn_function["rate"](
+                            OBJs=NODEs, oi=i, 
+                            data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, 
+                            t=ts, dT=dT, min_elevation_deg=min_elevation_deg, 
+                            type="sat", metadata=sat_ext_conn_function.get("rate_metadata", None))
                         if new_rate_ext_values is not None:
-                            rate_ext[i,:] = new_rate_ext_values
-                            rate_ext[:,i] = new_rate_ext_values.T 
+                            rate_ext[i,:] = new_rate_ext_values.copy()  
+                            rate_ext[:,i] = new_rate_ext_values.copy() 
                         elif rate.get("isl"):
                             rate_ext[i,linked_sats] = rate["isl"]
                             rate_ext[linked_sats,i] = rate["isl"]
@@ -124,10 +134,14 @@ def process_one_shell(shell_name: Optional[str],
                         rate_ext[linked_sats,i] = rate["isl"]
                     
                     if sat_ext_conn_function.get("loss", None) is not None:
-                        new_loss_ext_value = sat_ext_conn_function["loss"](OBJs=SATs, oi=i, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, dT=dT, type="sat")
+                        new_loss_ext_value = sat_ext_conn_function["loss"](
+                            OBJs=NODEs, oi=i, 
+                            data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, 
+                            t=ts, dT=dT, min_elevation_deg=min_elevation_deg, 
+                            type="sat", metadata=sat_ext_conn_function.get("loss_metadata", None))
                         if new_loss_ext_value is not None:
-                            loss_ext[i,:] = new_loss_ext_value
-                            loss_ext[:,i] = new_loss_ext_value.T
+                            loss_ext[i,:] = new_loss_ext_value.copy()
+                            loss_ext[:,i] = new_loss_ext_value.copy()
                         elif loss.get("isl"):
                             loss_ext[i,linked_sats] = loss["isl"]
                             loss_ext[linked_sats,i] = loss["isl"]
@@ -144,9 +158,11 @@ def process_one_shell(shell_name: Optional[str],
                         transient_object.latitude = float(satp[1])
                         transient_object.altitude = float(satp[2])
                         spos_ecef = latilong_to_descartes(transient_object)  # get GS position in ECEF
-                        elev_judge, _ = judgePointToSatellite(spos_ecef[0] , spos_ecef[1] , spos_ecef[2] ,
+                        elev_judge, angle = judgePointToSatellite(spos_ecef[0] , spos_ecef[1] , spos_ecef[2] ,
                                                            gsp_ecef[0] , gsp_ecef[1] , gsp_ecef[2] ,
                                                            min_elevation_deg)
+                        angle_ext[sidx, gidx] = angle
+                        angle_ext[gidx, sidx] = angle
                         if elev_judge:
                             distance = math.sqrt(
                                 (spos_ecef[0] - gsp_ecef[0]) ** 2
@@ -156,27 +172,34 @@ def process_one_shell(shell_name: Optional[str],
                             delay_s = distance / 300000
                             del_ext[sidx, gidx] = delay_s
                             del_ext[gidx, sidx] = delay_s
+
                     
-                    # remove sat-gs links due to antennas/processing limitations and append rate and loss info based on gs-defined plugin if provided
-
-
-                    # link theoretically exist based on elevation, but check if user wants to remove it due to antenna limitations or other policies by passing info to plugin
-                    data_ext_dict = {"delay": del_ext, "rate": rate_ext, "loss": loss_ext, "pos": pos_ext}
-                    data_ext_prev_dict = {"delay": del_ext_previous, "rate": rate_ext_previous, "loss": loss_ext_previous, "pos": pos_ext_previous}
+                    # link theoretically exist based on elevation, 
+                    # but check if user wants to remove it due to antenna limitations or other policies by passing info to plugin
+                    data_ext_dict = {"delay": del_ext, "rate": rate_ext, "loss": loss_ext, "pos": pos_ext, "angle": angle_ext}
+                    data_ext_prev_dict = {"delay": del_ext_previous, "rate": rate_ext_previous, "loss": loss_ext_previous, "pos": pos_ext_previous, "angle": angle_ext_previous}
                     
-
                     if gs_ext_conn_function.get("antenna", None) is not None:
-                        new_del_ext_values = gs_ext_conn_function["antenna"](OBJs=GSs, oi=gidx, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, dT=dT, type="gs")
+                        new_del_ext_values = gs_ext_conn_function["antenna"](
+                            OBJs=NODEs, oi=gidx, 
+                            data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, 
+                            t=ts, dT=dT, min_elevation_deg=min_elevation_deg, 
+                            type="gs", metadata=gs_ext_conn_function.get("antenna_metadata", None))
                         if new_del_ext_values is not None:
-                            del_ext[:, gidx] = new_del_ext_values.T  # transpose for symmetric matrix
-                            del_ext[gidx, :] = new_del_ext_values
+                            del_ext[:, gidx] = new_del_ext_values.copy()  
+                            del_ext[gidx, :] = new_del_ext_values.copy()
                     
+                    # compute rate and loss for remaining links after antenna plugin processing (if any) based on user-defined functions or static values
                     linked_sats = np.where(del_ext[:, gidx] != 0)[0]
                     if gs_ext_conn_function.get("rate", None) is not None:   
-                        new_rate_ext_values = gs_ext_conn_function["rate"](OBJs=GSs, oi=gidx, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, dT=dT, type="gs")
+                        new_rate_ext_values = gs_ext_conn_function["rate"](
+                            OBJs=NODEs, oi=gidx, 
+                            data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, 
+                            t=ts, dT=dT, min_elevation_deg=min_elevation_deg, type="gs", 
+                            metadata=gs_ext_conn_function.get("rate_metadata", None))
                         if new_rate_ext_values is not None:
-                            rate_ext[:, gidx] = new_rate_ext_values.T
-                            rate_ext[gidx, :] = new_rate_ext_values
+                            rate_ext[:, gidx] = new_rate_ext_values.copy()  
+                            rate_ext[gidx, :] = new_rate_ext_values.copy()
                         elif rate.get("gs"):
                             rate_ext[linked_sats, gidx] = rate["gs"]
                             rate_ext[gidx, linked_sats] = rate["gs"]
@@ -185,10 +208,13 @@ def process_one_shell(shell_name: Optional[str],
                         rate_ext[gidx, linked_sats] = rate["gs"]
                     
                     if gs_ext_conn_function.get("loss", None) is not None:    
-                        new_loss_ext_value = gs_ext_conn_function["loss"](OBJs=GSs, oi=gidx, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, dT=dT, type="gs")
+                        new_loss_ext_value = gs_ext_conn_function["loss"](
+                            OBJs=NODEs, oi=gidx, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, 
+                            t=ts, dT=dT, min_elevation_deg=min_elevation_deg, 
+                            type="gs", metadata=gs_ext_conn_function.get("loss_metadata", None))
                         if new_loss_ext_value is not None:
-                            loss_ext[:, gidx] = new_loss_ext_value.T # transpose for symmetric matrix
-                            loss_ext[gidx, :] = new_loss_ext_value
+                            loss_ext[:, gidx] = new_loss_ext_value.copy() 
+                            loss_ext[gidx, :] = new_loss_ext_value.copy()
                         elif loss.get("gs"):
                             loss_ext[linked_sats, gidx] = loss["gs"]
                             loss_ext[gidx, linked_sats] = loss["gs"]
@@ -205,9 +231,11 @@ def process_one_shell(shell_name: Optional[str],
                         transient_object.latitude = float(satp[1])
                         transient_object.altitude = float(satp[2])
                         spos_ecef = latilong_to_descartes(transient_object)  # get GS position in ECEF
-                        elev_judge, _ = judgePointToSatellite(spos_ecef[0] , spos_ecef[1] , spos_ecef[2] ,
+                        elev_judge, angle = judgePointToSatellite(spos_ecef[0] , spos_ecef[1] , spos_ecef[2] ,
                                                            usp_ecef[0] , usp_ecef[1] , usp_ecef[2] ,
                                                            min_elevation_deg)
+                        angle_ext[sidx, uidx] = angle
+                        angle_ext[uidx, sidx] = angle
                         if elev_judge:
                             distance = math.sqrt(
                                 (spos_ecef[0] - usp_ecef[0]) ** 2
@@ -217,25 +245,32 @@ def process_one_shell(shell_name: Optional[str],
                             delay_s = distance / 300000
                             del_ext[sidx, uidx] = delay_s
                             del_ext[uidx, sidx] = delay_s
-                    
-                    # remove sat-user links due to antennas/processing limitations and append rate and loss info based on user-defined plugin if provided
-
+                               
                     # link theoretically exist based on elevation, but check if user wants to remove it due to antenna limitations or other policies by passing info to plugin
-                    data_ext_dict = {"delay": del_ext, "rate": rate_ext, "loss": loss_ext, "pos": pos_ext}
-                    data_ext_prev_dict = {"delay": del_ext_previous, "rate": rate_ext_previous, "loss": loss_ext_previous, "pos": pos_ext_previous}
+                    data_ext_dict = {"delay": del_ext, "rate": rate_ext, "loss": loss_ext, "pos": pos_ext, "angle": angle_ext}
+                    data_ext_prev_dict = {"delay": del_ext_previous, "rate": rate_ext_previous, "loss": loss_ext_previous, "pos": pos_ext_previous, "angle": angle_ext_previous}
 
                     if usr_ext_conn_function.get("antenna", None) is not None:
-                        new_del_ext_values = usr_ext_conn_function["antenna"](OBJs=USERs, oi=ui, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, dT=dT, type="user")
+                        new_del_ext_values = usr_ext_conn_function["antenna"](
+                            OBJs=NODEs, oi=uidx, 
+                            data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, 
+                            t=ts, dT=dT, min_elevation_deg=min_elevation_deg, 
+                            type="user", metadata=usr_ext_conn_function.get("antenna_metadata", None))
                         if new_del_ext_values is not None:
-                            del_ext[:, uidx] = new_del_ext_values.T  # transpose for symmetric matrix
-                            del_ext[uidx, :] = new_del_ext_values
+                            del_ext[:, uidx] = new_del_ext_values.copy()
+                            del_ext[uidx, :] = new_del_ext_values.copy()
                     
+                    # compute rate and loss for remaining links after antenna plugin processing (if any) based on user-defined functions or static values
                     linked_sats = np.where(del_ext[:, uidx] != 0)[0]
                     if usr_ext_conn_function.get("rate", None) is not None:   
-                        new_rate_ext_values = usr_ext_conn_function["rate"](OBJs=USERs, oi=ui, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, dT=dT, type="user")
+                        new_rate_ext_values = usr_ext_conn_function["rate"](
+                            OBJs=NODEs, oi=uidx, 
+                            data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, 
+                            t=ts, dT=dT, min_elevation_deg=min_elevation_deg,
+                            type="user", metadata=usr_ext_conn_function.get("rate_metadata", None))
                         if new_rate_ext_values is not None:
-                            rate_ext[:, uidx] = new_rate_ext_values
-                            rate_ext[uidx, :] = new_rate_ext_values
+                            rate_ext[:, uidx] = new_rate_ext_values.copy()
+                            rate_ext[uidx, :] = new_rate_ext_values.copy()
                         elif rate.get("user"):
                             rate_ext[linked_sats, uidx] = rate["user"]
                             rate_ext[uidx, linked_sats] = rate["user"]
@@ -244,10 +279,14 @@ def process_one_shell(shell_name: Optional[str],
                         rate_ext[uidx, linked_sats] = rate["user"]
                     
                     if usr_ext_conn_function.get("loss", None) is not None:    
-                        new_loss_ext_value = usr_ext_conn_function["loss"](OBJs=USERs, oi=ui, data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, dT=dT, type="user")
+                        new_loss_ext_value = usr_ext_conn_function["loss"](
+                            OBJs=NODEs, oi=uidx, 
+                            data_ext_dict=data_ext_dict, data_ext_prev_dict=data_ext_prev_dict, 
+                            t=ts, dT=dT, min_elevation_deg=min_elevation_deg,
+                            type="user", metadata=usr_ext_conn_function.get("loss_metadata", None))
                         if new_loss_ext_value is not None:
-                            loss_ext[:, uidx] = new_loss_ext_value
-                            loss_ext[uidx, :] = new_loss_ext_value
+                            loss_ext[:, uidx] = new_loss_ext_value.copy()
+                            loss_ext[uidx, :] = new_loss_ext_value.copy()
                         elif loss.get("user"):
                             loss_ext[linked_sats, uidx] = loss["user"]
                             loss_ext[uidx, linked_sats] = loss["user"]
@@ -260,6 +299,7 @@ def process_one_shell(shell_name: Optional[str],
                 pos_ext_previous = pos_ext
                 rate_ext_previous = rate_ext
                 loss_ext_previous = loss_ext
+                angle_ext_previous = angle_ext
 
                 # Write datasets
                 if ts in h5_pos_root_ext:

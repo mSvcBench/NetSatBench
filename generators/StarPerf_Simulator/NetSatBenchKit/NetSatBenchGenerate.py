@@ -21,6 +21,7 @@ Conventions:
 import argparse
 from pathlib import Path
 import sys
+from unicodedata import name
 
 import h5py
 import numpy as np
@@ -32,7 +33,7 @@ sys.path.append(str(Path(__file__).parent.parent))  # adjust as needed
 from NetSatBenchKit.process_one_shell import process_one_shell
 import src.XML_constellation.constellation_entity.ground_station as GS
 import src.XML_constellation.constellation_entity.satellite as SAT
-import src.XML_constellation.constellation_entity.user as USER
+# import src.XML_constellation.constellation_entity.user as USER
 import re
 from typing import List, Dict, Optional
 import importlib
@@ -40,6 +41,18 @@ import importlib
 # ----------------------- 
 # HELPERS
 # -----------------------
+# extended user class with antenna and GHz information for extended connectivity plugins and interface convention. 
+class user:
+    def __init__(self , longitude, latitude , name = None , frequency=None , antenna_count = None ,
+                 uplink_GHz = None , downlink_GHz = None):
+        self.longitude = longitude # the longitude of USER
+        self.latitude = latitude # the latitude of USER
+        self.name = name  # the description of USER's position
+        self.frequency = frequency # the frequency of User, such as Ka,E and so on
+        self.antenna_count = antenna_count # the number of antenna of USER
+        self.uplink_GHz = uplink_GHz # the uplink GHz of USER
+        self.downlink_GHz = downlink_GHz # the downlink GHz of USER
+
 ## Read xml document
 def xml_to_dict(element):
     if len(element) == 0:
@@ -95,10 +108,18 @@ def read_users_xml(users_xml_path: Path) -> List[USER.user]:
     # generate USER
     USERs = []
     for user_count in range(1, len(users['USRs']) + 1, 1):
-        user = USER.user(longitude=float(users['USRs']['USR' + str(user_count)]['Longitude']),
+        usr = user(longitude=float(users['USRs']['USR' + str(user_count)]['Longitude']),
                                 latitude=float(users['USRs']['USR' + str(user_count)]['Latitude']),
-                                user_name=users['USRs']['USR' + str(user_count)]['Name'])
-        USERs.append(user)
+                                name=users['USRs']['USR' + str(user_count)]['Name'])
+        if 'Frequency' in users['USRs']['USR' + str(user_count)]:
+            usr.frequency = users['USRs']['USR' + str(user_count)]['Frequency']
+        if 'Antenna_Count' in users['USRs']['USR' + str(user_count)]:
+            usr.antenna_count = int(users['USRs']['USR' + str(user_count)]['Antenna_Count'])
+        if 'Uplink_Ghz' in users['USRs']['USR' + str(user_count)]:
+            usr.uplink_GHz = float(users['USRs']['USR' + str(user_count)]['Uplink_Ghz'])
+        if 'Downlink_Ghz' in users['USRs']['USR' + str(user_count)]:
+            usr.downlink_GHz = float(users['USRs']['USR' + str(user_count)]['Downlink_Ghz'])
+        USERs.append(usr)
     return USERs
 
 # -----------------------
@@ -299,18 +320,34 @@ def main():
                     help="Antenna plugin name for ground station links (default is pass_antenna)")
     ap.add_argument("--user-antenna-plugin", default="pass_antenna",
                     help="Antenna plugin name for user links (default is pass_antenna)")
+    ap.add_argument("--gs-antenna-plugin-metadata", default=None,
+                    help="File path for ground station antenna plugin metadata (default is None)")
+    ap.add_argument("--user-antenna-plugin-metadata", default=None,
+                    help="File path for user antenna plugin metadata (default is None)")
     ap.add_argument("--isl-rate-plugin", default="pass_rate",
                     help="Rate plugin name for ISL (default is pass_rate)")
     ap.add_argument("--gs-rate-plugin", default="pass_rate",
                     help="Rate plugin name for ground station links (default is pass_rate)")
     ap.add_argument("--user-rate-plugin", default="pass_rate",
                     help="Rate plugin name for user links (default is pass_rate)")
+    ap.add_argument("--isl-rate-plugin-metadata", default=None,
+                    help="File path for ISL rate plugin metadata (default is None)")
+    ap.add_argument("--gs-rate-plugin-metadata", default=None,
+                    help="File path for ground station rate plugin metadata (default is None)")
+    ap.add_argument("--user-rate-plugin-metadata", default=None,
+                    help="File path for user rate plugin metadata (default is None)")
     ap.add_argument("--isl-loss-plugin", default="pass_loss",
                     help="Loss plugin name for ISL (default is pass_loss)")
     ap.add_argument("--gs-loss-plugin", default="pass_loss",
                     help="Loss plugin name for ground station links (default is pass_loss)")
     ap.add_argument("--user-loss-plugin", default="pass_loss",
                     help="Loss plugin name for user links (default is pass_loss)")
+    ap.add_argument("--isl-loss-plugin-metadata", default=None,
+                    help="File path for ISL loss plugin metadata (default is None)")
+    ap.add_argument("--gs-loss-plugin-metadata", default=None,
+                    help="File path for ground station loss plugin metadata (default is None)")
+    ap.add_argument("--user-loss-plugin-metadata", default=None,
+                    help="File path for user loss plugin metadata (default is None)")
     
     ap.add_argument("--isl-rate", type=float, default=100.0, help="Default rate of ISL links in Mbits (default: 100)")
     ap.add_argument("--gs-rate", type=float, default=100.0, help="Default rate of Sat to Ground Station (Gateway) Links in Mbits (default: 100)")
@@ -342,21 +379,6 @@ def main():
         "user": args.loss_user,
     }
 
-    antenna_plugins = {
-        "gs": args.gs_antenna_plugin,
-        "user": args.user_antenna_plugin,
-    }
-    rate_plugins = {
-        "isl": args.isl_rate_plugin,
-        "gs": args.gs_rate_plugin,
-        "user": args.user_rate_plugin,
-    }
-    loss_plugins = {
-        "isl": args.isl_loss_plugin,
-        "gs": args.gs_loss_plugin,
-        "user": args.user_loss_plugin,
-    }
-
     # 1) Build constellation
     if args.mode == "xml":
         constellation = build_constellation_xml(args.constellation_name, args.dT)
@@ -382,6 +404,19 @@ def main():
             gs_ext_conn_function["antenna"] = getattr(gs_ext_plugin_antenna, args.gs_antenna_plugin)
             gs_ext_conn_function["rate"] = getattr(gs_ext_plugin_rate, args.gs_rate_plugin)
             gs_ext_conn_function["loss"] = getattr(gs_ext_plugin_loss, args.gs_loss_plugin)
+            # test metadata loading for GS plugins even if not used since they are part of the interface convention
+            if args.gs_antenna_plugin_metadata is not None:
+                with open(args.gs_antenna_plugin_metadata, "r") as f:
+                    pass
+            if args.gs_rate_plugin_metadata is not None:
+                with open(args.gs_rate_plugin_metadata, "r") as f:
+                    pass
+            if args.gs_loss_plugin_metadata is not None:
+                with open(args.gs_loss_plugin_metadata, "r") as f:
+                    pass
+            gs_ext_conn_function["antenna_metadata"] = args.gs_antenna_plugin_metadata
+            gs_ext_conn_function["rate_metadata"] = args.gs_rate_plugin_metadata
+            gs_ext_conn_function["loss_metadata"] = args.gs_loss_plugin_metadata
         except Exception as e:
             print(f"❌ Error reading ground stations XML: {e} or importing connectivity plugins in '{gs_conn_plugin_path_base}': {e}")
             gs_list = []
@@ -401,6 +436,20 @@ def main():
             usr_ext_conn_function["antenna"] = getattr(usr_ext_plugin_antenna, args.user_antenna_plugin)
             usr_ext_conn_function["rate"] = getattr(usr_ext_plugin_rate, args.user_rate_plugin)
             usr_ext_conn_function["loss"] = getattr(usr_ext_plugin_loss, args.user_loss_plugin)
+
+            # test metadata loading for user plugins even if not used since they are part of the interface convention
+            if args.user_antenna_plugin_metadata is not None:
+                with open(args.user_antenna_plugin_metadata, "r") as f:
+                    pass
+            if args.user_rate_plugin_metadata is not None:
+                with open(args.user_rate_plugin_metadata, "r") as f:
+                    pass
+            if args.user_loss_plugin_metadata is not None:
+                with open(args.user_loss_plugin_metadata, "r") as f:
+                    pass
+            usr_ext_conn_function["antenna_metadata"] = args.user_antenna_plugin_metadata
+            usr_ext_conn_function["rate_metadata"] = args.user_rate_plugin_metadata
+            usr_ext_conn_function["loss_metadata"] = args.user_loss_plugin_metadata
         except Exception as e:
             print(f"❌ Error reading users XML: {e} or importing connectivity plugins in '{usr_conn_plugin_path_base}': {e}")
             usr_list = []
@@ -416,6 +465,15 @@ def main():
         sat_ext_plugin_loss = importlib.import_module(sat_conn_plugin_path_base + "." + args.isl_loss_plugin)
         sat_ext_conn_function["rate"] = getattr(sat_ext_plugin_rate, args.isl_rate_plugin)
         sat_ext_conn_function["loss"] = getattr(sat_ext_plugin_loss, args.isl_loss_plugin)
+        # test metadata loading for ISL plugins even if not used since they are part of the interface convention
+        if args.isl_rate_plugin_metadata is not None:
+            with open(args.isl_rate_plugin_metadata, "r") as f:
+                pass
+        if args.isl_loss_plugin_metadata is not None:
+            with open(args.isl_loss_plugin_metadata, "r") as f:
+                pass
+        sat_ext_conn_function["rate_metadata"] = args.isl_rate_plugin_metadata
+        sat_ext_conn_function["loss_metadata"] = args.isl_loss_plugin_metadata
     except Exception as e:
         print(f"❌ Error importing ISL connectivity plugins in '{sat_conn_plugin_path_base}': {e}")
         sat_ext_conn_function = {}
