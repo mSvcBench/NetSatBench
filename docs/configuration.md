@@ -370,7 +370,7 @@ Each rule object:
 * `matchType`
 
   * **Type**: string
-  * **Description**: Node type to match (e.g., `satellite`, `gateway`, `user`).
+  * **Description**: Node type to match (e.g., `satellite`, `gateway`, `user`, or `any` for a default fallback).
 * `super-cidr`
 
   * **Type**: string (CIDR notation)

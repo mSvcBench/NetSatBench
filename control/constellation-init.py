@@ -36,9 +36,9 @@ def connect_etcd(etcd_host: str, etcd_port: int, etcd_user=None, etcd_password=N
 # ==========================================
  #Helper 
 # ==========================================
-def generate_subnet(global_index: int, base_cidr: str) -> str:
+def generate_ipv4_subnet(global_index: int, base_cidr: str, new_prefix: int = 30) -> str:
     """
-    Generates sequential /30 subnets from a parent network using the standard library.
+    Generates sequential ipv4 /30 subnets from a parent network using the standard library.
     """
     try:
         # Create a network object from the input (e.g., 192.168.0.0/16)
@@ -46,7 +46,7 @@ def generate_subnet(global_index: int, base_cidr: str) -> str:
         
         # The subnets() method returns a generator for all possible subnets of the specified prefix.
         # This is memory-efficient as it doesn't load all subnets into a list at once.
-        subnets_generator = parent_network.subnets(new_prefix=30)
+        subnets_generator = parent_network.subnets(new_prefix=new_prefix)
         
         # Use islice to jump directly to the desired index without a manual loop.
         # next() will retrieve the specific subnet at that index.
@@ -57,18 +57,36 @@ def generate_subnet(global_index: int, base_cidr: str) -> str:
     except ValueError as e:
         return f"Error: {e}"
 
+def generate_ipv6_subnet(global_index: int, base_cidr6: str, new_prefix: int = 64) -> str:
+    """
+    Generates sequential IPv6 subnets from a parent IPv6 network, memory-efficiently.
+    Example: base /48 -> new_prefix /64 gives 2^(64-48)=65536 subnets.
+    """
+    try:
+        parent_network = ipaddress.ip_network(base_cidr6)
+        if parent_network.version != 6:
+            return f"Error: base_cidr6 is not IPv6: {base_cidr6}"
+
+        subnets_generator = parent_network.subnets(new_prefix=new_prefix)
+        target_subnet = next(islice(subnets_generator, global_index, None))
+        return str(target_subnet)
+    except StopIteration:
+        return "Error: Index out of range"
+    except ValueError as e:
+        return f"Error: {e}"
 
 def merge_node_common_config(config_data: dict) -> dict:
     node_common_cfg = config_data.get("node-config-common", {})
     nodes_cfg = config_data.get("nodes", {})
+    to_skip_keys = {"auto-assign-ips", "auto-assign-super-cidr"}
 
     merged_nodes_cfg = {}
     for name, node_cfg in nodes_cfg.items():
-        merged_nodes_cfg[name] = deep_merge(node_common_cfg, node_cfg)
+        merged_nodes_cfg[name] = deep_merge(node_common_cfg, node_cfg, to_skip_keys)
 
     return {**config_data, "nodes": merged_nodes_cfg}
 
-def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any], to_skip_keys: set[str] = None) -> dict[str, Any]:
     """
     Recursively merge override into base.
     - Dict+dict: merge recursively
@@ -79,23 +97,25 @@ def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str
 
     # Start with base (deep-copied structure)
     for k, v in base.items():
+        if to_skip_keys and k in to_skip_keys:
+            continue
         if isinstance(v, dict):
-            out[k] = deep_merge(v, {})   # makes a fresh nested dict
+            out[k] = deep_merge(v, {}, to_skip_keys)   # makes a fresh nested dict
         else:
             out[k] = copy.deepcopy(v)             # safe for lists/objects
 
     # Apply override
     for k, v in override.items():
         if k in out and isinstance(out[k], dict) and isinstance(v, dict):
-            out[k] = deep_merge(out[k], v)
+            out[k] = deep_merge(out[k], v, to_skip_keys)  # recursive merge
         else:
-            out[k] = deep_merge(v, {}) if isinstance(v, dict) else copy.deepcopy(v)
+            out[k] = deep_merge(v, {}, to_skip_keys) if isinstance(v, dict) else copy.deepcopy(v)
 
     return out
 
 
 # ==========================================
-# CONFIG INJECTION LOGIC
+# PUSH CONFIG TO ETCD AND IP ASSIGNMENT
 # ==========================================
 def apply_config_to_etcd(etcd, config_data: dict):
    
@@ -104,19 +124,25 @@ def apply_config_to_etcd(etcd, config_data: dict):
     ]
 
     try:
-        # init for auto-assign-ips
-        super_cidr_vector: dict[str, tuple[int, str]] = {}
-        super_cidr_vector["any"] = (0, "172.27.0.0/16")  # default base super cidr
+        # init for auto-assign-ips (v4 + v6)
+        super_cidr_vector_v4: dict[str, tuple[int, str]] = {}
+        super_cidr_vector_v6: dict[str, tuple[int, str]] = {}
         node_common_cfg = config_data.get("node-config-common", {})
+        auto_assign_ip = False
         if "L3-config" in node_common_cfg:
             l3_common_cfg = node_common_cfg["L3-config"]
             if "auto-assign-super-cidr" in l3_common_cfg:
+                auto_assign_ip = True
                 for supercidr_entry in l3_common_cfg["auto-assign-super-cidr"]:
-                    match_type = supercidr_entry.get("matchType","")
-                    super_cidr = supercidr_entry.get("super-cidr","")
+                    match_type = supercidr_entry.get("matchType", "")
+                    super_cidr = supercidr_entry.get("super-cidr", "")
+                    super_cidr6 = supercidr_entry.get("super-cidr6", "")
                     if match_type and super_cidr:
-                        super_cidr_vector[match_type] = (0, super_cidr)
-        # upload config to etcd
+                        super_cidr_vector_v4[match_type] = (0, super_cidr)
+                    if match_type and super_cidr6:
+                        super_cidr_vector_v6[match_type] = (0, super_cidr6)
+        
+        # upload config to etcd and auto-assign IPs if enabled
         for key, value in config_data.items():
             if key not in allowed_keys:
                 log.warning(f"⚠️ Unexpected key '{key}', allowed keys are {allowed_keys}, skipping...")
@@ -126,17 +152,42 @@ def apply_config_to_etcd(etcd, config_data: dict):
             elif key == "nodes":
                 log.info(f"⚙️ Starting IP assignment process...")
                 for name, node_cfg in value.items():
-                    # merge with common config
                     l3_cfg = node_cfg.get("L3-config", {})
+
                     # auto-assign IPs if enabled
-                    if l3_cfg.get("auto-assign-ips", False) is True:   
-                        if "cidr" not in l3_cfg:
-                            supercidr_type = node_cfg.get("type")
-                            if supercidr_type not in super_cidr_vector:
-                                supercidr_type = "any"
-                            l3_cfg["cidr"] = generate_subnet(super_cidr_vector[supercidr_type][0], super_cidr_vector[supercidr_type][1])
-                            super_cidr_vector[supercidr_type] = (super_cidr_vector[supercidr_type][0] + 1, super_cidr_vector[supercidr_type][1])    
-                    log.info(f"    ➞ Assigned CIDR {l3_cfg.get('cidr', None)} to node {name} of type {node_cfg.get('type')}")
+                    if auto_assign_ip:
+                        node_type = node_cfg.get("type", "any")
+
+                        # ---- IPv4 ----
+                        if "cidr" not in l3_cfg and node_type in super_cidr_vector_v4:
+                            l3_cfg["cidr"] = generate_ipv4_subnet(
+                                super_cidr_vector_v4[node_type][0],
+                                super_cidr_vector_v4[node_type][1],
+                                new_prefix=30  # /30 for point-to-point links, adjust as needed
+                            )
+                            super_cidr_vector_v4[node_type] = (
+                                super_cidr_vector_v4[node_type][0] + 1,
+                                super_cidr_vector_v4[node_type][1]
+                            )
+
+                        # ---- IPv6 ----
+                        if "cidr-v6" not in l3_cfg and node_type in super_cidr_vector_v6:
+                            l3_cfg["cidr-v6"] = generate_ipv6_subnet(
+                                super_cidr_vector_v6[node_type][0],
+                                super_cidr_vector_v6[node_type][1],
+                                new_prefix=126  # /126 for point-to-point links, adjust as needed
+                            )
+                            super_cidr_vector_v6[node_type] = (
+                                super_cidr_vector_v6[node_type][0] + 1,
+                                super_cidr_vector_v6[node_type][1]
+                            )
+
+                    log.info(
+                        f"    ➞ Assigned CIDR v4={l3_cfg.get('cidr', None)} "
+                        f"v6={l3_cfg.get('cidr-v6', None)} to node {name} of type {node_cfg.get('type')}"
+                    )
+
+                    
                     etcd.put(
                         f"/config/{key}/{name}",
                         json.dumps(node_cfg),

@@ -41,9 +41,10 @@ l3_flags = None
 my_config = None
 etcd_client = None
 routing = None
+HOSTS_LOCK = threading.Lock()
 
 # ----------------------------
-#   HELPERS
+#   Helpers
 # ----------------------------
 def get_etcd_client():
     log.info(f"📁 Connecting to Etcd at {ETCD_HOST}:{ETCD_PORT}...")
@@ -93,7 +94,6 @@ def build_netem_opts(l):
     return netem_opts
 
 
-
 def derive_sysid_from_string(value: str) -> str:
     """
     Derive an 8-digit IS-IS system-id from an arbitrary string
@@ -103,9 +103,37 @@ def derive_sysid_from_string(value: str) -> str:
     num = int.from_bytes(digest[:4], byteorder="big")  # 32 bits
     return f"{num % 10**8:08d}"
 
+def _parse_cidr(cidr: str):
+    if not cidr:
+        return None
+    try:
+        return ipaddress.ip_network(cidr, strict=False)
+    except Exception:
+        return None
+
+def pick_last_usable_ip(net: ipaddress._BaseNetwork):
+    """
+    Return a single 'stable' usable IP inside `net`, without iterating.
+    Mirrors the existing behavior ("last IP") but works for IPv6 too.
+    """
+    if net is None:
+        return None
+
+    # Single-address networks (e.g., /32 IPv4 or /128 IPv6)
+    if net.num_addresses == 1:
+        return net.network_address
+
+    # IPv4 has broadcast for prefixes <= /30. For /31 and /32 there is no broadcast.
+    if net.version == 4 and net.prefixlen <= 30:
+        # usable range is [network+1, broadcast-1]
+        return net.broadcast_address - 1
+
+    # IPv6: treat the "highest address" as usable (no broadcast concept)
+    return net.network_address + (net.num_addresses - 1)
+
 
 # ----------------------------
-#   PART 1: INITIAL SETUP
+#   Initial Setup
 # ----------------------------
 def process_initial_topology(etcd_client):
     """
@@ -175,29 +203,23 @@ def process_initial_topology(etcd_client):
     if val:
         execute_commands(val.decode())
     
-    ## Configure /etc/hosts entries for all known nodes
-    log.info("📝 Updating /etc/hosts with known nodes...")
-    prefix = "/config/etchosts/"
-    for value, meta in etcd_client.get_prefix(prefix):
-        node_name = meta.key.decode().split('/')[-1]
-        ip_addr = value.decode().strip()
-        if ip_addr:
-            try:
-                # Check if entry already exists
-                with open("/etc/hosts", "r") as f:
-                    hosts_content = f.read()
-                pattern = re.compile(rf"^{re.escape(ip_addr)}\s+{re.escape(node_name)}$", re.MULTILINE)
-                if pattern.search(hosts_content):
-                    continue
-                # Append to /etc/hosts
-                with open("/etc/hosts", "a") as f:
-                    f.write(f"{ip_addr}\t{node_name}\n")
-                log.info(f" ✅ Added /etc/hosts entry: {ip_addr} {node_name}")
-            except Exception as e:
-                log.error(f" ❌ Failed to update /etc/hosts for {node_name}: {e}")
+    log.info("📝 Updating /etc/hosts with known nodes (IPv4 + IPv6, one line per hostname)...")
+
+    def _bootstrap_hosts_from_prefix(prefix: str):
+        for value, meta in etcd_client.get_prefix(prefix):
+            node_name = meta.key.decode().split('/')[-1]
+            ip_addr = value.decode().strip()
+            if not ip_addr:
+                continue
+            update_hosts_entry(node_name, ip_addr)
+
+    # Prefer IPv4 first, then IPv6 overwrites (or vice versa if you swap order).
+    _bootstrap_hosts_from_prefix("/config/etchosts6/")
+    _bootstrap_hosts_from_prefix("/config/etchosts/")
+    
 
 # ----------------------------
-#   PART 2: DYNAMIC ACTIONS (Epoch 1+)
+#   Link Management & Runtime Commands
 # ----------------------------
 def link_exists(ifname):
     return subprocess.run(
@@ -233,18 +255,35 @@ def create_vxlan_link(
     run(["ip", "link", "set", vxlan_if, "mtu", "1350"])
     run(["ip", "link", "set", "dev", vxlan_if, "up"])
     
-    ## Assign IP from my_config subnet, if available. Last IP in subnet assigned to all vxlan interfaces
-    available_ips = list(ipaddress.ip_network(my_config.get("L3-config", {}).get("cidr","")).hosts())
-    if len(available_ips) > 0:
-        ip_addr = str(available_ips[-1]) + "/32"
-        run(["ip", "addr", "add", ip_addr, "dev", vxlan_if])
-        log.info(f" ✅ VXLAN {vxlan_if} created with IP {ip_addr}.")
-        if l3_flags.get("enable-routing", False):
-            msg, success = routing.link_add(etcd_client, my_node_name, vxlan_if)
-            if success:
-                log.info(msg)
-            else:
-                log.error(msg)
+    # ----------------------------
+    # L3 addressing (IPv4 / IPv6)
+    # ----------------------------
+    l3_cfg = my_config.get("L3-config", {})
+
+    # IPv4 (existing behavior, but without hosts() iteration)
+    v4_net = _parse_cidr(l3_cfg.get("cidr", ""))
+    v4_ip = pick_last_usable_ip(v4_net)
+    if v4_ip:
+        v4_addr = f"{v4_ip}/32"
+        run(["ip", "addr", "add", v4_addr, "dev", vxlan_if])
+        log.info(f" ✅ VXLAN {vxlan_if} IPv4 set to {v4_addr}.")
+
+    # IPv6
+    v6_net = _parse_cidr(l3_cfg.get("cidr-v6", ""))
+    v6_ip = pick_last_usable_ip(v6_net)
+    if v6_ip:
+        # Mirror the IPv4 choice (/32) with a host-route style /128
+        v6_addr = f"{v6_ip}/128"
+        run(["ip", "-6", "addr", "add", v6_addr, "dev", vxlan_if])
+        log.info(f" ✅ VXLAN {vxlan_if} IPv6 set to {v6_addr}.")
+
+    # Routing hook (keep your current behavior)
+    if (v4_ip or v6_ip) and l3_flags.get("enable-routing", False) and routing is not None:
+        msg, success = routing.link_add(etcd_client, my_node_name, vxlan_if)
+        if success:
+            log.info(msg)
+        else:
+            log.error(msg)
 
 def delete_vxlan_link(
     vxlan_if):
@@ -399,53 +438,98 @@ def watch_command_loop():
                     cancel()
                 except Exception:
                     pass
+   
 
-def watch_etchosts_loop():
-    log.info("👀 Watching /config/etchosts (Dynamic Events)...")
+def update_hosts_entry(node_name: str, ip_addr: str) -> None:
+    """
+    Ensure /etc/hosts contains exactly one entry for node_name:
+        <ip_addr>\t<node_name>
+    Removes any previous entries for node_name (IPv4 or IPv6).
+    """
+    if not node_name or not ip_addr:
+        return
+
+    try:
+        with HOSTS_LOCK:
+            # Read current hosts
+            with open("/etc/hosts", "r") as f:
+                hosts_content = f.read()
+
+            # Remove any existing entry for this hostname (any IP)
+            # Matches lines like: "<anything>  node_name" with spaces/tabs
+            hosts_content = re.sub(
+                rf"^[^\n]*\s+{re.escape(node_name)}\s*$\n?",
+                "",
+                hosts_content,
+                flags=re.MULTILINE
+            )
+
+            # Append the new entry
+            if not hosts_content.endswith("\n"):
+                hosts_content += "\n"
+            hosts_content += f"{ip_addr}\t{node_name}\n"
+
+            with open("/etc/hosts", "w") as f:
+                f.write(hosts_content)
+
+        log.info(f"✅ Updated /etc/hosts entry: {ip_addr} {node_name}")
+    except Exception as e:
+        log.error(f"❌ Failed to update /etc/hosts for {node_name}: {e}")
+
+def remove_hosts_entry(node_name: str) -> None:
+    """
+    Remove any /etc/hosts entry for node_name (IPv4 or IPv6).
+    """
+    if not node_name:
+        return
+    try:
+        with HOSTS_LOCK:
+            with open("/etc/hosts", "r") as f:
+                hosts_content = f.read()
+
+            new_content = re.sub(
+                rf"^[^\n]*\s+{re.escape(node_name)}\s*$\n?",
+                "",
+                hosts_content,
+                flags=re.MULTILINE
+            )
+
+            with open("/etc/hosts", "w") as f:
+                f.write(new_content)
+
+        log.info(f"✅ Removed /etc/hosts entry for: {node_name}")
+    except Exception as e:
+        log.error(f"❌ Failed to remove /etc/hosts entry for {node_name}: {e}")
+
+def watch_etchosts_prefix(prefix: str):
+    """
+    Watch a given etc-hosts prefix (IPv4 or IPv6) and apply changes to /etc/hosts.
+    Values are expected to be literal IP strings (v4 or v6).
+    """
+    log.info(f"👀 Watching {prefix} (Dynamic Events)...")
     backoff = 1
     while True:
         cancel = None
         try:
-            events_iterator, cancel = etcd_client.watch_prefix("/config/etchosts/")
+            events_iterator, cancel = etcd_client.watch_prefix(prefix)
             for event in events_iterator:
-                # If the event is a PutEvent, update /etc/hosts, otherwise if it is a delete event remove from /etc/hosts
                 try:
+                    node_name = event.key.decode().split('/')[-1]
+
                     if isinstance(event, etcd3.events.PutEvent):
-                        node_name = event.key.decode().split('/')[-1]
                         ip_addr = event.value.decode().strip()
                         if ip_addr:
-                            try:
-                                # Check if entry already exists, in case remove and reinsert with current value
-                                with open("/etc/hosts", "r") as f:
-                                    hosts_content = f.read()
-                                pattern = re.compile(rf"^{re.escape(ip_addr)}\s+{re.escape(node_name)}$", re.MULTILINE)
-                                if not pattern.search(hosts_content):
-                                    # Remove any existing entry for this node_name
-                                    hosts_content = re.sub(rf"^.*\s+{re.escape(node_name)}$\n", "", hosts_content, flags=re.MULTILINE)
-                                    # Append to /etc/hosts
-                                    with open("/etc/hosts", "w") as f:
-                                        f.write(hosts_content)
-                                        f.write(f"{ip_addr}\t{node_name}\n")
-                                    log.info(f"✅  Updated /etc/hosts entry: {ip_addr} {node_name}")
-                            except Exception as e:
-                                log.error(f"❌ Failed to update /etc/hosts for {node_name}: {e}")
+                            update_hosts_entry(node_name, ip_addr)
+
                     elif isinstance(event, etcd3.events.DeleteEvent):
-                        node_name = event.key.decode().split('/')[-1]
-                        try:
-                            # Remove any existing entry for this node_name
-                            with open("/etc/hosts", "r") as f:
-                                hosts_content = f.read()
-                            new_content = re.sub(rf"^.*\s+{re.escape(node_name)}$\n", "", hosts_content, flags=re.MULTILINE)
-                            with open("/etc/hosts", "w") as f:
-                                f.write(new_content)
-                            log.info(f"✅ Removed /etc/hosts entry for: {node_name}")
-                        except Exception as e:
-                            log.error(f"❌ Failed to remove /etc/hosts entry for {node_name}: {e}")
-                except: 
-                    log.error("❌ Failed to process /config/etchosts event.")
+                        remove_hosts_entry(node_name)
+
+                except Exception:
+                    log.exception(f"❌ Failed to process {prefix} event.")
                     continue
-        except Exception as ex:
-            log.exception("❌ Failed to watch /config/etchosts (will retry).")
+
+        except Exception:
+            log.exception(f"❌ Failed to watch {prefix} (will retry).")
             time.sleep(backoff)
             backoff = min(backoff * 2, 30)
         finally:
@@ -453,10 +537,9 @@ def watch_etchosts_loop():
                 try:
                     cancel()
                 except Exception:
-                    pass        
-        
+                    pass       
 
-def _run_commands_sequentially(commands):
+def run_commands_sequentially(commands):
     for cmd in commands:
         log.info("▶️  exec: %s", cmd)
         subprocess.run(
@@ -473,7 +556,7 @@ def execute_commands(commands_raw_str: str) -> None:
         if not isinstance(commands, list) or not all(isinstance(c, str) for c in commands):
             return
         threading.Thread(
-            target=_run_commands_sequentially,
+            target=run_commands_sequentially,
             args=(commands,),
             daemon=True
         ).start()
@@ -535,10 +618,18 @@ def main():
             log.error(f"❌ Failed to initialize L3 routing: {e}")
             routing = None
     
-    ## Publish node IP for etc hosts usage
-    available_ips = list(ipaddress.ip_network(my_config.get("L3-config", {}).get("cidr","")).hosts())
-    if len(available_ips) > 0:
-        etcd_client.put(f"/config/etchosts/{my_node_name}", str(available_ips[-1]))
+    # Publish node IPs for /etc/hosts usage
+    l3_cfg = my_config.get("L3-config", {})
+
+    v4_net = _parse_cidr(l3_cfg.get("cidr", ""))
+    v4_ip = pick_last_usable_ip(v4_net)
+    if v4_ip:
+        etcd_client.put(f"/config/etchosts/{my_node_name}", str(v4_ip))
+
+    v6_net = _parse_cidr(l3_cfg.get("cidr-v6", ""))
+    v6_ip = pick_last_usable_ip(v6_net)
+    if v6_ip:
+        etcd_client.put(f"/config/etchosts6/{my_node_name}", str(v6_ip))
     
     ## Insert sat-vnet-super-cidr route with default gateway as next hop. 
     ## Necessary for vxlan setup in case of default gateway overriding to mimic satellite gateway behavior. 
@@ -564,8 +655,9 @@ def main():
     # Start Event Loops
     threads = [
         threading.Thread(target=watch_link_actions_loop, daemon=True), # Dynamic
-        threading.Thread(target=watch_command_loop, daemon=True)
-        ,threading.Thread(target=watch_etchosts_loop, daemon=True)
+        threading.Thread(target=watch_command_loop, daemon=True),
+        threading.Thread(target=watch_etchosts_prefix, args=("/config/etchosts/",), daemon=True),
+        threading.Thread(target=watch_etchosts_prefix, args=("/config/etchosts6/",), daemon=True)
     ]
     for t in threads: t.start()
     
