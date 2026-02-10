@@ -205,6 +205,10 @@ def process_initial_topology(etcd_client):
     
     log.info("📝 Updating /etc/hosts with known nodes (IPv4 + IPv6, one line per hostname)...")
 
+    ## enabling ipv6 and ipv4 forwarding
+    run(["sysctl", "-w", "net.ipv4.ip_forward=1"])
+    run(["sysctl", "-w", "net.ipv6.conf.all.forwarding=1"])
+
     def _bootstrap_hosts_from_prefix(prefix: str):
         for value, meta in etcd_client.get_prefix(prefix):
             node_name = meta.key.decode().split('/')[-1]

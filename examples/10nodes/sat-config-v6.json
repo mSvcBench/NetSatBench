@@ -1,0 +1,114 @@
+{
+  "node-config-common": {
+    "type": "undefined",
+    "n_antennas": 2,
+    "metadata": {},  
+    "image": "msvcbench/sat-container:latest",
+    "sidecars": [],
+    "cpu-request": "100m",
+    "mem-request": "200MiB",
+    "cpu-limit": "200m",
+    "mem-limit": "400MiB",
+    "L3-config": {
+      "enable-netem"  : true,
+      "enable-routing" : true,
+      "routing-module": "extra.isisv6",
+      "routing-metadata": {
+        "isis-area-id": "0001",
+        "advertize-default-route": false
+      },
+      "auto-assign-ips": true,
+      "auto-assign-super-cidr": [
+          {"matchType":"satellite","super-cidr6":"2001:db8:100::/48"},
+          {"matchType":"gateway","super-cidr6":"2001:db8:101::/48"},
+          {"matchType":"user","super-cidr6":"2001:db8:102::/48"}
+      ]
+    }
+  },
+  "epoch-config": {
+    "epoch-dir": "examples/10nodes/constellation-epochs",
+    "file-pattern": "NetSatBench-epoch*.json"
+  },
+  "nodes": {
+    "sat1": {
+      "type": "satellite",
+      "n_antennas": 5,
+      "metadata": {
+        "orbit": {
+          "TLE": [
+            "1 47284U 20100AC  25348.63401725  .00000369  00000+0  98748-3 0  9994",
+            "2 47284  87.8941  27.3203 0001684  91.6865 268.4456 13.12589579240444"
+          ]
+          },
+        "labels": {
+          "name": "ONEWEB-0138"
+        }
+      }
+    },
+    "sat2": {
+      "type": "satellite",
+      "n_antennas": 5
+    },
+    "sat3": {
+      "type": "satellite",
+      "n_antennas": 5
+    },
+    "sat4": {
+      "type": "satellite",
+      "n_antennas": 5
+    },
+    "sat5": {
+      "type": "satellite",
+      "n_antennas": 5
+    },
+    "sat6": {
+      "type": "satellite",
+      "n_antennas": 5
+    },
+    "sat7": {
+      "type": "satellite",
+      "n_antennas": 5
+    },
+    "sat8": {
+      "type": "satellite",
+      "n_antennas": 5
+    },
+    "grd1": {
+      "type": "gateway",
+      "n_antennas": 2,
+      "cpu-request": "200m",
+      "mem-request": "400MiB",
+      "cpu-limit": "400m",
+      "mem-limit": "800MiB",
+      "metadata": {
+        "location": {
+          "latitude": 37.4275,
+          "longitude": -122.1697,
+          "altitude": 0
+        },
+        "labels": {
+          "name": "stanford_ground_station"
+        }
+      },
+      "L3-config": {
+        "routing-metadata": {
+          "advertize-default-route": false
+        }
+      }
+    },
+    "usr1": {
+      "type": "user",
+      "n_antennas": 2,
+      "metadata": {
+        "location": {
+          "latitude": 37.7749,
+          "longitude": -122.4194,
+          "altitude": 20
+        },
+        "labels": {
+          "name": "san_francisco_user"
+        }
+      }
+    }
+  }
+}

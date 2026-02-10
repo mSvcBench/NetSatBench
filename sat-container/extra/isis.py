@@ -22,6 +22,21 @@ def derive_sysid_from_string(value: str) -> str:
     num = int.from_bytes(digest[:4], byteorder="big")  # 32 bits
     return f"{num % 10**8:08d}"
 
+def pick_last_usable_ip(net: ipaddress._BaseNetwork):
+    """Return a single stable IP inside `net` (works for IPv4 and IPv6)."""
+    if net is None:
+        return None
+
+    if net.num_addresses == 1:
+        return net.network_address
+
+    # IPv4: avoid network/broadcast for prefixes <= /30
+    if net.version == 4 and net.prefixlen <= 30:
+        return net.broadcast_address - 1
+
+    # IPv6: highest address is usable (no broadcast concept)
+    return net.network_address + (net.num_addresses - 1)
+
 
 # ----------------------------
 #   MAIN FUNCTIONS
@@ -35,8 +50,12 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
             msg=f"  ❌ IS-IS configuration failed: No CIDR assigned to node."
             return msg, False
         area_id = l3_config.get("metadata", {}).get("isis-area-id","0001")  # default area ID
-        available_ips = list(ipaddress.ip_network(l3_config.get("cidr","")).hosts())
-        loopback_ip = available_ips[-1] if available_ips else ipaddress.ip_address("127.0.0.1")
+
+        v4_net = ipaddress.ip_network(l3_config.get("cidr",""), strict=False)
+        loopback_ip = pick_last_usable_ip(v4_net)
+        if loopback_ip is None:
+            msg = "  ❌ IS-IS configuration failed: Unable to derive loopback IP from CIDR."
+            return msg, False
         loopback_mask = l3_config.get("cidr","").split('/')[1] if '/' in l3_config.get("cidr","") else '30'
         loopback_ip_mask = f"{loopback_ip}/{loopback_mask}"
         # Extract sys_id from node name 
