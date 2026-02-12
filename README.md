@@ -117,7 +117,7 @@ Documentation files, including:
 - [Etcd Key-Value Store](docs/etcd.md) — structure and organization of the Etcd key-value store used for satellite system state management.
 - [StarPerf Simulator Integration](docs/starperf-integration.md) — how to use the StarPerf_Simulator plugin to generate satellite system epoch files.
 - [Routing Interface](docs/routing-interface.md) — specification of the routing module interface.
-- [Utils](docs/utils.md) — description of the utility scripts available in the `utils/` director.
+- [Utils](docs/utils.md) — description of the utility scripts available in the `utils/` directory.
 
 ---
 
@@ -172,7 +172,7 @@ Download or clone the repository on the control host and follow these steps to d
 The sample configuration files are located in [`examples/10nodes`](examples/10nodes).  
 The cluster consists of two workers, `host-1` and `host-2`, defined in [`workers-config.json`](examples/10nodes/workers-config.json). For simplicity, `host-1` has also the role of control host.
 
-The emulated system includes 8 satellites, 1 ground station and 1 user, as defined in [`sat-config.json`](examples/10nodes/sat-config.json). IP addressing is automatically managed and IS-IS routing is used for L3 connectivity.
+The emulated system includes 8 satellites, 1 ground station and 1 user, as defined in [`sat-config.json`](examples/10nodes/sat-config.json). IP addressing is automatically managed and IS-IS routing is used for L3 connectivity. Use [`sat-config-v6.json`](examples/10nodes/sat-config-v6.json) for IPv6.
 
 The dynamic evolution of the satellite system (link creation, updates, removal, and task execution) is specified through epoch files located in [`examples/10nodes/constellation-epochs`](examples/10nodes/constellation-epochs). The ground station `gdr1` run an `iperf3` server starting at the initial epoch.
 

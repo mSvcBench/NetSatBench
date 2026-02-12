@@ -85,12 +85,18 @@ This transfers `config.json` from the local host into the container filesystem o
 ### Copy a directory recursively
 
 ```bash
-python3 utils/constellation-cp.py -a ./configs sat1:/opt/app/configs
+python3 utils/constellation-cp.py -r ./configs sat1:/opt/app/configs
 ```
 
 ---
 
+### Remove all links
+```bash
+python3 utils/constellation-unlink.py
+```
+Can be useful to reset the satellite constellation to a clean state before starting a new emulation run, without the need to redeploy containers or restart the control script.
 
+---
 
 # Constellation Statistics
 `constellation-stats.py`
@@ -106,10 +112,11 @@ python3 utils/constellation-stats.py [options]
 ```
 ---
 
-# Oracle Routing Module
-`oracle-routing.py`
+# Oracle Routing Module (v4/v6)
+`oracle-routing.py`\
 
-This module provides a reference **oracle-style routing implementation** for the satellite network emulator.
+This module provides a reference **oracle-style routing implementation** for the satellite network emulator. Both IPv4 and IPv6 versions are available, and the desired IP version can be selected via the `--ip-version` command-line parameter.
+
 It demonstrates how routing strategies can be evaluated by injecting explicit routing commands into **epoch files** via `run` sections.
 
 ---
@@ -199,7 +206,8 @@ python3 utils/oracle-routing.py \
     --out-epoch-dir examples/10nodes/constellation-epochs-or \
     --drain-before-break-offset 2 \
     --link-creation-offset 2 \
-    --node-type-to-route grounds,users
+    --node-type-to-route grounds,users \
+    --ip-version 4
 ```
 
 Full command-line help is available via:
