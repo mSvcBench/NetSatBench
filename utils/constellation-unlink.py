@@ -1,44 +1,14 @@
 #!/usr/bin/env python3
 import argparse
-import json
 import logging
 import os
-import subprocess
 import sys
-from typing import Optional, Tuple
 
 import etcd3
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger("constellation-unlink")
 
-
-# =========================
-# Etcd helpers
-# =========================
-def get_json(etcd_client, key: str) -> Optional[dict]:
-    val, _ = etcd_client.get(key)
-    if not val:
-        return None
-    try:
-        return json.loads(val.decode("utf-8"))
-    except Exception:
-        return None
-
-
-def split_node_spec(s: str) -> Optional[Tuple[str, str]]:
-    """Parse NODE:/path"""
-    if ":" not in s:
-        return None
-    node, path = s.split(":", 1)
-    if not node or not path:
-        return None
-    return node, path
-
-
-def node_prefix(node_cfg: dict) -> str:
-    t = (node_cfg.get("type") or "").lower()
-    return {"satellite": "🛰️", "user": "👤", "gateway": "📡"}.get(t, "🛰️")
 
 
 # =========================
@@ -47,7 +17,7 @@ def node_prefix(node_cfg: dict) -> str:
 def main() -> int:
     p = argparse.ArgumentParser(
         prog="constellation-unlink",
-        description="remove all links among nodes of the satellite system",
+        description="Remove all links among nodes of the satellite system.",
     )
 
     # Etcd
@@ -57,12 +27,8 @@ def main() -> int:
     p.add_argument("--etcd-password", default=os.getenv("ETCD_PASSWORD"))
     p.add_argument("--etcd-ca-cert", default=os.getenv("ETCD_CA_CERT"))
 
-
-    p.add_argument("--log-level", default="INFO")
-
-
     args = p.parse_args()
-    log.setLevel(args.log_level.upper())
+    log.setLevel("INFO")
 
 
     # =========================
@@ -84,18 +50,10 @@ def main() -> int:
         log.error(f"❌ Etcd init failed: {e}")
         return 1
 
-    # remove from etcd all entries with prefix /config/links one by one
-    try:
-        log.info("✂️ Removing all links...")
-        links = etcd.get_prefix("/config/links")
-        for val, meta in links:
-            key = meta.key.decode("utf-8")
-            log.info(f"   ...Removing link config: {key}")
-            etcd.delete(key)
-    except Exception as e:
-        log.error(f"❌ Failed to remove links: {e}")
-        return 1
-    log.info("✅ All links removed successfully.")
+    etcd.delete_prefix("/config/links/")  # clean up any stale locks from previous runs
+    log.info("✂️ Removed all links of the satellite system")
+
+     # =========================
 
 
 if __name__ == "__main__":

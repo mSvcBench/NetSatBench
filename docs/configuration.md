@@ -95,13 +95,14 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
 ### Field Descriptions
 
 #### `workers-common`
-* **Type**: object
+* **Type**: object (mandatory)
 * **Description**: Common configuration applied to all workers unless explicitly overridden in a specific entry under workers. Each field has the same semantics as the corresponding per-worker field described below. In addition, workers-common must define the `sat-vnet-super-cidr` field, whose value is a CIDR string representing the supernet encompassing all worker `sat-vnet-cidr` subnets. This field is global, cannot be overridden on a per-worker basis, and must not overlap with any underlay network (e.g., physical interfaces of worker hosts). This requirement ensures direct IP routing between containers across workers without the use of NAT.
 
 
 #### `workers`
 
-* **Type**: object
+* **Type**: object 
+* **Requirement**: mandatory
 * **Description**: Top-level object containing all worker host definitions. Each key is a unique logical worker identifier (e.g., `host-1`).
 
 ---
@@ -111,38 +112,45 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
 ##### `ip`
 
 * **Type**: string
+* **Requirement**: mandatory
 * **Description**: Management IP address of the worker host, reachable from the control host. Used for worker management via SSH.
 
 ##### `ssh-user`
 
-* **Type**: string
+* **Type**: string 
+* **Requirement**: mandatory, if not included in `workers-common`
 * **Description**: SSH username used by the control host. The SSH user must have passwordless `sudo` privileges and permission to execute Docker commands.
 
 ##### `ssh-key`
 
-* **Type**: string
+* **Type**: string 
+* **Requirement**: mandatory, if not included in `workers-common`
 * **Description**: Absolute path to the private SSH key used for authentication. The key must be readable by the control scripts and authorized on the worker host.
 
 ##### `sat-vnet`
 
-* **Type**: string
+* **Type**: string 
+* **Requirement**: mandatory, if not included in `workers-common`
 * **Description**: Name of the Docker network (Linux bridge) created on the worker host to interconnect all containers deployed on that worker.
 
 ##### `sat-vnet-cidr`
 
 * **Type**: string (CIDR notation)
+* **Requirement**: mandatory, if not included in `workers-common`
 * **Description**: Underlay IP subnet assigned eth0 interfaces of containers deployed on the worker and routed by the Docker bridge. Must be unique per worker and must be a subnet of `sat-vnet-super-cidr`. Its size must accommodate all containers deployed on the worker.
 
 
 ##### `cpu`
 
-* **Type**: string
+* **Type**: string 
+* **Requirement**: mandatory, if not included in `workers-common`
 * **Units / Format**: n. of CPU cores or millicore (e.g., `4`, `2.5`, `500m`).
 * **Description**: CPU capacity available on the worker for container execution, used by control scripts for container scheduling.
 
 ##### `mem`
 
-* **Type**: string
+* **Type**: string 
+* **Requirement**: mandatory, if not included in `workers-common`
 * **Units / Format**: Binary units `KiB`, `MiB`, `GiB`, `TiB` (e.g., `6GiB`).
 * **Description**: Memory capacity available on the worker for container execution, used by control scripts for container scheduling.
 
@@ -174,7 +182,9 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 }
 ```
 ---
-### Example
+### Example 
+
+#### IPv4
 ```json  
 {
   "node-config-common": {
@@ -199,7 +209,7 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
       "auto-assign-super-cidr": [
           {"matchType":"satellite","super-cidr":"172.100.0.0/16"},
           {"matchType":"gateway","super-cidr":"172.101.0.0/16"},
-          {"matchType":"user","super-cidr":"172.102.0.0/16"}
+          {"matchType":"user","super-cidr":"172.102.0.0/16"},
       ]
     }
   },
@@ -268,69 +278,112 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
   }
 }
 ```
+
+#### IPv6
+```json  
+{
+  "node-config-common": {
+    "type": "undefined",
+    "n_antennas": 2,
+    "metadata": {},  
+    "image": "msvcbench/sat-container:latest",
+    "sidecars": [],
+    "cpu-request": "100m",
+    "mem-request": "200MiB",
+    "cpu-limit": "200m",
+    "mem-limit": "400MiB",
+    "L3-config": {
+      "enable-netem"  : true,
+      "enable-routing" : true,
+      "routing-module": "extra.isisv6",
+      "routing-metadata": {
+        "isis-area-id": "0001"
+      },
+      "auto-assign-ips": true,
+      "auto-assign-super-cidr": [
+          {"matchType":"satellite","super-cidr6":"2001:db8:100::/48"},
+          {"matchType":"gateway","super-cidr6":"2001:db8:101::/48"},
+          {"matchType":"user","super-cidr6":"2001:db8:102::/48"}
+      ]
+    }
+  },
+  ...
+}
+```
 ---
 
 ### Field Descriptions
 
 #### `node-config-common`
 
-* **Type**: object
+* **Type**: object 
+* **Requirement**: mandatory
 * **Description**: Common configuration applied to all nodes unless overridden within a specific entry in `nodes`.
 
 #### Per-Field Descriptions of `node-config-common` 
 
 ##### `type`
 
-* **Type**: string
+* **Type**: string 
+* **Requirement**: optional, if not included in per-node configuration
 * **Description**: Logical node type (recommended: `satellite`, `gateway`, `user`). Used for classification, visualization, and rule-based automatic IP assignment. Any string can be used.
 
 ##### `n_antennas`
 
-* **Type**: integer
+* **Type**: integer 
+* **Requirement**: optional
 * **Description**: Number of antennas associated with the node. Informational only; not interpreted by control scripts.
 
 ##### `metadata`
 
-* **Type**: object
+* **Type**: object 
+* **Requirement**: optional
 * **Description**: User-defined structured metadata. Not interpreted by control scripts.
 
 ##### `image`
 
-* **Type**: string
+* **Type**: string 
+* **Requirement**: optional, if not included in per-node configuration
 * **Description**: Docker image used to instantiate the node container. Must be accessible from all worker hosts.
 
 ##### `sidecars`
 
-* **Type**: array of strings
+* **Type**: array of strings 
+* **Requirement**: optional
 * **Description**: List of Docker images for sidecar containers to run alongside the main container. Currently not supported by control scripts.
 
 ##### `cpu-request`
 
-* **Type**: string (optional)
+* **Type**: string 
+* **Requirement**: optional
 * **Units / Format**: Docker-compatible CPU syntax (e.g., `100m`).
 * **Description**: Requested CPU resources for container scheduling and relative priority under contention.
 
 ##### `mem-request`
 
-* **Type**: string (optional)
+* **Type**: string  
+* **Requirement**: optional
 * **Units / Format**: Binary units `KiB`, `MiB`, `GiB`, `TiB` (e.g., `200MiB`).
 * **Description**: Requested memory for container scheduling and relative priority for OOM behavior (e.g., reservation semantics).
 
 ##### `cpu-limit`
 
-* **Type**: string (optional)
+* **Type**: string
+* **Requirement**: optional
 * **Units / Format**: Docker-compatible CPU syntax (e.g., `200m`).
 * **Description**: Hard CPU cap enforced at runtime.
 
 ##### `mem-limit`
 
-* **Type**: string (optional)
+* **Type**: string
+* **Requirement**: optional
 * **Units / Format**: Binary units `KiB`, `MiB`, `GiB`, `TiB` (e.g., `400MiB`).
 * **Description**: Hard memory cap enforced at runtime.
 
 ##### `L3-config`
 
 * **Type**: object
+* **Requirement**: optional, if not included in per-node configuration
 * **Description**: Layer-3 configuration applied to VXLAN-based overlay links.
 
 ##### Per-Field Description of `L3-config`
@@ -338,31 +391,37 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 ###### `enable-netem`
 
 * **Type**: boolean
+* **Requirement**: optional, if not included in per-node configuration
 * **Description**: Enables Linux `tc netem` enforcement of link characteristics (delay/loss/rate) defined in epoch files.
 
 ###### `enable-routing`
 
 * **Type**: boolean
+* **Requirement**: optional, if not included in per-node configuration
 * **Description**: Enables IP routing over overlay (satellite) links using the specified routing module.
 
 ###### `routing-module`
 
-* **Type**: string (required if `enable-routing` is `true`)
+* **Type**: string 
+* **Requirement**: required if `enable-routing` is `true` and not included in per-node configuration
 * **Description**: Identifier of the routing configuration Python module used by the node agent (see `routing-interface.md`).
 
 ###### `routing-metadata`
 
-* **Type**: object (optional)
+* **Type**: object
+* **Requirement**: optional
 * **Description**: Module-specific configuration stored in Etcd used by the routing module (e.g., IS-IS area ID).
 
 ###### `auto-assign-ips`
 
 * **Type**: boolean
+* **Requirement**: optional
 * **Description**: Enables automatic assignment of overlay IP subnets to nodes. Each node is allocated a /30 subnet routed on overlay (satellite) links from the matching `auto-assign-super-cidr` rule based on its `type`. If disabled, nodes must specify their own `cidr` in the per-node configuration, or they will have no overlay IP addresses.
 
 ###### `auto-assign-super-cidr`
 
 * **Type**: array of objects
+* **Requirement**: mandatory if `auto-assign-ips` is `true`, not needed otherwise
 * **Description**: Rules mapping node types to CIDR blocks from which /30 overlay subnets of nodes are sequentially allocated.
 
 Each rule object:
@@ -370,27 +429,32 @@ Each rule object:
 * `matchType`
 
   * **Type**: string
-  * **Description**: Node type to match (e.g., `satellite`, `gateway`, `user`).
-* `super-cidr`
+  * **Requirement**: mandatory if `auto-assign-super-cidr` is present
+  * **Description**: Node type to match (e.g., `satellite`, `gateway`, `user`, or `any` for a default fallback).
+* `super-cidr`, `super-cidr6`
 
   * **Type**: string (CIDR notation)
-  * **Description**: Base CIDR block used to allocate sequential /30 overlay subnets for nodes of the matched type. This CIDR must not overlap with underlay address space (e.g., worker `sat-vnet-super-cidr`) or host physical networks.
+  * **Requirement**: super-cidr and/or super-cidr6 must be present depending on the IP version used in the constellation
+  * **Description**: Base CIDR block used to allocate sequential /30 (IPv4) or /126 (IPv6) overlay subnets for nodes of the matched type. The v4  `super-cidr` block must not overlap with underlay address space (e.g., worker `sat-vnet-super-cidr`) or host physical networks. Either `super-cidr` or `super-cidr6` can be omitted for single-stack operation, or both for dual-stack operation.
 
 ---
 
 #### `epoch-config`
 
 * **Type**: object
+* **Requirement**: mandatory
 * **Description**: Specifies where epoch files are located and how they are selected.
 
 ##### `epoch-dir`
 
 * **Type**: string
+* **Requirement**: mandatory
 * **Description**: Path to the directory containing epoch definition files.
 
 ##### `file-pattern`
 
 * **Type**: string
+* **Requirement**: mandatory
 * **Description**: Filename pattern used to select epoch files within `epoch-dir`.For instance, `NetSatBench-epoch*.json` matches all files starting with `NetSatBench-epoch` and ending with `.json`. Each file name, shoule contain a numerical integer suffix that indicates the order of the epochs, e.g., `NetSatBench-epoch0.json`, `NetSatBench-epoch1.json`, etc.
 
 ---
@@ -398,19 +462,22 @@ Each rule object:
 #### `nodes`
 
 * **Type**: object
+* **Requirement**: mandatory
 * **Description**: Map from `node-name` to per-node configuration objects. Each node may override any field in `node-config-common` re-inserting the same field in the node object.
 
 ##### Per-Node Additional Fields
 
 ###### `worker`
 
-* **Type**: string (optional)
+* **Type**: string
+* **Requirement**: optional
 * **Description**: Explicit worker host on which the node container is deployed. If omitted, placement is computed automatically based on available worker capacity and node CPU/MEM requests. Must match a key in `worker-config.json`.
 
-###### `cidr`
+###### `cidr`, `cidr-v6`
 
-* **Type**: string (CIDR notation, optional)
-* **Description**: Explicit /30 overlay subnet assigned to the node. Override any automatic assignment.
+* **Type**: string (CIDR notation, optional for forced IP addressing)
+* **Requirement**: optional
+* **Description**: Explicit /30 (IPv4) or /126 (IPv6) overlay subnet assigned to the node. Override any automatic assignment.
 
 ---
 
@@ -494,13 +561,15 @@ All fields except `time` are optional.
 #### `time`
 
 * **Type**: string (ISO-8601 timestamp)
+* **Requirement**: mandatory
 * **Description**: Absolute simulation time associated with the epoch (e.g., `2024-06-01T12:02:00Z`). The runtime applies epoch offsets relative to the first epoch.
 
 ---
 
 #### `links-add`
 
-* **Type**: array of objects (optional)
+* **Type**: array of objects 
+* **Requirement**: optional
 * **Description**: List of new **bidirectional** Layer-2 overlay links to create at the epoch time. Each link is implemented as a VXLAN tunnel between two node endpoints. Since links are bidirectional, it is not needed to specify both directions.
 
 #### Per-Fied Descriptions of `links-add`
@@ -508,42 +577,50 @@ All fields except `time` are optional.
 ##### `endpoint1`
 
 * **Type**: string
+* **Requirement**: mandatory
 * **Description**: Logical name of the first endpoint node (must exist in `sat-config.json`).
 
 ##### `endpoint2`
 
 * **Type**: string
+* **Requirement**: mandatory
 * **Description**: Logical name of the second endpoint node.
 
 ##### `endpoint1_antenna`
 
-* **Type**: integer (optional)
+* **Type**: integer
+* **Requirement**: optional
 * **Description**: Antenna index on the first endpoint node.
 
 ##### `endpoint2_antenna`
-* **Type**: integer (optional)
+* **Type**: integer
+* **Requirement**: optional
 * **Description**: Antenna index on the second endpoint node.
 
 ##### `rate`
 
-* **Type**: string (optional)
+* **Type**: string
+* **Requirement**: optional (if enable-netem is false in L3-config)
 * **Units / Format**: Linux `tc netem` rate syntax (e.g., `10mbit`, `1gbit`).
 * **Description**: Link bandwidth cap applied via `tc netem`.
 
 ##### `loss`
 
-* **Type**: number (optional)
+* **Type**: number
+* **Requirement**: optional (if enable-netem is false in L3-config)
 * **Units / Format**: Percentage in `[0, 100]`.
 * **Description**: Packet loss probability applied via `tc netem` with random distribution.
 
 ##### `delay`
 
-* **Type**: string (optional)
+* **Type**: string
+* **Requirement**: optional (if enable-netem is false in L3-config)
 * **Units / Format**: Linux `tc netem` time syntax (e.g., `5ms`, `100ms`).
 * **Description**: One-way link delay applied via `tc netem`.
 
 ##### `limit`
-* **Type**: integer (optional)
+* **Type**: integer
+* **Requirement**: optional
 * **Units / Format**: Number of packets.
 * **Description**: Maximum number of packets that can be queued in the `tc netem` buffer.
 
@@ -552,6 +629,7 @@ All fields except `time` are optional.
 #### `links-update`
 
 * **Type**: array of objects (optional)
+* **Requirement**: optional
 * **Description**: Updates to characteristics of existing overlay links. Only the parameters present in an entry are modified; unspecified parameters retain their previous values.
 
 #### Per-Fied Descriptions of `links-update`
@@ -561,7 +639,8 @@ Fields are the same as in `links-add`.
 
 ### `links-del`
 
-* **Type**: array of objects (optional)
+* **Type**: array of objects
+* **Requirement**: optional
 * **Description**: List of overlay links to remove at the epoch time. Removal tears down the corresponding VXLAN tunnel and associated traffic control configuration.
 
 #### Per-Fied Descriptions of `links-del`
@@ -570,11 +649,13 @@ Each entry supports:
 ##### `endpoint1`
 
 * **Type**: string
+* **Requirement**: mandatory
 * **Description**: Logical name of the first endpoint node.
 
 ##### `endpoint2`
 
 * **Type**: string
+* **Requirement**: mandatory
 * **Description**: Logical name of the second endpoint node.
 
 Any additional fields (e.g., `rate`, `loss`, `delay`, `limit`) may be present but are ignored during deletion.
@@ -583,7 +664,8 @@ Any additional fields (e.g., `rate`, `loss`, `delay`, `limit`) may be present bu
 
 ### `run`
 
-* **Type**: object (optional)
+* **Type**: object
+* **Requirement**: optional
 * **Description**: Shell commands to execute inside node containers at the epoch time.
 
 Structure:
@@ -601,11 +683,13 @@ Per-entry:
 
 * **Key** (`<node-name>`)
 
-  * **Type**: string
+  * **Type**: string 
+  * **Requirement**: mandatory, must match a node defined in `sat-config.json`)
   * **Description**: Target node in which commands are executed.
-* **Value** (list of commands)
+  * **Value** (list of commands)
 
   * **Type**: array of strings
+  * **Requirement**: mandatory
   * **Description**: Ordered list of shell commands executed sequentially inside the container environment. Long-running processes should be launched in detached sessions (e.g., `screen`, `tmux`). Error-handling semantics are implementation-defined.
 
 ---
