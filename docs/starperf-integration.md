@@ -34,6 +34,8 @@ rm -rf StarPerf_Simulator-release-v2.0
 
 ```
 
+> **Note**: the StarPerf_Simulator we used is v2.0 at commit 009f2eb722c52b621a038904246be76ae906d993
+
 ## Workflow
 1. move to the `generators/StarPerf_Simulator` directory.
 2. Define the satellite constellation via XML StarPerf_Simulator input formats and store it in the `/config/XML_constellation/<constellation_name>.XML`
