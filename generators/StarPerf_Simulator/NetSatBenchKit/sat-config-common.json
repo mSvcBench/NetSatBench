@@ -22,9 +22,5 @@
           {"matchType":"user","super-cidr":"172.102.0.0/16"}
       ]
     }
-  },
-  "epoch-config": {
-    "epoch-dir": "examples/SatPerf/constellation-epochs",
-    "file-pattern": "NetSatBench-epoch*.json"
   }
 }

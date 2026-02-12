@@ -47,7 +47,6 @@ actions, such as link reconfiguration or task execution.
 ---
 
 ### Dynamic Layer-2 Fabric
-
 Node-to-node links, including inter-satellite links (ISLs) and satellite-to-ground
 links (SGLs), are modeled as VXLAN tunnels that are dynamically created and managed
 by each node’s `sat-agent` according to the system state stored in **Etcd**.
@@ -58,39 +57,39 @@ nodes, independently of their physical placement within the cluster.
 ---
 
 ### Custom IP Routing
-
 Upon link creation or removal, each `sat-agent` may invoke a user-provided IP
 routing module through a Python interface. This module is responsible for updating
 the routing daemon or performing custom routing actions over the VXLAN fabric.
 
-A built-in IS-IS routing module for FRR is provided
-(see `sat-container/extra/isis.py`), serving both as a reference implementation
-and as an example of how custom routing logic can be integrated with the `sat-agent`.
+A couple of built-in IS-IS routing modules for FRR are provided for IPv4 and IPv6, serving both as a reference implementation and as an example of how custom routing logic can be integrated with the `sat-agent`.
 
 ---
 
-### Automatic IP Addressing and Built-in Name Resolution
-
-NetSatBench can optionally assign overlay IP addresses automatically to all emulated
+### Automatic IP v4/v6 Addressing and Built-in Name Resolution
+NetSatBench can optionally assign overlay IPv4 and IPv6 addresses automatically to all emulated
 nodes, which are routed over the VXLAN fabric. When this feature is enabled, the `/etc/hosts` file of each container is automatically populated with the names and overlay IP addresses of all nodes, enabling name resolution without requiring a dedicated DNS server.
 
 ---
 
 ### On-board Tasks and Application Execution
-
-User-defined applications and tasks can be executed on any node at specific times
-during the emulation, as specified in epoch files. The container image used for
-each emulated node (see [sat-container/Dockerfile](sat-container/Dockerfile)) uses the Debian-based  `python:3.11-slim` and also includes ping, tcpdump and iperf3 networking utilities.
+User-defined applications and tasks can be executed on any node by injecting their commands or scripts in the Etcd key-value store. The container image used for each emulated node (see [sat-container/Dockerfile](sat-container/Dockerfile)) uses the Debian-based  `python:3.11-slim` and also includes ping, tcpdump and iperf3 networking utilities.
 
 Additional software can be installed dynamically by scheduling software installation (e.g., `apt-get`) tasks, followed by tasks that execute the newly installed applications.
 
 ---
 
-### Physics-Driven Networking (Work in Progress)
+### Trace-Driven and Real-Time Emulation
 
-Link parameters are derived from orbital mechanics and line-of-sight geometry,
-enabling realistic and reproducible performance evaluation of satellite network
-scenarios.
+System state evolution in Etcd is controlled through *epoch* JSON files. Each epoch defines link creation, updates, removals, and the scheduling of tasks or applications. This design supports:
+
+- Trace-driven emulation, where network dynamics are predefined via recorded epoch files.
+- Real-time (digital-twin) emulation, where external processes dynamically generate new epoch files and inkect them into the Etcd store to reflect real-time changes in the satellite system.
+
+### Built-in Constellation Trace Generators
+
+The generation of epoch files can be based on existing physical layer satellite simulators properly integrated with NetSatBench-specific plugins to convert their output data into the required event-driven epoch format.
+Currently, the included plug-ins are:
+- **[StarPerf_Simulator](https://github.com/SpaceNetLab/StarPerf_Simulator)**: The plugin extends the simulator’s output by incorporating the dynamics of ground station and user links, and including the bit rate and packet loss link characteristics. In addition, it provides a script to convert the extended simulation output into NetSatBench epoch files.
 
 ---
 
@@ -101,6 +100,9 @@ Python scripts implementing orchestration functions, including cluster configura
 
 **sat-container/**  
 Software used to build the container image for each emulated node of the satellite system.
+
+**generators/**
+Scripts for generating satellite system configurations and epoch files.
 
 **examples/**  
 Sample emulated satellite systems used for validation and benchmarking. Configurations are specified in JSON format as described in this [Configuration Manual](docs/configuration.md).
@@ -113,12 +115,9 @@ Documentation files, including:
 - [Control Commands](docs/commands.md) — detailed description of the control scripts available in the `control/` directory.
 - [Configuration Files](docs/configuration.md) — how to customize JSON files describing the computing system (`worker-config.json`), static data of the satellite system (`sat-config.json`), and dynamic satellite system behavior (epoch files).
 - [Etcd Key-Value Store](docs/etcd.md) — structure and organization of the Etcd key-value store used for satellite system state management.
+- [StarPerf Simulator Integration](docs/starperf-integration.md) — how to use the StarPerf_Simulator plugin to generate satellite system epoch files.
 - [Routing Interface](docs/routing-interface.md) — specification of the routing module interface.
-- [Utils](docs/utils.md) — description of the utility scripts available in the `utils/` directory, including:
-    - [constellation-exec](utils/constellation-exec.py), a simplified CLI for executing bash commands within emulated nodes regardless of their working host, similar to the `docker exec` syntax.
-    - [constellation-cp](utils/constellation-cp.py), a simplified CLI for copying files to/from emulated nodes regardless of their working host, similar to the `docker cp` syntax.  
-    - [oracle-routing](utils/oracle-routing.py), an ideal L3 shortest path routing with optional drain-before-break functinality.
-    - [constellation-stats](utils/constellation-stats.py) for extracting constellation network statistics, such as the presence of network partitions, link drop rates, etc.
+- [Utils](docs/utils.md) — description of the utility scripts available in the `utils/` director.
 
 ---
 

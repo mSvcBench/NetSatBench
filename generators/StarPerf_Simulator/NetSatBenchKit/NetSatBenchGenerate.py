@@ -149,12 +149,12 @@ def create_exteded_h5(
     if not GSs:
         print("📡 Empty ground station list; check your ground station XML or command line arguments.")
     else:
-        print(f"📡 Adding {len(GSs)} ground stations")
+        print(f"📡 Adding {len(GSs)} ground stations to the .h5 file")
     
     if not USERs:
         print("👤 Empty user list; check your user XML or command line arguments.")
     else:
-        print(f"👤 Adding {len(USERs)} users")
+        print(f"👤 Adding {len(USERs)} users to the .h5 file")
     
     if not SATs:
         print("🛰️ Satellite list is empty; check your StarPerf constellation initialization")
@@ -195,8 +195,10 @@ def create_exteded_h5(
         h5_loss_root_ext = _ensure_group_at_root("loss")
         h5_pos_root_ext = _ensure_group_at_root("position")
         h5_del_root_ext = _ensure_group_at_root("delay")
-
-
+        
+        print(f"🛜 Adding ground and user links with min elevation {min_elevation_deg}°")
+        print(f"🎚️ Adding rate, loss and antenna limitation extensions to the .h5 file based on the extended plugins")
+        
         if single_shell:
             h5_root_in = {}
             h5_root_in["position"] = h5_pos_root
@@ -223,7 +225,6 @@ def create_exteded_h5(
 
                 h5_pos_shell = h5_pos_root[shell]
                 h5_del_shell = h5_del_root[shell]
-
 
                 # Create corresponding output shell groups
                 if shell in h5_pos_root_ext:
@@ -280,7 +281,6 @@ def build_constellation_xml(constellation_name: str, dT: int):
     constellation = constellation_configuration.constellation_configuration(dT=dT,
                                                                             constellation_name=constellation_name)
     print('==============================================')
-    print('🛰️ StarPerf Constellation Creation for NetSatBench')
     print('\tDetails of the constellations are as follows :')
     print('\tThe name of the constellation is : ' , constellation.constellation_name)
     print('\tThere are ' , constellation.number_of_shells , ' shell(s) in this constellation')
@@ -395,7 +395,7 @@ def main():
                     help="Append users to the output .h5. requires ./config/users/<Constellation>.xml")
     ap.add_argument("--minimum-elevation", type=float, default=25.0,
                     help="Minimum elevation angle (deg) for a satellite to be considered visible from a ground node (GS or USER)")
-    ap.add_argument("--overwrite-ext-groups", action="store_true",
+    ap.add_argument("--overwrite", action="store_true",
                     help="Overwrite NetSatBench extended h5 groups if they already exist.")
 
     args = ap.parse_args()
@@ -410,7 +410,8 @@ def main():
         "gs": args.loss_gs,
         "user": args.loss_user,
     }
-
+    print(f"🛰️ StarPerf Constellation Creation for NetSatBench with constellation '{args.constellation_name}' in mode '{args.mode}' with dT={args.dT}s")
+    
     # 1) Build constellation
     if args.mode == "xml":
         constellation = build_constellation_xml(args.constellation_name, args.dT)
@@ -420,7 +421,7 @@ def main():
         out_h5 = Path(args.data_root) / "TLE_constellation" / f"{args.constellation_name}.h5"
 
     # 2) Run ISL connectivity (writes delay/timeslotN into out_h5) :contentReference[oaicite:14]{index=14}
-    print(f"🛜 Running StarPerf ISL connectivity plugin '{args.isl_connectivity_plugin}' for constellation '{constellation.constellation_name}'...")
+    print(f"🛜 Adding ISL links with StarPerf plugin {args.isl_connectivity_plugin} ")
     run_connectivity(constellation, args.isl_connectivity_plugin, args.dT,  args.mode)
 
     # Ground station XML layout is described in the interface convention.
@@ -529,16 +530,16 @@ def main():
         dT=args.dT,
         rate=rate,
         loss=loss,
-        overwrite=args.overwrite_ext_groups,
+        overwrite=args.overwrite,
     )
 
     # store h5 metadata about the generation in info group attributes
     with h5py.File(ext_h5_path_from(base_h5_path=out_h5), "a") as f:
         if "info" in f:
-            if args.overwrite_ext_groups:
+            if args.overwrite:
                 del f["info"]
             else:
-                raise RuntimeError(f"Output group {f.name}/info already exists (use --overwrite-ext-groups).")
+                raise RuntimeError(f"Output group {f.name}/info already exists (use --overwrite).")
         h5_info_root_ext = f.create_group("info")
         h5_info_root_ext.attrs["constellation_name"] = constellation.constellation_name
         h5_info_root_ext.attrs["generation_mode"] = args.mode
