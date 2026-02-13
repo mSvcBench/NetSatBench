@@ -496,6 +496,20 @@ def main() -> int:
         etcd_password=args.etcd_password,
     )
 
+    # Prelimiary check constellation exists. Any /config/nodes/* key is a json file that should contain the key "eth0_ip"" 
+    nodes = etcd_client.get_prefix("/config/nodes/")
+    if not any(nodes):
+        log.error("❌ No nodes found in Etcd under /config/nodes/. Ensure satellite system is running and configured correctly.")
+        return 1
+    for value, metadata in nodes:
+        try:
+            node_config = json.loads(value.decode("utf-8"))
+            if "eth0_ip" not in node_config:
+                log.error(f"❌ Node config at {metadata.key.decode('utf-8')} is missing 'eth0_ip'. Ensure satellite system is running correctly.")
+                return 1
+        except Exception as e:
+            log.error(f"❌ Failed to parse node config at {metadata.key.decode('utf-8')}: {e}")
+            return 1
     # Load epoch dir/pattern from etcd unless overridden.
     epoch_dir = args.epoch_dir
     file_pattern = args.file_pattern
