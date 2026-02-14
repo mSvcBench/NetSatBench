@@ -70,7 +70,7 @@ These entries are automatically created and managed by the `control/system-init-
 
 ---
 ## /config/epoch-config|nodes
-These prefixes contain the configuration data of the emulated node indexed by name as defined in the `sat-config.json` file (see the [configuration manual](configuration.md)). They are automatically created and managed by the `control/constellation-init.py` script.
+These prefixes contain the configuration data of the emulated node indexed by name as defined in the `sat-config.json` file (see the [configuration manual](configuration.md)). They are automatically created and managed by the `control/nsb-init.py` script.
 
 ### Example
 
@@ -108,7 +108,7 @@ The `L3-config:cidr` and `worker`fields can be automatically assigned if not set
 
 ```json
 {
- "epoch-dir": "examples/10nodes/constellation-epochs", 
+ "epoch-dir": "examples/10nodes/epochs", 
  "file-pattern": "NetSatBench-epoch*.json"
 }
 ```
@@ -128,7 +128,7 @@ These entries are automatically created and managed by the `sat-agent`, which co
 ## /config/links/
 This prefix contains the state of all satellite links in the current epoch, indexed by source node and interface name.
 Each entry stores a JSON object describing the current link parameters, such as delay, packet loss, bandwidth, and VXLAN identifier.
-These entries are automatically created and managed by the `control/constellation-run.py` script while processing epoch files.
+These entries are automatically created and managed by the `control/nsb-run.py` script while processing epoch files.
 
 ### Example
 
@@ -144,12 +144,12 @@ These entries are automatically created and managed by the `control/constellatio
  "vni": 13475210
 }
 ```
-The key suffix `sat1/vl_sat2_1` indicates that the VXLAN interface name on sat1 for this link should be `vl_sat2_1`. The VNI value is unique and automatically assigned by the `control/constellation-run.py` script when the link is created.
+The key suffix `sat1/vl_sat2_1` indicates that the VXLAN interface name on sat1 for this link should be `vl_sat2_1`. The VNI value is unique and automatically assigned by the `control/nsb-run.py` script when the link is created.
 
 ## /config/run/
 This prefix stores runtime information for each emulated node, indexed by node name.
 Each entry contains a JSON array specifying the sequence of commands to be executed during the current epoch.
-These entries are automatically created and managed by the `control/constellation-run.py` script.
+These entries are automatically created and managed by the `control/nsb-run.py` script.
 
 ### Example
 

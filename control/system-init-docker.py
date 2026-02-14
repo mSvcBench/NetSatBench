@@ -359,7 +359,7 @@ def main():
             else:
                 log.info(f"    ✅ IP route to containers in {other_worker_name} added successfully")
     log.info("👍 All workers configured successfully.")
-    log.info("▶️ Proceed with constellation-init.py to upload constellation configuration to Etcd.")
+    log.info("▶️ Proceed with nsb-init.py to upload the configuration of an emulated satellite systemto Etcd.")
         
 
 if __name__ == "__main__":

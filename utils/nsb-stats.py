@@ -577,7 +577,7 @@ def compute_streaming_stats(config_file: str,
 
     log.info("𐄳 Connectivity Statistics:")
     if not partition_log:
-        log.info("   - Constellation never partitioned.")
+        log.info("   - Satellite system never partitioned.")
     else:
         log.info(f"   - Partitioned epochs: {len(partition_log)}/{num_epochs}")
         worst = max(partition_log, key=lambda e: e["n_components"])
@@ -646,7 +646,7 @@ def export_events_to_csv(config_file: str, epoch_dir: str, file_pattern: str, ou
 # MAIN
 # ==========================================
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Examine constellation statistics")
+    parser = argparse.ArgumentParser(description="Examine satellite system statistics")
 
     parser.add_argument(
         "-c", "--config",
@@ -655,7 +655,7 @@ def main() -> int:
     )
     parser.add_argument(
         "-e", "--epoch-dir",
-        default="constellation-epochs/",
+        default="epochs/",
         help="Directory containing epoch JSON files.",
     )
     parser.add_argument(

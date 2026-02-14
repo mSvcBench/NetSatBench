@@ -4,7 +4,7 @@
 
 
 # Exec CLI
-`constellation-exec.py`
+`nsb-exec.py`
 
 This utility script allows executing commands on emulated satellite nodes by connecting to their respective containers via SSH. The syntax is similar to `docker exec`.
 
@@ -12,19 +12,19 @@ This utility script allows executing commands on emulated satellite nodes by con
 ## Usage
 
 ```bash
-python3 utils/constellation-exec.py [-it] [-d] <node-name> <command> [args...]
+python3 utils/nsb-exec.py [-it] [-d] <node-name> <command> [args...]
 ```
 
 Full command-line help is available via:
 ```bash
-python3 utils/constellation-cp.py --help
+python3 utils/nsb-cp.py --help
 ```
 
 ---
 ## Examples
 - To run a bash shell on a satellite container named `usr1`:
 ```bash
-python3 utils/constellation-exec.py -it usr1 bash
+python3 utils/nsb-exec.py -it usr1 bash
 ```
 
 
@@ -32,19 +32,19 @@ python3 utils/constellation-exec.py -it usr1 bash
 
 # Copy CLI
 
-`constellation-cp.py`
+`nsb-cp.py`
 
-This utility script allows copying files and directories between the local host and emulated constellation nodes by transparently accessing the containers running on remote workers.
+This utility script allows copying files and directories between the local host and an emulated node by transparently accessing the containers running on remote workers.
 Its syntax and behavior closely mimic `docker cp`, while resolving node placement via Etcd and handling remote execution internally.
 
-The copy operation always reads from and writes to the host where `constellation-cp` is executed, preserving standard Docker semantics.
+The copy operation always reads from and writes to the host where `nsb-cp` is executed, preserving standard Docker semantics.
 
 ---
 
 ## Usage
 
 ```bash
-python3 utils/constellation-cp.py [OPTIONS] <src> <dest>
+python3 utils/nsb-cp.py [OPTIONS] <src> <dest>
 ```
 
 Where exactly **one** of `<src>` or `<dest>` must be specified in the form:
@@ -55,7 +55,7 @@ Where exactly **one** of `<src>` or `<dest>` must be specified in the form:
 
 Full command-line help is available via:
 ```bash
-python3 utils/constellation-cp.py --help
+python3 utils/nsb-cp.py --help
 ```
 
 ---
@@ -65,7 +65,7 @@ python3 utils/constellation-cp.py --help
 ### Copy a file from a node to the local host
 
 ```bash
-python3 utils/constellation-cp.py sat1:/var/log/app.log ./app.log
+python3 utils/nsb-cp.py sat1:/var/log/app.log ./app.log
 ```
 
 This copies `/var/log/app.log` from container `sat1` to the current local directory.
@@ -75,7 +75,7 @@ This copies `/var/log/app.log` from container `sat1` to the current local direct
 ### Copy a local file to a node
 
 ```bash
-python3 utils/constellation-cp.py ./config.json sat1:/etc/app/config.json
+python3 utils/nsb-cp.py ./config.json sat1:/etc/app/config.json
 ```
 
 This transfers `config.json` from the local host into the container filesystem of `sat1`.
@@ -85,30 +85,30 @@ This transfers `config.json` from the local host into the container filesystem o
 ### Copy a directory recursively
 
 ```bash
-python3 utils/constellation-cp.py -r ./configs sat1:/opt/app/configs
+python3 utils/nsb-cp.py -r ./configs sat1:/opt/app/configs
 ```
 
 ---
 
 ### Remove all links
 ```bash
-python3 utils/constellation-unlink.py
+python3 utils/nsb-unlink.py
 ```
-Can be useful to reset the satellite constellation to a clean state before starting a new emulation run, without the need to redeploy containers or restart the control script.
+Can be useful to reset the satellite system to a clean state before starting a new emulation run (nsb-run), without the need to redeploy containers or restart the control script.
 
 ---
 
-# Constellation Statistics
-`constellation-stats.py`
+# Statistics
+`nsb-stats.py`
 
-This utility script collects and displays statistics from the emulated satellite constellation.
+This utility script collects and displays statistics from the emulated satellite system.
 It retrieves data from Etcd and epoch files and can generate reports on various performance metrics.
 
 ---
 ## Usage  
 
 ```bash
-python3 utils/constellation-stats.py [options]
+python3 utils/nsb-stats.py [options]
 ```
 ---
 
@@ -167,25 +167,24 @@ When the `--drain-before-break-offset` parameter is greater than zero:
 
 ## Usage Example
 
-### 1. Constellation Initialization
+### 1. Emulation Initialization
 
-Upload the satellite constellation configuration into Etcd and schedule workers.
-In the provided example, the epoch directory is set to `constellation-epochs-or` in `sat-config-or.json`.
+Upload the satellite system configuration into Etcd and schedule workers.
+In the provided example, the epoch directory is set to `epochs-or` in `sat-config-or.json`.
 
 ```bash
-python3 control/constellation-init.py -c examples/10nodes/sat-config-or.json
+python3 control/nsb-init.py -c examples/10nodes/sat-config-or.json
 ```
 
 ---
 
-### 2. Constellation Deployment
+### 2. Node Deployment
 
-Deploy the constellation.
-Each node registers its overlay IP address in Etcd under `/config/etchosts`.
+Deploy the nodes of the satellite system. Each node registers its overlay IP address in Etcd under `/config/etchosts`.
 These addresses are later used by the oracle routing module to generate IP routing commands.
 
 ```bash
-python3 /home/azureuser/NetSatBench/control/constellation-deploy.py
+python3 /home/azureuser/NetSatBench/control/nsb-deploy.py
 ```
 
 ---
@@ -193,8 +192,8 @@ python3 /home/azureuser/NetSatBench/control/constellation-deploy.py
 ### 3. Oracle Routing Module Execution
 
 Run the oracle routing module to process epoch files from
-`examples/10nodes/constellation-epochs` and generate new epoch files with routing commands in
-`examples/10nodes/constellation-epochs-or`.
+`examples/10nodes/epochs` and generate new epoch files with routing commands in
+`examples/10nodes/epochs-or`.
 
 In the example below:
 - both drain-before-break and link-creation offsets are set to 2 seconds;
@@ -202,8 +201,8 @@ In the example below:
 
 ```bash
 python3 utils/oracle-routing.py \
-    --epoch-dir examples/10nodes/constellation-epochs \
-    --out-epoch-dir examples/10nodes/constellation-epochs-or \
+    --epoch-dir examples/10nodes/epochs \
+    --out-epoch-dir examples/10nodes/epochs-or \
     --drain-before-break-offset 2 \
     --link-creation-offset 2 \
     --node-type-to-route grounds,users \
@@ -216,18 +215,18 @@ python3 utils/oracle-routing.py --help
 ```
 ---
 
-### 4. Constellation Execution
+### 4. Execution of events
 
-Run the constellation emulation using the newly generated epoch files that include routing commands.
+Run the satellite system emulation using the newly generated epoch files that include routing commands.
 The `--loop-delay` option restarts the emulation after 60 seconds, enabling continuous operation.
 ```bash
-python3 control/constellation-run.py --loop-delay 60
+python3 control/nsb-run.py --loop-delay 60
 ```
 ---
 ### Testing and Validation
-To validate the oracle routing module, ping tests can be performed between ground stations and user terminals during the constellation run.
+To validate the oracle routing module, ping tests can be performed between ground stations and user terminals during the satellite system run.
 For example, to ping from user node `usr1` to ground station `grd1`:
 ```bash
-python3 utils/constellation-exec.py usr1 ping grd1
+python3 utils/nsb-exec.py usr1 ping grd1
 [... ping output ...]
 ```

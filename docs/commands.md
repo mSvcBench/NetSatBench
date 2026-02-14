@@ -79,7 +79,7 @@ Run with `--help` to see the full list of available options.
 
 This Python script cleans up the emulation worker nodes by removing the Docker network and associated iptables rules created during initialization. It is intended to be executed when the emulation is no longer needed, to free up resources on the worker hosts.
 
-It is intended to be executed after the satellite system has been torn down using the `control/constellation-rm.py` script.
+It is intended to be executed after the satellite system has been torn down using the `control/nsb-rm.py` script.
 
 ---
 
@@ -91,14 +91,14 @@ python3 control/system-clean-docker.py
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
-## Constellation Initialization  
-`control/constellation-init.py`
+## Initialization of a satellite system emulation
+`control/nsb-init.py`
 
 This Python script initializes the *static* information about the emulated satellite system (worker nodes, IP addresses, etc. ) in the **Etcd** key–value store based on a satellite configuration file (`sat-config.json`), as described in the configuration manual (see [configuration.md](configuration.md)).
 
 The script prepares all metadata required to deploy the node containers but does **not** start any containers.
 
-It is intended to be executed before deploying the nodes of the satellite system using the `control/constellation-deploy.py` script and after the worker nodes have been initialized using the `control/system-init-docker.py` script.
+It is intended to be executed before deploying the nodes of the satellite system using the `control/nsb-deploy.py` script and after the worker nodes have been initialized using the `control/system-init-docker.py` script.
 
 ---
 
@@ -109,10 +109,10 @@ For each node defined in the configuration file, the script:
 - Automatically selects worker hosts based on available resources.
 - Automatically assigns overlay IP addresses and network masks to each node.
 - Stores per-node static configuration data in **Etcd** for later consumption
-  by other control scripts (e.g., `control/constellation-deploy.py`) and by
+  by other control scripts (e.g., `control/nsb-deploy.py`) and by
   `sat-agent` instances running inside the node containers
 
-The stored metadata doen't include any information on dynamic satellite links, which are instead managed at runtime by the `control/constellation-run.py` script based on the epoch files.
+The stored metadata doen't include any information on dynamic satellite links, which are instead managed at runtime by the `control/nsb-run.py` script based on the epoch files.
 
 ---
 
@@ -121,16 +121,16 @@ The stored metadata doen't include any information on dynamic satellite links, w
 Example invocation:
 
 ```bash
-python3 control/constellation-init.py \
+python3 control/nsb-init.py \
   --config ./examples/10nodes/sat-config.json
 ```
 
 Run with `--help` to see the full list of available options.
 
-## Constellation Deployment  
-`control/constellation-deploy.py`
+## Deployment of the nodes  
+`control/nsb-deploy.py`
 
-This Python script deploys the satellite system by creating and starting the necessary Docker containers on the worker hosts, based on the system configuration stored in **Etcd**. It is intended to be executed after the satellite system has been initialized using the `control/constellation-init.py` script.
+This Python script deploys the satellite system by creating and starting the necessary Docker containers on the worker hosts, based on the system configuration stored in **Etcd**. It is intended to be executed after the satellite system has been initialized using the `control/nsb-init.py` script.
 
 ---
 ### What the Script Does
@@ -143,18 +143,18 @@ For each node defined in the satellite system, the script:
 ### Usage
 Example invocation:
 ```bash
-python3 control/constellation-deploy.py
+python3 control/nsb-deploy.py
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
-## Constellation Execution
-`control/constellation-run.py`
+## Execution of the events
+`control/nsb-run.py`
 
 This Python script manages the *dynamic* information of the satellite system, such as links or commands, based on epoch files whose format is described in the configuration manual (see [configuration.md](configuration.md)). 
 
-It is responsible for applying configuration changes, including link additions/removals and command execution within node containers, at the appropriate times during the emulation. It is intended to be executed after the satellite system has been deployed using the `control/constellation-deploy.py` script.
+It is responsible for applying configuration changes, including link additions/removals and command execution within node containers, at the appropriate times during the emulation. It is intended to be executed after the satellite system has been deployed using the `control/nsb-deploy.py` script.
 
-It is intended to be executed after the satellite system has been deployed using the `control/constellation-deploy.py` script.
+It is intended to be executed after the satellite system has been deployed using the `control/nsb-deploy.py` script.
 ---
 ### What the Script Does
 The script read epoch files from a specified directory and, for each epoch file:
@@ -174,13 +174,13 @@ The script can be configured to work in an *interactive-mode* (`--interactive`),
 ### Usage
 Example invocation:
 ```bash
-python3 control/constellation-run.py \
+python3 control/nsb-run.py \
   --loop-delay 60
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
-## Constellation Removal
-`control/constellation-rm.py`
+## Removal of the emulated satellite system
+`control/nsb-rm.py`
 This Python script removes all information related to the satellite system from the **Etcd** key–value store and removes all Docker containers. 
 
 It is intended to be executed when the emulation is no longer needed, to free up resources on the worker hosts.
@@ -188,7 +188,7 @@ It is intended to be executed when the emulation is no longer needed, to free up
 ---### Usage
 Example invocation:
 ```bash
-python3 control/constellation-rm.py
+python3 control/nsb-rm.py
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options. 
 

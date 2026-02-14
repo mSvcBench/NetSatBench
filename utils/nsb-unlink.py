@@ -7,7 +7,7 @@ import sys
 import etcd3
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
-log = logging.getLogger("constellation-unlink")
+log = logging.getLogger("nsb-unlink")
 
 
 
@@ -16,7 +16,7 @@ log = logging.getLogger("constellation-unlink")
 # =========================
 def main() -> int:
     p = argparse.ArgumentParser(
-        prog="constellation-unlink",
+        prog="nsb-unlink",
         description="Remove all links among nodes of the satellite system.",
     )
 

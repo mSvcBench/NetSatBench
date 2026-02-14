@@ -128,7 +128,7 @@ def load_epoch_dir_and_pattern_from_etcd() -> Tuple[str, str]:
     """
     Reads /config/epoch-config from Etcd if present, otherwise returns defaults.
     """
-    default_dir = "constellation-epochs"
+    default_dir = "epochs"
     default_pattern = "NetSatBench-epoch*.json"
 
     try:
@@ -496,7 +496,7 @@ def main() -> int:
         etcd_password=args.etcd_password,
     )
 
-    # Prelimiary check constellation exists. Any /config/nodes/* key is a json file that should contain the key "eth0_ip"" 
+    # Prelimiary check nodes exists. Any /config/nodes/* key is a json file that should contain the key "eth0_ip"" 
     nodes = etcd_client.get_prefix("/config/nodes/")
     if not any(nodes):
         log.error("❌ No nodes found in Etcd under /config/nodes/. Ensure satellite system is running and configured correctly.")

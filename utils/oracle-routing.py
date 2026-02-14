@@ -54,7 +54,7 @@ def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
     return sorted(glob(search_path), key=last_numeric_suffix)
 
 def load_epoch_dir_and_pattern_from_etcd(etcd_client) -> Tuple[str, str]:
-    default_dir = "constellation-epochs"
+    default_dir = "epochs"
     default_pattern = "NetSatBench-epoch*.json"
     try:
         epoch_config_value, _ = etcd_client.get("/config/epoch-config")

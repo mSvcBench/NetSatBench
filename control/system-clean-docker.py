@@ -85,7 +85,7 @@ def iptables_delete_rule_loop(remote: str, rule_check: str, rule_delete: str) ->
 # --------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Clean hosts of the constellation"
+        description="Remove configurations from hosts of the satellite system (routes, iptables rules, docker network) and clean Etcd keys. Use this to undo the setup done by system-init-docker.py. Make sure to run this before nsb-deploy.py if you want to redeploy the system with a different configuration or after a failed deployment that left the system in a broken state."
     )
     parser.add_argument(
         "-c", "--config",
@@ -153,7 +153,7 @@ def main():
     try:
             existing_nodes = get_prefix_data(etcd_client, "/config/nodes/")
             if existing_nodes:
-                log.warning("⚠️  Existing nodes found in Etcd under /config/nodes/. This may indicate an active constellation.")
+                log.warning("⚠️  Existing nodes found in Etcd under /config/nodes/. This may indicate an active satellite system.")
                 cont = input("Do you want to continue with the cleanup? (y/n): ")
                 if cont.lower() != 'y':
                     log.info("Exiting as per user request.")

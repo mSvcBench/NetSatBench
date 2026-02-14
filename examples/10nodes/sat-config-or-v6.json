@@ -21,7 +21,7 @@
     }
   },
   "epoch-config": {
-    "epoch-dir": "examples/10nodes/constellation-epochs-or",
+    "epoch-dir": "examples/10nodes/epochs-or",
     "file-pattern": "NetSatBench-epoch*.json"
   },
   "nodes": {

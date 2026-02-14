@@ -140,7 +140,7 @@ def node_removal(ssh_user: str, ssh_host: str, ssh_key: str, name: str, worker: 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Remove constellation nodes (satellites/users/grounds) by removing containers in parallel."
+        description="Remove satellite system nodes (satellites/users/grounds) by removing containers in parallel."
     )
     parser.add_argument(
         "-t", "--threads",
@@ -272,7 +272,7 @@ def main():
     log.info("==============================")
 
     if fail != 0:
-        log.warning("⚠️ Constellation Cleaning Completed with failures.")
+        log.warning("⚠️ Satellite System Cleaning Completed with Failures.")
         
     # ==========================================
     # CLEAN ETCD ENTRIES

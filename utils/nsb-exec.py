@@ -36,7 +36,7 @@ def main():
     global etcd_client
 
     parser = argparse.ArgumentParser(
-        description="Execute docker exec on the remote worker hosting a constellation node."
+        description="Execute docker exec on the remote worker hosting a satellite system node."
     )
     parser.add_argument(
         "-it", "--interactive",
@@ -81,7 +81,7 @@ def main():
     )
     parser.add_argument(
         "node",
-        help="Target constellation node/container name"
+        help="Target node name"
     )
     # IMPORTANT: remainder so you can do: exec.py sat1 bash -lc 'echo hi'
     parser.add_argument(

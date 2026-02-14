@@ -164,7 +164,7 @@ The satellite configuration file, `sat-config.json`, defines:
 
 * common configuration parameters applied to all nodes;
 * per-node overrides;
-* the configuration of epoch files that drive the temporal evolution of the constellation.
+* the configuration of epoch files that drive the temporal evolution of the satellite system.
 
 Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) that must be **shorter than 8 characters**.
 
@@ -214,7 +214,7 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
     }
   },
   "epoch-config": {
-    "epoch-dir": "examples/10nodes/constellation-epochs",
+    "epoch-dir": "examples/10nodes/epochs",
     "file-pattern": "NetSatBench-epoch*.json"
   },
   "nodes": {
@@ -434,7 +434,7 @@ Each rule object:
 * `super-cidr`, `super-cidr6`
 
   * **Type**: string (CIDR notation)
-  * **Requirement**: super-cidr and/or super-cidr6 must be present depending on the IP version used in the constellation
+  * **Requirement**: super-cidr and/or super-cidr6 must be present depending on the IP version used in the emulated system; at least one of them must be present if `auto-assign-ips` is `true`
   * **Description**: Base CIDR block used to allocate sequential /30 (IPv4) or /126 (IPv6) overlay subnets for nodes of the matched type. The v4  `super-cidr` block must not overlap with underlay address space (e.g., worker `sat-vnet-super-cidr`) or host physical networks. Either `super-cidr` or `super-cidr6` can be omitted for single-stack operation, or both for dual-stack operation.
 
 ---
@@ -485,12 +485,12 @@ Each rule object:
 
 ### Overview
 
-An epoch configuration file defines dynamic events that modify the constellation state at specific emulation times, including:
+An epoch configuration file defines dynamic events that modify the state of the emulated satellite system at specific emulation times, including:
 
 * overlay links to add, update, or delete; and
 * commands to execute inside node containers.
 
-Epoch files are loaded sequentially by the control logic (constellation-run) and applied at the specified emulation time with an offset equal to the difference between the current epoch time and the first epoch time. 
+Epoch files are loaded sequentially by the control logic (nsb-run) and applied at the specified emulation time with an offset equal to the difference between the current epoch time and the first epoch time. 
 
 The epoch file names are expected to terminate with a numerical suffix that indicates their processing sequence. E.g., `NetSatBench-epoch0.json`, `NetSatBench-epoch1.json`, etc. 
 

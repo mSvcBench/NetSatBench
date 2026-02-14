@@ -283,7 +283,7 @@ def create_one_node(
 # ==========================================
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Deploy constellation nodes (satellites/users/grounds) by creating containers in parallel."
+        description="Deploy nodes (satellites/users/grounds) by creating containers in parallel."
     )
     parser.add_argument(
         "-t", "--threads",
@@ -419,9 +419,9 @@ def main() -> int:
                 fail += 1
     log.info("-" * 50)
     if fail == 0:
-        log.info("✅ Constellation deployment completed...waiting for nodes to come online.")
+        log.info("✅ Satellite system deployment completed...waiting for nodes to come online.")
     else:
-        log.warning(f"⚠️ Constellation deployment completed with {fail} failures.")
+        log.warning(f"⚠️ Satellite system deployment completed with {fail} failures.")
         return 3
 
     # wait that all deployed node have put their eth0_ip in etcd
@@ -441,8 +441,8 @@ def main() -> int:
     if not all_ready:
         log.warning("⚠️ Some nodes did not report their eth0_ip in Etcd within the expected time. Could be an Etcd connection problem")
     else:
-        log.info("👍 Constellation deployment completed and all nodes running.")
-        log.info("▶️ Proceed with constellation-run.py to parse epoch files and start the emulation.")
+        log.info("👍 Satellite system deployment completed and all nodes running.")
+        log.info("▶️ Proceed with nsb-run.py to parse epoch files and start the emulation.")
 
 if __name__ == "__main__":
     raise SystemExit(main())

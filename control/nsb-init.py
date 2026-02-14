@@ -10,10 +10,10 @@ import copy
 from itertools import islice
 from typing import Any, Mapping
 from pyparsing import Mapping
-from constellation_scheduler import schedule_workers
+from scheduler import schedule_workers
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
-log = logging.getLogger("constellation-init")
+log = logging.getLogger("nsb-init")
 
 # ==========================================
 # ETCD CONNECTION
@@ -194,7 +194,7 @@ def apply_config_to_etcd(etcd, config_data: dict):
                     )
                 log.info(f"✅ IP assignment process completed.")
         log.info("👍 Successfully injected satellite system config to Etcd.")
-        log.info("▶️ Proceed with constellation-deploy.py to deploy node containers on workers.")
+        log.info("▶️ Proceed with nsb-deploy.py to deploy node containers on workers.")
 
     except Exception as e:
         log.error(f"❌ Error in apply_config_to_etcd: {e}")
@@ -262,7 +262,7 @@ def main() -> int:
             existing_workers = etcd.get_prefix("/config/workers/")
             if not existing_workers:
                 log.warning("⚠️  Workers do not found in Etcd under /config/workers/. This may indicate system init-docker.py has not been run.")
-                cont = input("Do you want to continue with constellation init? (y/n): ")
+                cont = input("Do you want to continue with nsb-init? (y/n): ")
                 if cont.lower() != 'y':
                     log.info("Exiting as per user request.")
                     sys.exit(0)

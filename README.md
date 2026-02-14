@@ -144,7 +144,7 @@ The control host must have SSH access to all workers using key-based authenticat
 Required software:
 
 * **Etcd** — distributed key–value store for global coordination
-* **Python 3** — with dependencies specified in `requirements.txt`
+* **Python3** — with dependencies specified in `requirements.txt`
 * **SSH client** — for remote access to workers
 
 ---
@@ -158,7 +158,7 @@ Each worker must allow passwordless `sudo` access for the SSH user used by the c
 Required software:
 
 * **Docker** — for running containerized nodes. The SSH user must belong to the `docker` group
-* **SSH server** — to allow remote access from the control host
+* **SSH server** — to allow remote access from the control host without password and with sudo privileges
 
 ---
 
@@ -171,13 +171,13 @@ The cluster consists of two workers, `host-1` and `host-2`, defined in [`workers
 
 The emulated system includes 8 satellites, 1 ground station, and 1 user, as defined in [`sat-config.json`](examples/10nodes/sat-config.json). IP addressing is automatically managed and IS-IS routing is used for Layer-3 connectivity. Use [`sat-config-v6.json`](examples/10nodes/sat-config-v6.json) for IPv6.
 
-The dynamic evolution of the satellite system (link creation, updates, removal, and task execution) is defined through epoch files located in [`examples/10nodes/constellation-epochs`](examples/10nodes/constellation-epochs). The ground station `gdr1` runs an `iperf3` server starting from the initial epoch.
+The dynamic evolution of the satellite system (link creation, updates, removal, and task execution) is defined through epoch files located in [`examples/10nodes/epochs`](examples/10nodes/epochs). The ground station `gdr1` runs an `iperf3` server starting from the initial epoch.
 
 ### 1. Customize Configuration
 
 * **Mandatory** — Edit `workers-config.json` to specify worker IP addresses and SSH parameters.
 * **Optional** — Edit `sat-config.json` to customize static parameters (e.g., node names, container images).
-* **Optional** — Edit epoch files in `constellation-epochs/` to modify dynamic behavior such as link creation, updates, removal, and task scheduling.
+* **Optional** — Edit epoch files in `epochs/` to modify dynamic behavior such as link creation, updates, removal, and task scheduling.
 
 ### 2. Cluster Initialization
 
@@ -207,51 +207,51 @@ python3 control/system-init-docker.py --config ./examples/10nodes/workers-config
 Push static satellite system information to Etcd:
 
 ```bash
-python3 control/constellation-init.py --config ./examples/10nodes/sat-config.json
+python3 control/nsb-init.py --config ./examples/10nodes/sat-config.json
 ```
 
-Deploy the satellite containers:
+Deploy the emulated nodes of the satellite system on workers:
 
 ```bash
-python3 control/constellation-deploy.py
+python3 control/nsb-deploy.py
 ```
 
-Start the emulation by applying dynamic configurations from the epoch files:
+Start the emulation by executing dynamic events from the epoch files:
 
 ```bash
-python3 control/constellation-run.py --loop-delay 60
+python3 control/nsb-run.py --loop-delay 60
 ```
 
 ### 4. Monitoring and Interaction
 
-You can monitor and interact with emulated nodes by connecting to the containers running on worker hosts via SSH. The `utils/constellation-exec.py` script simplifies this process.
+You can monitor and interact with emulated nodes by connecting to the containers running on worker hosts via SSH. The `utils/nsb-exec.py` script simplifies this process.
 
 Examples:
 
 Run a bash shell on container `usr1`:
 
 ```bash
-python3 utils/constellation-exec.py -it usr1 bash
+python3 utils/nsb-exec.py -it usr1 bash
 ```
 
 Display the routing table on `usr1`:
 
 ```bash
-python3 utils/constellation-exec.py usr1 ip route show
+python3 utils/nsb-exec.py usr1 ip route show
 ```
 
 Run an `iperf3` client from `usr1` to ground station `grd1`:
 
 ```bash
-python3 utils/constellation-exec.py usr1 iperf3 -c grd1 -t 30 -i 2
+python3 utils/nsb-exec.py usr1 iperf3 -c grd1 -t 30 -i 2
 ```
 
 ### 5. Cleanup
 
-After completing your experiments, remove the emulated satellite system:
+After completing your experiments, remove the emulated satellite system from workers:
 
 ```bash
-python3 control/constellation-rm.py
+python3 control/nsb-rm.py
 ```
 
 Optionally, remove residual configuration from worker hosts (required only if changing worker settings):

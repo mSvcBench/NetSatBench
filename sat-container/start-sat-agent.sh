@@ -9,6 +9,13 @@ echo " 🚀 Starting SAT internal agent for ${NODE_NAME:-<unknown>}"
 ulimit -n 1024
 
 # ======================
+# Enable IP forwarding and seg6
+# ======================
+sysctl -w net.ipv4.ip_forward=1
+sysctl -w net.ipv6.conf.all.forwarding=1 
+sysctl -w net.ipv6.conf.all.seg6_enabled=1
+
+# ======================
 # Optional: Wait for ETCD CA certificate
 # ======================
 if [[ -n "${ETCD_CA_CERT:-}" ]]; then

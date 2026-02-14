@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 import etcd3
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
-log = logging.getLogger("constellation-cp")
+log = logging.getLogger("nsb-cp")
 
 
 # =========================
@@ -46,8 +46,8 @@ def node_prefix(node_cfg: dict) -> str:
 # =========================
 def main() -> int:
     p = argparse.ArgumentParser(
-        prog="constellation-cp",
-        description="Copy files between local host and a constellation node (docker cp over SSH, local semantics).",
+        prog="nsb-cp",
+        description="Copy files between local host and a satellite system node (docker cp over SSH, local semantics).",
     )
 
     # Etcd
