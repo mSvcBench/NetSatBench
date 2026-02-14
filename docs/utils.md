@@ -4,7 +4,7 @@
 
 
 # Exec CLI
-`nsb-exec.py`
+`utils/nsb-exec.py` or `nsb.py exec`
 
 This utility script allows executing commands on emulated satellite nodes by connecting to their respective containers via SSH. The syntax is similar to `docker exec`.
 
@@ -17,7 +17,7 @@ python3 utils/nsb-exec.py [-it] [-d] <node-name> <command> [args...]
 
 Full command-line help is available via:
 ```bash
-python3 utils/nsb-cp.py --help
+python3 utils/nsb-exec.py --help
 ```
 
 ---
@@ -32,7 +32,7 @@ python3 utils/nsb-exec.py -it usr1 bash
 
 # Copy CLI
 
-`nsb-cp.py`
+`utils/nsb-cp.py` or `nsb.py cp`
 
 This utility script allows copying files and directories between the local host and an emulated node by transparently accessing the containers running on remote workers.
 Its syntax and behavior closely mimic `docker cp`, while resolving node placement via Etcd and handling remote execution internally.
@@ -90,16 +90,21 @@ python3 utils/nsb-cp.py -r ./configs sat1:/opt/app/configs
 
 ---
 
-### Remove all links
+# Remove all links
+`utils/nsb-unlink.py` or `nsb.py unlink`
+Remove all links among nodes of the satellite system by deleting all link entries from Etcd under the `/config/links` prefix.Can be useful to reset the satellite system to a clean state before starting a new emulation run (nsb-run), without the need to redeploy containers or restart the control script.
+
+---
+
+## Usage
 ```bash
 python3 utils/nsb-unlink.py
 ```
-Can be useful to reset the satellite system to a clean state before starting a new emulation run (nsb-run), without the need to redeploy containers or restart the control script.
 
 ---
 
 # Statistics
-`nsb-stats.py`
+`utils/nsb-stats.py` or `nsb.py stats`
 
 This utility script collects and displays statistics from the emulated satellite system.
 It retrieves data from Etcd and epoch files and can generate reports on various performance metrics.
@@ -113,7 +118,7 @@ python3 utils/nsb-stats.py [options]
 ---
 
 # Oracle Routing Module (v4/v6)
-`oracle-routing.py`\
+`utils/oracle-routing.py`
 
 This module provides a reference **oracle-style routing implementation** for the satellite network emulator. Both IPv4 and IPv6 versions are available, and the desired IP version can be selected via the `--ip-version` command-line parameter.
 

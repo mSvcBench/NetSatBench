@@ -92,7 +92,7 @@ python3 control/system-clean-docker.py
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
 ## Initialization of a satellite system emulation
-`control/nsb-init.py`
+`control/nsb-init.py` or `nsb.py init`
 
 This Python script initializes the *static* information about the emulated satellite system (worker nodes, IP addresses, etc. ) in the **Etcd** key–value store based on a satellite configuration file (`sat-config.json`), as described in the configuration manual (see [configuration.md](configuration.md)).
 
@@ -128,7 +128,7 @@ python3 control/nsb-init.py \
 Run with `--help` to see the full list of available options.
 
 ## Deployment of the nodes  
-`control/nsb-deploy.py`
+`control/nsb-deploy.py` or `nsb.py deploy`
 
 This Python script deploys the satellite system by creating and starting the necessary Docker containers on the worker hosts, based on the system configuration stored in **Etcd**. It is intended to be executed after the satellite system has been initialized using the `control/nsb-init.py` script.
 
@@ -148,7 +148,7 @@ python3 control/nsb-deploy.py
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
 ## Execution of the events
-`control/nsb-run.py`
+`control/nsb-run.py` or `nsb.py run`
 
 This Python script manages the *dynamic* information of the satellite system, such as links or commands, based on epoch files whose format is described in the configuration manual (see [configuration.md](configuration.md)). 
 
@@ -180,7 +180,7 @@ python3 control/nsb-run.py \
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
 ## Removal of the emulated satellite system
-`control/nsb-rm.py`
+`control/nsb-rm.py` or `nsb.py rm`
 This Python script removes all information related to the satellite system from the **Etcd** key–value store and removes all Docker containers. 
 
 It is intended to be executed when the emulation is no longer needed, to free up resources on the worker hosts.

@@ -207,19 +207,19 @@ python3 control/system-init-docker.py --config ./examples/10nodes/workers-config
 Push static satellite system information to Etcd:
 
 ```bash
-python3 control/nsb-init.py --config ./examples/10nodes/sat-config.json
+python3 ./nsb.py init --config ./examples/10nodes/sat-config.json
 ```
 
 Deploy the emulated nodes of the satellite system on workers:
 
 ```bash
-python3 control/nsb-deploy.py
+python3 ./nsb.py deploy
 ```
 
 Start the emulation by executing dynamic events from the epoch files:
 
 ```bash
-python3 control/nsb-run.py --loop-delay 60
+python3 ./nsb.py run --loop-delay 60
 ```
 
 ### 4. Monitoring and Interaction
@@ -251,7 +251,7 @@ python3 utils/nsb-exec.py usr1 iperf3 -c grd1 -t 30 -i 2
 After completing your experiments, remove the emulated satellite system from workers:
 
 ```bash
-python3 control/nsb-rm.py
+python3 ./nsb.py rm
 ```
 
 Optionally, remove residual configuration from worker hosts (required only if changing worker settings):

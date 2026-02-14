@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 """
 Epoch applier (cross-platform)
-
-Key change vs inotify(IN_CLOSE_WRITE):
-- Uses watchdog (Linux/macOS/Windows) for filesystem events.
-- Uses a write-then-atomic-rename (“.tmp” -> final) pattern when enqueueing epoch files,
-  so the watcher never processes a partially-written file.
-
 Producer side (this script):
 - Copies epoch JSON into epoch-queue as <name>.tmp
-- fsync()s the tmp file
-- atomically publishes it with os.replace(tmp, final)
-
-Consumer side (this script):
-- Watches epoch-queue for created/moved files that do NOT end with ".tmp"
+- mv <name>.tmp -> <name>.json (atomic publish)
+- Thread watches epoch-queue for created/moved files that do NOT end with ".tmp"
 - Processes + deletes them
 """
 
