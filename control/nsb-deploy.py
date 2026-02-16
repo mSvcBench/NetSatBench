@@ -442,7 +442,7 @@ def main() -> int:
         log.warning("⚠️ Some nodes did not report their eth0_ip in Etcd within the expected time. Could be an Etcd connection problem")
     else:
         log.info("👍 Satellite system deployment completed and all nodes running.")
-        log.info("▶️ Proceed with nsb-run.py to parse epoch files and start the emulation.")
+        log.info("▶️ Proceed with nsb.py run to parse epoch files and start the emulation.")
 
 if __name__ == "__main__":
     raise SystemExit(main())

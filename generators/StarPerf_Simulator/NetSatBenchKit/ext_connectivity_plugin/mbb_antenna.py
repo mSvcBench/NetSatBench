@@ -73,7 +73,6 @@ def mbb_antenna(OBJs, oi, data_ext_dict, data_ext_prev_dict, t, dT,
     linked_sats_sorted = np.concatenate((linked_sat_old_rising, linked_sat_old_setting, linked_sat_new_rising, linked_sat_new_setting))
     linked_sats_updated = linked_sats_sorted[:antenna_count-1] 
 
-    
     # make-before-break
     if len(linked_sats_updated)==1:
         # make before break management
