@@ -10,7 +10,6 @@ import threading
 import sys
 import re
 import hashlib
-#from extra.isis_routing import routing_init, routing_link_add, routing_link_del   
 
 # ----------------------------
 #   CONFIGURATION
