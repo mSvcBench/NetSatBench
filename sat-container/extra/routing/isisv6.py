@@ -4,7 +4,7 @@ import json
 import ipaddress
 import hashlib
 import subprocess
-from extra.rutils import replace_placeholders_in_file
+from extra.routing.rutils import replace_placeholders_in_file
 
 
 # ----------------------------
@@ -74,7 +74,7 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
         sys_id = derive_sysid_from_string(node_name)
 
         replace_placeholders_in_file(
-            "/app/extra/isisv6-template.conf",
+            "/app/extra/routing/isisv6-template.conf",
             {
                 "hostname": node_name,
                 "lo_iface": "lo",

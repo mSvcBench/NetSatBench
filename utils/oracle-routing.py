@@ -218,7 +218,7 @@ def compute_routes_single_epoch(
                 dev_name = f"vl_{nh_name}_1"
                 
                 if ip_version == 6:
-                    return f"extra/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
+                    return f"extra/routing/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
                 return f"ip route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric} onlink"
 
             nh_idx = next_hops[0]

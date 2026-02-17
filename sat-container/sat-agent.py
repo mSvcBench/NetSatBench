@@ -609,7 +609,7 @@ def main():
     # L3 Routing Init
     routing_flags = l3_flags.get("enable-routing", False)
     if routing_flags:
-        routing_mod_name = l3_flags.get("routing-module", "extra.isis")
+        routing_mod_name = l3_flags.get("routing-module", "extra.routing.isis")
         routing = __import__(routing_mod_name, fromlist=[''])
         try:
             log.info(f"🌐 Initializing L3 Routing using module: {routing_mod_name} ...")

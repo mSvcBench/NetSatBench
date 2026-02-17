@@ -200,7 +200,7 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
     "L3-config": {
       "enable-netem"  : true,
       "enable-routing" : true,
-      "routing-module": "extra.isis",
+      "routing-module": "extra.routing.isis",
       "routing-metadata": {
         "isis-area-id": "0001",
         "advertize-default-route": false
@@ -295,7 +295,7 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
     "L3-config": {
       "enable-netem"  : true,
       "enable-routing" : true,
-      "routing-module": "extra.isisv6",
+      "routing-module": "extra.routing.isisv6",
       "routing-metadata": {
         "isis-area-id": "0001"
       },

@@ -62,7 +62,7 @@ ip netns exec shape ip -6 addr add fd00:0:0:1::1/127 dev veth0_ns
 ip netns exec shape ip -6 addr add fd00:0:0:2::0/127 dev veth1_ns
 
 # enable IPv6 forwarding in shape
-ip netns exec shape sysctl -w net.ipv6.conf.all.forwarding=1
+ip netns exec shape sysctl -w net.ipv6.conf.all.forwarding=1 > /dev/null 
 
 # default route in shape back to root via veth1 link
 ip netns exec shape ip -6 route add default via fd00:0:0:2::1 dev veth1_ns > /dev/null 

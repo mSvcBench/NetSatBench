@@ -11,7 +11,7 @@
 
 NetSatBench supports pluggable routing modules that are invoked by the `sat-agent` in response to node lifecycle events and topology changes.
 
-A routing module is a Python script that is usually located in the `sat-container/extra` directory and implements a well-defined interface.  
+A routing module is a Python script that is usually located in the `sat-container/extra/routing/` directory and implements a well-defined interface.  
 sat-agent is responsible for when its functions are called, while the routing module defines how routing is configured and updated after those calls.
 
 Any node-controlled routing solution can be integrated into NetSatBench as long as it respects this interface.
@@ -142,4 +142,4 @@ By adhering to this interface, developers can integrate new routing mechanisms i
 ---
 
 ## Example Implementation
-An example routing module implementing this interface using FRR can be found in the `sat-container/extra/isis.py` file for IS-IS routing protocol.
+An example routing module implementing this interface using FRR can be found in the `sat-container/extra/routing/isis.py` file for IS-IS routing protocol IPv4 and in `sat-container/extra/routing/isisv6.py` for IPv6.
