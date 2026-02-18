@@ -259,17 +259,18 @@ def process_epoch_from_queue(json_path: str) -> None:
         epoch_dict = json.load(f)
 
     allowed_keys = [
-        "epoch-time",
+        "time",
         "links-add",
         "links-del",
         "links-update",
-        "run",
-        "satellites",
-        "users",
-        "grounds",
-        "time",
+        "run"
     ]
 
+    # get epoch-config from etcd to ensure we have the latest epoch-dir/pattern and to sanity check the epoch-time key exists (if not, we can fallback to time or just log it as unknown)
+    epoch_config_value = etcd_client.get("/config/epoch-config")[0]
+    if epoch_config_value:
+        log.debug(f"📖 Loaded epoch configuration from Etcd: {epoch_config_value}")
+    epoc_config = json.loads(epoch_config_value.decode("utf-8")) if epoch_config_value else {}
     # A. Push epoch-time and sanity check
     for key, value in epoch_dict.items():
         if key not in allowed_keys:
@@ -277,8 +278,11 @@ def process_epoch_from_queue(json_path: str) -> None:
                 f"❌ [{os.path.basename(json_path)}] Unexpected key '{key}' found in epoch file, skipping..."
             )
             continue
-        if key == "epoch-time":
-            etcd_client.put("/config/epoch-time", str(value).strip().replace('"', ""))
+        if key == "time":
+            epoc_config["epoch-time"] = value
+    
+    epoc_config["epoch-file"] = json_path.split("/")[-1]
+    etcd_client.put("/config/epoch-config", json.dumps(epoc_config))
 
     # B. Push Dynamic Actions
     add = epoch_dict.get("links-add", [])

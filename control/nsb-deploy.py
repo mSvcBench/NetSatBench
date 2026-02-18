@@ -8,7 +8,7 @@ import subprocess
 import json
 import os
 import sys
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple
 
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
