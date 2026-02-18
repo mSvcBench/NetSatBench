@@ -1,8 +1,21 @@
 <div align="center">
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
+
+# NetSatBench Cloud Deployment Notes <!-- omit in toc -->
+
 </div>
 
-# OpenStack Cloud Deployment Notes
+## Table of Contents <!-- omit in toc -->
+
+- [Overview](#overview)
+- [OpenStack Cloud Deployment Notes](#openstack-cloud-deployment-notes)
+- [Azure Cloud Deployment Notes](#azure-cloud-deployment-notes)
+
+
+## Overview
+This document provides specific notes and instructions for deploying NetSatBench in cloud environments, such as OpenStack and Azure. It covers the necessary network configurations and considerations to ensure proper connectivity between worker nodes and the control host.
+
+## OpenStack Cloud Deployment Notes
 
 - Create a virtual network containing multiple connected virtual machines (VMs) that act as **workers**; one of these VMs also serves as the **control host**.
 - Ensure that the security group associated with the VMs allows SSH access to the control host from your local machine.
@@ -14,7 +27,7 @@
 
 ---
 
-# Azure Cloud Deployment Notes
+## Azure Cloud Deployment Notes
 
 - Create a virtual network containing multiple connected virtual machines (VMs) that act as **workers**; one of these VMs also serves as the **control host**.
 - Ensure that the network security group (NSG) associated with the VMs allows SSH access to the control host from your local machine.

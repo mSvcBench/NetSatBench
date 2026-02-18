@@ -1,10 +1,21 @@
 <div align="center">
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
-# NetSatBench Control Scripts 
+# NetSatBench Control Commands <!-- omit in toc -->
 
 </div>
 
+## Table of Contents <!-- omit in toc -->
+- [Overview](#overview)
+- [Worker Initialization](#worker-initialization)
+- [Worker Cleaning](#worker-cleaning)
+- [Initialization of a satellite system emulation](#initialization-of-a-satellite-system-emulation)
+- [Deployment of the nodes](#deployment-of-the-nodes)
+- [Execution of the events](#execution-of-the-events)
+- [Removal of the emulated satellite system](#removal-of-the-emulated-satellite-system)
+
+
+## Overview
 This document describes the control scripts provided with NetSatBench for managing and running satellite network emulations.
 The script should be executed from the control host. It is usefull to define the `ETCD_HOST` environment variables to point to the Etcd server used by the control host.
 ```bash
@@ -21,10 +32,9 @@ export NODE_ETCD_HOST=<etcd-server-ip-for-nodes>
 export NODE_ETCD_PORT=<etcd-server-port-for-nodes>
 ```
 
----
 
 ## Worker Initialization  
-`control/system-init-docker.py`
+`control/system-init-docker.py` or `nsb.py system-init-docker`
 
 This Python script initializes and configures emulation worker nodes using a central **Etcd** datastore.
 
@@ -36,9 +46,8 @@ It performs two main tasks:
 
 The script is intended to be executed during the **bootstrap phase** of the compute environment hosting the emulation.
 
----
 
-### What the Script Does
+### What the Script Does <!-- omit in toc -->
 
 For each worker defined in the configuration file, the script:
 
@@ -54,20 +63,18 @@ For each worker defined in the configuration file, the script:
 
 The result is a fully connected **Layer-3 container-to-container network** across all workers, which serves as the substrate for creating VXLAN overlay tunnels used to emulate satellite links.
 
----
 
-### Configuration File
+### Configuration File <!-- omit in toc -->
 
 The script expects a JSON configuration file (default: `worker-config.json`), described in the configuration manual (see [configuration.md](configuration.md)).
 
----
 
-### Usage
+### Usage <!-- omit in toc -->
 
 Example invocation:
 
 ```bash
-python3 control/system-init-docker.py \
+python3 nsb.py system-init-docker \
   --config worker-config.json
 ```
 
@@ -75,23 +82,22 @@ Run with `--help` to see the full list of available options.
 
 
 ## Worker Cleaning 
-`control/system-clean-docker.py`
+`control/system-clean-docker.py` or `nsb.py system-clean-docker`
 
 This Python script cleans up the emulation worker nodes by removing the Docker network and associated iptables rules created during initialization. It is intended to be executed when the emulation is no longer needed, to free up resources on the worker hosts.
 
 It is intended to be executed after the satellite system has been torn down using the `control/nsb-rm.py` script.
 
----
 
-### Usage
+### Usage <!-- omit in toc -->
 The script read current worker configuration from Etcd under `/config/workers/` and performs the cleanup operations on each worker.
 Example invocation:
 ```bash
-python3 control/system-clean-docker.py
+python3 nsb.py system-clean-docker
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
-## Initialization of a satellite system emulation
+## Initialization of a satellite system emulation 
 `control/nsb-init.py` or `nsb.py init`
 
 This Python script initializes the *static* information about the emulated satellite system (worker nodes, IP addresses, etc. ) in the **Etcd** key–value store based on a satellite configuration file (`sat-config.json`), as described in the configuration manual (see [configuration.md](configuration.md)).
@@ -100,9 +106,8 @@ The script prepares all metadata required to deploy the node containers but does
 
 It is intended to be executed before deploying the nodes of the satellite system using the `control/nsb-deploy.py` script and after the worker nodes have been initialized using the `control/system-init-docker.py` script.
 
----
 
-### What the Script Does
+### What the Script Does <!-- omit in toc -->
 
 For each node defined in the configuration file, the script:
 
@@ -114,14 +119,13 @@ For each node defined in the configuration file, the script:
 
 The stored metadata doen't include any information on dynamic satellite links, which are instead managed at runtime by the `control/nsb-run.py` script based on the epoch files.
 
----
 
-### Usage
+### Usage <!-- omit in toc -->
 
 Example invocation:
 
 ```bash
-python3 control/nsb-init.py \
+python3 nsb.py init \
   --config ./examples/10nodes/sat-config.json
 ```
 
@@ -132,22 +136,21 @@ Run with `--help` to see the full list of available options.
 
 This Python script deploys the satellite system by creating and starting the necessary Docker containers on the worker hosts, based on the system configuration stored in **Etcd**. It is intended to be executed after the satellite system has been initialized using the `control/nsb-init.py` script.
 
----
-### What the Script Does
+### What the Script Does <!-- omit in toc -->
 For each node defined in the satellite system, the script:
 - Connects to the assigned worker host via SSH
 - Creates and starts a Docker container for the node with the appropriate resource limits and network configuration
 - Ensures that each container runs the `sat-agent` process to manage node lifecycle and be ready to contact **Etcd** for dynamic link management during emulation.
 
----
-### Usage
+
+### Usage <!-- omit in toc -->
 Example invocation:
 ```bash
-python3 control/nsb-deploy.py
+python3 nsb.py deploy
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
-## Execution of the events
+## Execution of the events 
 `control/nsb-run.py` or `nsb.py run`
 
 This Python script manages the *dynamic* information of the satellite system, such as links or commands, based on epoch files whose format is described in the configuration manual (see [configuration.md](configuration.md)). 
@@ -155,8 +158,8 @@ This Python script manages the *dynamic* information of the satellite system, su
 It is responsible for applying configuration changes, including link additions/removals and command execution within node containers, at the appropriate times during the emulation. It is intended to be executed after the satellite system has been deployed using the `control/nsb-deploy.py` script.
 
 It is intended to be executed after the satellite system has been deployed using the `control/nsb-deploy.py` script.
----
-### What the Script Does
+
+### What the Script Does <!-- omit in toc -->
 The script read epoch files from a specified directory and, for each epoch file:
 - Waits until the scheduled epoch time is reached (synchronizing virtual time with real time). 
 The waiting time is the time difference between the `time` field in the epoch file and to the `time` field of the first epoch file processed.
@@ -170,11 +173,10 @@ The script can be configured to use a fixed wait time between epochs instead of 
 
 The script can be configured to work in an *interactive-mode* (`--interactive`), where it process only epoch file injected manually by the user in the epoch-queue directory instead of reading from a predefined epoch directory. In this case the script does not perform any time synchronization, simply processing each injected epoch file as soon as it appears in the queue directory. This mode is useful for **digital twin** scenarios where the user update satellite system state at runtime.
 
----
-### Usage
+### Usage <!-- omit in toc --><!-- omit in toc -->
 Example invocation:
 ```bash
-python3 control/nsb-run.py \
+python3 nsb.py run \
   --loop-delay 60
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
@@ -185,10 +187,10 @@ This Python script removes all information related to the satellite system from 
 
 It is intended to be executed when the emulation is no longer needed, to free up resources on the worker hosts.
 
----### Usage
+### Usage <!-- omit in toc -->
 Example invocation:
 ```bash
-python3 control/nsb-rm.py
+python3 nsb.py rm
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options. 
 

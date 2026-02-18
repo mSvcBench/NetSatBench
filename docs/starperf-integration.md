@@ -1,3 +1,4 @@
+
 <div align="center">
 
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
@@ -6,6 +7,19 @@
 
 </div>
 
+- [StarPerf Simulator Integration for NetSatBench](#starperf-simulator-integration-for-netsatbench)
+  - [Overview](#overview)
+  - [Installation](#installation)
+  - [Workflow](#workflow)
+  - [NetSatBenchGenerate](#netsatbenchgenerate)
+  - [NetSatBenchExport](#netsatbenchexport)
+  - [Example](#example)
+    - [Constellation Definition](#constellation-definition)
+    - [Ground Stations Definition](#ground-stations-definition)
+    - [Users Definition](#users-definition)
+    - [H5 Generation](#h5-generation)
+    - [Sat-config and Epoch File Generation](#sat-config-and-epoch-file-generation)
+  
 ## Overview
 NetSatBench can be integrated with the StarPerf_Simulator plugin to generate satellite system epoch files based on user-defined performance scenarios. This integration allows users to leverage StarPerf's capabilities for modeling and simulating satellite system performance, while seamlessly incorporating the generated epoch files into NetSatBench for emulation.
 
@@ -154,7 +168,7 @@ OneWeb ground stations XML file [OneWeb.xml](generators/StarPerf_Simulator/confi
 This XML file describes 5 ground stations located in Scanzano (Italy), Öjebyn (Sweden), Plana (Bulgaria), Svalbard (Norway) and Fucino (Italy) with their respective latitude, longitude, description, antenna count, frequency and uplink/downlink GHz values.
 
 
-### Ground Stations Definition
+### Users Definition
 OneWeb user XML file [OneWeb.xml](generators/StarPerf_Simulator/config/users/OneWeb.xml)
 ```xml
 <USRs>

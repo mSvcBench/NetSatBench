@@ -35,7 +35,7 @@ The routing module:
 
 ---
 
-## Mandatory Interface
+## Mandatory Interfaces
 
 A routing module compatible with NetSatBench must expose exactly the following functions.
 

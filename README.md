@@ -108,7 +108,7 @@ Utility scripts for analysis, routing, and data processing.
 **docs/**
 Documentation files, including:
 
-* [Control Commands](docs/commands.md)
+* [Control Commands](docs/control-commands.md)
 * [Configuration Files](docs/configuration.md)
 * [Etcd Key-Value Store](docs/etcd.md)
 * [StarPerf Simulator Integration](docs/starperf-integration.md)

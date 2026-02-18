@@ -8,6 +8,8 @@ from pathlib import Path
 
 # Mapping between CLI subcommands and script filenames
 COMMANDS = {
+    "system-init-docker": "control/system-init-docker.py",
+    "system-clean-docker": "control/system-clean-docker.py",
     "init": "control/nsb-init.py",
     "deploy": "control/nsb-deploy.py",
     "run": "control/nsb-run.py",

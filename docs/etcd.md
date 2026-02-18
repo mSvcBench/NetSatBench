@@ -1,10 +1,20 @@
 <div align="center">
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
-# NetSatBench ETCD Keyspace 
+# NetSatBench ETCD Keyspace <!-- omit in toc --> 
 
 </div>
 
+## Table of Contents <!-- omit in toc -->
+- [Overview](#overview)
+- [/config/workers/](#configworkers)
+- [/config/epoch-config|nodes](#configepoch-confignodes)
+- [/config/etchosts/](#configetchosts)
+- [/config/links/](#configlinks)
+- [/config/run/](#configrun)
+
+
+## Overview
 The ETCD keyspace used by NetSatBench follows a hierarchical, declarative schema, where each prefix corresponds to a logical subsystem of the emulator. 
 The content of the Etcd keyspace can be inspected using standard Etcd tools, e.g., from the control host via the command:
 
@@ -51,7 +61,8 @@ This prefix contains the list of worker hosts participating in the emulation, in
 Each worker is associated with a JSON configuration derived from the `worker-config.json` file (see the [configuration manual](configuration.md)).  
 These entries are automatically created and managed by the `control/system-init-docker.py` script.
 
-### Example
+
+### Example <!-- omit in toc -->
 
 `/config/workers/host-1  `
 
@@ -72,7 +83,7 @@ These entries are automatically created and managed by the `control/system-init-
 ## /config/epoch-config|nodes
 These prefixes contain the configuration data of the emulated node indexed by name as defined in the `sat-config.json` file (see the [configuration manual](configuration.md)). They are automatically created and managed by the `control/nsb-init.py` script.
 
-### Example
+### Example <!-- omit in toc -->
 
 `/config/nodes/sat1`
 
@@ -117,7 +128,11 @@ The `L3-config:cidr` and `worker`fields can be automatically assigned if not set
 This prefix holds the overlay IP address assigned to the loopback interface (if assigned) for each emulated node, indexed by node name.
 These entries are automatically created and managed by the `sat-agent`, which configures the `/etc/hosts` file inside each container, allowing workloads to refer to nodes by name rather than by overlay IP address.
 
-### Example
+### Example <!-- omit in toc -->
+
+`/config/etchosts/grd1`
+
+```json
 
 `/config/etchosts/sat1`
 
@@ -130,7 +145,7 @@ This prefix contains the state of all satellite links in the current epoch, inde
 Each entry stores a JSON object describing the current link parameters, such as delay, packet loss, bandwidth, and VXLAN identifier.
 These entries are automatically created and managed by the `control/nsb-run.py` script while processing epoch files.
 
-### Example
+### Example <!-- omit in toc -->
 
 `/config/links/sat1/vl_sat2_1`
   
@@ -151,7 +166,8 @@ This prefix stores runtime information for each emulated node, indexed by node n
 Each entry contains a JSON array specifying the sequence of commands to be executed during the current epoch.
 These entries are automatically created and managed by the `control/nsb-run.py` script.
 
-### Example
+### Example <!-- omit in toc -->
+
 
 `/config/run/grd1`
 
