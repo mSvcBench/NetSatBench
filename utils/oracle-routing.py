@@ -121,18 +121,19 @@ def pick_primary_secondary_next_hops(A_csr: csr_matrix, dist, src_idx: int, targ
     return [primary] if secondary is None else [primary, secondary]
 
 def compute_routes_single_epoch(
-    *,
     epoch_data: dict,
     node_map: dict,
     A_lil: lil_matrix,
     node_to_route: list,
+    node_to_install: list,
     previous_next_hops: Dict[int, Dict[int, list]],
     drain_before_break: bool,
     offset_seconds: int,
     num_nodes: int,
     inv_node_map: dict,
     ip_map: dict,
-    ip_version: int
+    ip_version: int,
+    redundancy: bool
 ) -> dict:
     # Apply link-add only if not drain-before-break epoch
     if not drain_before_break:
@@ -189,7 +190,11 @@ def compute_routes_single_epoch(
             log.warning(f"\t ⚠️ Target '{target_node}' has IPv6 IP '{dst_ip}' but --ip-version=4. Skipping.")
             continue
         
-        for src_idx in range(num_nodes):
+        for src_node in node_to_install:
+            if src_node not in node_map:
+                log.warning(f"\t ⚠️ Node '{src_node}' not found in configuration, skipping route installation.")
+                continue
+            src_idx = node_map.get(src_node, None)
             if src_idx == target_idx:
                 continue
 
@@ -205,33 +210,55 @@ def compute_routes_single_epoch(
             if src_idx not in route_string:
                 route_string[src_idx] = "sleep 0.1"  # allow preceding interface setup
 
-            def mk_cmd(nh_idx: int, metric: int) -> str:
-                nh_name = inv_node_map[nh_idx]
+            def route_add(src_name: str, dst_name: str, nh_name: str, metric: int) -> None:
+                src_idx = node_map[src_name]
+
                 nh_ip = ip_map.get(nh_name, "UNKNOWN")
                 if nh_ip == "UNKNOWN":
-                    return ""
+                    raise ValueError(f"Missing IP for next hop node '{nh_name}' in Etcd under prefix.")
                 if ip_version == 6 and not is_ipv6(nh_ip):
-                    return ""
+                   raise ValueError(f"Next hop '{nh_name}' has non-IPv6 IP '{nh_ip}' but --ip-version=6.")
                 if ip_version == 4 and is_ipv6(nh_ip):
-                    return ""
-
-                dev_name = f"vl_{nh_name}_1"
+                    raise ValueError(f"Next hop '{nh_name}' has IPv6 IP '{nh_ip}' but --ip-version=4.")
                 
+                dst_ip = ip_map.get(dst_name, "UNKNOWN")
+                if dst_ip == "UNKNOWN":
+                    raise ValueError(f"Missing IP for target node '{dst_name}' in Etcd under prefix.")
+                if ip_version == 6 and not is_ipv6(dst_ip):
+                    raise ValueError(f"Target '{dst_name}' has non-IPv6 IP '{dst_ip}' but --ip-version=6.")
+                if ip_version == 4 and is_ipv6(dst_ip):
+                    raise ValueError(f"Target '{dst_name}' has IPv6 IP '{dst_ip}' but --ip-version=4.")
+               
+                dev_name = f"vl_{nh_name}_1"
+
                 if ip_version == 6:
-                    return f"extra/routing/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
-                return f"ip route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric} onlink"
+                    # check next-hop onlink route exists
+                    onlink_route_str = f"ip -6 route replace {nh_ip} dev {dev_name} metric {metric} onlink"
+                    if onlink_route_str not in route_string[src_idx]:
+                        route_string[src_idx] = route_string.get(src_idx, "") + "; " + onlink_route_str
+                    if nh_name != dst_name:
+                        # If next hop is the target itself, we already added the onlink route above, so we can skip adding a host route to itself and just rely on the onlink route. This also avoids the issue of needing to specify a dev for a host route to itself.
+                        route_append_str = f"ip -6 route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric}"
+                        route_string[src_idx] = route_string.get(src_idx, "") + "; " + route_append_str
+                        return
+                    # return f"extra/routing/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
+                elif ip_version == 4:
+                    route_append_str = f"ip route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric} onlink"
+                    route_string[src_idx] = route_string.get(src_idx, "") + "; " + route_append_str
+                    return
+                else:
+                    raise ValueError(f"Unsupported IP version: {ip_version}")
 
             nh_idx = next_hops[0]
-            cmd1 = mk_cmd(nh_idx, metric=100)
-            if not cmd1:
-                log.warning(f"\t ⚠️ Missing/invalid IP for primary next hop from {inv_node_map[src_idx]} to {target_node}, skipping.")
-                continue
-            route_string[src_idx] =route_string.get(src_idx, "") + "; " + cmd1
+            nh_name = inv_node_map[nh_idx]
+            metric = 100
+            route_add(src_name=inv_node_map[src_idx], dst_name=target_node, nh_name=nh_name, metric=metric)
 
-            if len(next_hops) == 2:
-                cmd2 = mk_cmd(next_hops[1], metric=200)
-                if cmd2:
-                    route_string[src_idx] = route_string.get(src_idx, "") + "; " + cmd2
+            if len(next_hops) == 2 and redundancy:
+                nh_idx = next_hops[1]
+                nh_name = inv_node_map[nh_idx]
+                metric = 200
+                route_add(src_name=inv_node_map[src_idx], dst_name=target_node, nh_name=nh_name, metric=metric)
 
     # Create new epoch payload (same structure as original)
     new_epoch_data: Dict[str, Any] = {}
@@ -255,49 +282,58 @@ def compute_routes_single_epoch(
     return new_epoch_data
 
 def compute_routes(
-    *,
     etcd_client,
     epoch_dir: str,
     file_pattern: str,
     out_epoch_dir: str,
     node_type_to_route: list,
+    node_type_to_install: list,
     drain_before_break_offset: int,
     link_creation_offset: int,
     ip_version: int,
-    etcd_etchosts_prefix: str
+    etcd_etchosts_prefix: str,
+    redundancy: bool
 ) -> None:
     # Load config and build node map (same as original)
     log.info("📁 Loading configuration from etcd...")
     nodes = get_prefix_data(etcd_client, "/config/nodes")
     log.info(f"🔎 Found {len(nodes)} nodes in configuration.")
-    log.info(f"ℹ️ Node type to route: {node_type_to_route}")
-
-    node_map: Dict[str, int] = {}
-    idx = 0
+    log.info(f"     - Node type to route: {node_type_to_route}")
+    log.info(f"     - Node type to install: {node_type_to_install}")
+    
+    node_map: Dict[str, int] = {} # node_name -> index in adjacency matrix
     node_to_route: List[str] = []
+    node_to_install: List[str] = []
+
+    # Build node map and filter nodes to route/install based on type
+    idx = 0
     for name, node_info in nodes.items():
         node_map[name] = idx
         idx += 1
         if node_info.get("type") in node_type_to_route or "any" in node_type_to_route:
             node_to_route.append(name)
-            # log.info(f"\t 🚦 Will route to node '{name}' of type '{node_info.get('type')}'")
+        if node_info.get("type") in node_type_to_install or "any" in node_type_to_install:
+            node_to_install.append(name)
+    inv_node_map = {i: name for name, i in node_map.items()} # for reverse lookup of node names by index
 
-    # Load IP map from etcd prefix
+    # Build IP map from etcd prefix
+    found_all_ip = True
     ip_map: Dict[str, str] = {}
     for value, meta in etcd_client.get_prefix(etcd_etchosts_prefix):
         node_name = meta.key.decode().split('/')[-1]
         ip_addr = value.decode().strip()
         if ip_addr:
             ip_map[node_name] = ip_addr
-            found_any = True
+        else:
+            log.warning(f"⚠️ Empty IP for node '{node_name}' under Etcd prefix '{etcd_etchosts_prefix}'")
+            found_all_ip = False
 
-    if not found_any:
-        log.warning(f"⚠️ No IPs found under prefixes {etcd_etchosts_prefix}. Routes will be skipped due to missing IPs.")
+    if not found_all_ip:
+        raise ValueError(f"❌ Missing node IP addresses in Etcd under prefix '{etcd_etchosts_prefix}'. Oracle routing can not proceed.")
 
-    inv_node_map = {i: name for name, i in node_map.items()}
     num_nodes = len(node_map)
-    if num_nodes == 0:
-        raise ValueError("⚠️ Configuration has 0 nodes.")
+    if len(node_to_route) == 0 or len(node_to_install) == 0:
+        raise ValueError("⚠️ Configuration has 0 nodes to route/install.")
 
     log.info("🛣️ Computing routes ...")
     A_lil = lil_matrix((num_nodes, num_nodes), dtype="uint8")
@@ -325,13 +361,15 @@ def compute_routes(
                 node_map=node_map,
                 A_lil=A_lil,
                 node_to_route=node_to_route,
+                node_to_install=node_to_install,
                 previous_next_hops=previous_next_hops,
                 drain_before_break=True,
                 offset_seconds=drain_before_break_offset,
                 num_nodes=num_nodes,
                 inv_node_map=inv_node_map,
                 ip_map=ip_map,
-                ip_version=ip_version
+                ip_version=ip_version,
+                redundancy=redundancy,
             )
             if dbb_epoch_data.get("run", {}) != {}:
                 file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
@@ -353,6 +391,7 @@ def compute_routes(
             node_map=node_map,
             A_lil=A_lil,
             node_to_route=node_to_route,
+            node_to_install=node_to_install,
             previous_next_hops=previous_next_hops,
             drain_before_break=False,
             offset_seconds=-link_creation_offset,
@@ -360,6 +399,7 @@ def compute_routes(
             inv_node_map=inv_node_map,
             ip_map=ip_map,
             ip_version=ip_version,
+            redundancy = redundancy,
         )
 
         file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
@@ -382,13 +422,15 @@ def compute_routes(
             node_map=node_map,
             A_lil=A_lil,
             node_to_route=node_to_route,
+            node_to_install=node_to_install,
             previous_next_hops=previous_next_hops,
             drain_before_break=True,
             offset_seconds=drain_before_break_offset,
             num_nodes=num_nodes,
             inv_node_map=inv_node_map,
             ip_map=ip_map,
-            ip_version=ip_version
+            ip_version=ip_version,
+            redundancy = redundancy,
         )
         file_path0 = unnumbered_file_pattern.replace("??????", "0")
         out_epoch_path0 = os.path.join(out_epoch_dir, os.path.basename(file_path0))
@@ -412,10 +454,10 @@ def main() -> int:
     parser.add_argument("--out-epoch-dir", help="Output dir for processed epochs with route injection.")
 
     parser.add_argument("--node-type-to-route", default="any", help="Comma-separated node types to route to (default: any). Matches against node 'type' in config. Use 'any' to route to all nodes.")
-
+    parser.add_argument("--node-type-to-install", default="any", help="Comma-separated node types to install routes on (default: any). Matches against node 'type' in config. Use 'any' to install on all nodes.")
     parser.add_argument("--drain-before-break-offset", type=int, default=0, help="Seconds offset for drain-before-break epoch. If 0, no separate drain-before-break epoch is emitted.")
     parser.add_argument("--link-creation-offset", type=int, default=1, help="Seconds offset for route replacement after link creation. Default: 1 second after link creation.")
-
+    parser.add_argument("--redundancy", action="store_true", help="Whether to compute secondary next hops for redundancy (default: False).")
     parser.add_argument("--ip-version", type=int, choices=[4, 6], default=4, help="Generate IPv4 or IPv6 route commands. Default: 4 (IPv4).")
     
     parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
@@ -471,10 +513,12 @@ def main() -> int:
             file_pattern=file_pattern,
             out_epoch_dir=args.out_epoch_dir,
             node_type_to_route=args.node_type_to_route.split(","),
+            node_type_to_install=args.node_type_to_install.split(","),
             drain_before_break_offset=args.drain_before_break_offset,
             link_creation_offset=args.link_creation_offset,
             ip_version=args.ip_version,
-            etcd_etchosts_prefix="/config/etchosts/" if args.ip_version == 4 else "/config/etchosts6/"
+            etcd_etchosts_prefix="/config/etchosts/" if args.ip_version == 4 else "/config/etchosts6/",
+            redundancy=args.redundancy if args.drain_before_break_offset == 0 else True,  # redundancy needed with drain-before-break
         )
     except Exception as e:
         log.error(f"❌ Error during route computation: {e}")

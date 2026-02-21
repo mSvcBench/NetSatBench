@@ -182,6 +182,7 @@ def process_initial_topology(etcd_client):
         else:
             remote_ip = ip1
             local_ip = ip2
+        
         create_vxlan_link(
             vxlan_if=vxlan_if,
             target_vni=vni,
@@ -296,7 +297,7 @@ def delete_vxlan_link(
         "ip", "link", "del", vxlan_if
     ])
     log.info(f" ✅ VXLAN {vxlan_if} deleted.")
-    if l3_flags.get("enable-routing", False):
+    if l3_flags.get("enable-routing", False) and routing is not None:
         msg, success = routing.link_del(etcd_client, my_node_name, vxlan_if)
         if success:
             log.info(msg)
@@ -314,7 +315,7 @@ def apply_tc_settings(vxlan_if, netem_opts):
         log.info(f" 🎛️ No netem options provided for {vxlan_if}, skipping tc.")
         return
     
-    log.info(f"  🎛️ Applying TC netem on {vxlan_if}: {netem_opts}")
+    log.info(f" 🎛️ Applying TC netem on {vxlan_if}: {netem_opts}")
 
     # Build netem command args (shared by add/change/replace)
     netem_args = ["netem"]

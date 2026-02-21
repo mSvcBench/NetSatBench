@@ -8,9 +8,9 @@
 # primary per link policy applied to the vl_x_y interface representing satellite-to-x links.
 #
 # It can be invoked from the “run” section of an epoch file via:
-#     /app/extra/shaping-ns-create.sh
+#     /app/extra/QoS/shaping-ns-create.sh
 # when shaping is required, and later removed using:
-#     /app/extra/shaping-ns-delete.sh
+#     /app/extra/QoS/shaping-ns-delete.sh
 #
 # Logical packet path:
 #   input_link

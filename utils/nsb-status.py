@@ -23,11 +23,9 @@ etcd_client = None
 # ==========================================
 
 class SshError(RuntimeError):
-    log.error("SSH error: %s", str(RuntimeError))   
     pass
 
 class RemoteCommandError(RuntimeError):
-    log.error("Remote command error: %s", str(RuntimeError))
     pass
 
 def run_ssh(
