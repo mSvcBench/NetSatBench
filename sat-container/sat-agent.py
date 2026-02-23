@@ -25,11 +25,11 @@ if ":" in ETCD_ENDPOINT:
 else:
     ETCD_HOST, ETCD_PORT = ETCD_ENDPOINT, 2379
 
-my_node_name = os.getenv("NODE_NAME")
+node_name = os.getenv("NODE_NAME")
 
 # KEYS
-KEY_LINKS_PREFIX = f"/config/links/{my_node_name}/"
-KEY_RUN = f"/config/run/{my_node_name}"
+KEY_LINKS_PREFIX = f"/config/links/{node_name}/"
+KEY_RUN = f"/config/run/{node_name}"
 
 logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -147,7 +147,7 @@ def process_initial_topology(etcd_client):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
         
-        if ep1 != my_node_name and ep2 != my_node_name: 
+        if ep1 != node_name and ep2 != node_name: 
             log.info(f"⚠️  Skipping initial link {ep1}<->{ep2} not relevant to this node.")
             continue
 
@@ -176,7 +176,7 @@ def process_initial_topology(etcd_client):
         # Extract interface name from the key, it is the last part of the key after /
         vxlan_if = key_str.split('/')[-1]
         # ADD for found link
-        if ep1 == my_node_name:
+        if ep1 == node_name:
             remote_ip = ip2
             local_ip = ip1
         else:
@@ -283,7 +283,7 @@ def create_vxlan_link(
 
     # Routing hook (keep your current behavior)
     if (v4_ip or v6_ip) and l3_flags.get("enable-routing", False) and routing is not None:
-        msg, success = routing.link_add(etcd_client, my_node_name, vxlan_if)
+        msg, success = routing.link_add(etcd_client, node_name, vxlan_if)
         if success:
             log.info(msg)
         else:
@@ -298,7 +298,7 @@ def delete_vxlan_link(
     ])
     log.info(f" ✅ VXLAN {vxlan_if} deleted.")
     if l3_flags.get("enable-routing", False) and routing is not None:
-        msg, success = routing.link_del(etcd_client, my_node_name, vxlan_if)
+        msg, success = routing.link_del(etcd_client, node_name, vxlan_if)
         if success:
             log.info(msg)
         else:
@@ -353,7 +353,7 @@ def process_link_action(etcd_client, event):
         if isinstance(event, etcd3.events.PutEvent):
                 l = json.loads(event.value.decode())
                 ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
-                if ep1 != my_node_name and ep2 != my_node_name:
+                if ep1 != node_name and ep2 != node_name:
                     log.error(f" ❌ Link action {ep1}<->{ep2} not relevant to this node.")
                     return
 
@@ -364,7 +364,7 @@ def process_link_action(etcd_client, event):
                     return
                 
                 vni = str(l.get("vni", "0"))
-                if ep1 == my_node_name:
+                if ep1 == node_name:
                     remote_ip = ip2
                     local_ip = ip1
                 else:
@@ -587,18 +587,18 @@ def register_my_ip(etcd_client):
                 return True
             except: return False
 
-        node_found = update_key(f"/config/nodes/{my_node_name}")
+        node_found = update_key(f"/config/nodes/{node_name}")
         return node_found
     except: return False
 
 def get_config(etcd_client):
-    val, _ = etcd_client.get(f"/config/nodes/{my_node_name}")
+    val, _ = etcd_client.get(f"/config/nodes/{node_name}")
     if not val: return
     return json.loads(val.decode())
 
 def main():
     global my_config, l3_flags, etcd_client, routing
-    log.info(f"🚀 Sat Agent Starting for {my_node_name}")
+    log.info(f"🚀 Sat Agent Starting for {node_name}")
     etcd_client = get_etcd_client()
     my_config = get_config(etcd_client)
     l3_flags = my_config.get("L3-config", {})
@@ -613,7 +613,7 @@ def main():
         routing = __import__(routing_mod_name, fromlist=[''])
         try:
             log.info(f"🌐 Initializing L3 Routing using module: {routing_mod_name} ...")
-            msg, success = routing.init(etcd_client, my_node_name)
+            msg, success = routing.init(etcd_client, node_name)
             if success:
                 log.info(msg)
             else:
@@ -628,12 +628,12 @@ def main():
     v4_net = _parse_cidr(l3_cfg.get("cidr", ""))
     v4_ip = pick_last_usable_ip(v4_net)
     if v4_ip:
-        etcd_client.put(f"/config/etchosts/{my_node_name}", str(v4_ip))
+        etcd_client.put(f"/config/etchosts/{node_name}", str(v4_ip))
 
     v6_net = _parse_cidr(l3_cfg.get("cidr-v6", ""))
     v6_ip = pick_last_usable_ip(v6_net)
     if v6_ip:
-        etcd_client.put(f"/config/etchosts6/{my_node_name}", str(v6_ip))
+        etcd_client.put(f"/config/etchosts6/{node_name}", str(v6_ip))
     
     ## Insert sat-vnet-super-cidr route with default gateway as next hop. 
     ## Necessary for vxlan setup in case of default gateway overriding to mimic satellite gateway behavior. 

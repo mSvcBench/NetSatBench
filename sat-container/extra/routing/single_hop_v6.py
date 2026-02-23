@@ -57,7 +57,7 @@ def link_add(etcd_client, node_name, interface) -> tuple[str, bool]:
         if not up_flag:
             msg=f" ❌ Configuration failed: Interface {interface} is not up."
             return msg, False
-        add_cmd = run_cmd_capture(["extra/routing/add_ipv6_route_ll.sh", interface, ip, str(metric)])
+        add_cmd = run_cmd_capture(["ip", "-6", "route", "replace", ip, "dev", interface, "metric", str(metric), "onlink"])
         return f" ✅ Connected-only IPv6 route to {remote_node} added on {interface} with metric {metric}", True
     except Exception as e:        
         msg=f" ❌ Exception adding route for node {remote_node}: {e}"
