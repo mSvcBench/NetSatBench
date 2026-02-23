@@ -34,7 +34,6 @@ sys.path.append(str(Path(__file__).parent.parent))  # adjust as needed
 from NetSatBenchKit.process_one_shell import process_one_shell
 import src.XML_constellation.constellation_entity.ground_station as GS
 import src.XML_constellation.constellation_entity.satellite as SAT
-# import src.XML_constellation.constellation_entity.user as USER
 import re
 from typing import List, Dict, Optional
 import importlib
@@ -98,7 +97,7 @@ def read_ground_stations_xml(gs_xml_path: Path) -> List[GS.GroundStation]:
         GSs.append(gs)
     return GSs
 
-def read_users_xml(users_xml_path: Path) -> List[USER.user]:
+def read_users_xml(users_xml_path: Path) -> List[user]:
     """
     Parse StarPerf user XML (config/users/<Constellation>.xml).
     Returns list of (lat_deg, lon_deg, alt_m, name).

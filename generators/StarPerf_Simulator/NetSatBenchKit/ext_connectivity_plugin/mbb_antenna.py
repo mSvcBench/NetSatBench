@@ -1,5 +1,9 @@
 # #!/usr/bin/env python3
+import sys
 import numpy as np
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))  # adjust as needed
 import retain_antenna as ra
 
 def mbb_antenna(OBJs, oi, data_ext_dict, data_ext_prev_dict, t, dT,
