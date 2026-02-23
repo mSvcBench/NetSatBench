@@ -92,16 +92,6 @@ def build_netem_opts(l):
             netem_opts[key] = val
     return netem_opts
 
-
-def derive_sysid_from_string(value: str) -> str:
-    """
-    Derive an 8-digit IS-IS system-id from an arbitrary string
-    using a cryptographic hash (deterministic, stable).
-    """
-    digest = hashlib.sha256(value.encode("utf-8")).digest()
-    num = int.from_bytes(digest[:4], byteorder="big")  # 32 bits
-    return f"{num % 10**8:08d}"
-
 def _parse_cidr(cidr: str):
     if not cidr:
         return None
