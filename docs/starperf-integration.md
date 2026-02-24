@@ -30,32 +30,18 @@ To enable the integration, follow these steps:
 ```bash
 cd generators
 
-# download and unzip the StarPerf_Simulator v2.0 release (no need to clone the entire repository)
-wget https://github.com/SpaceNetLab/StarPerf_Simulator/archive/refs/heads/release/v2.0.zip
-
-# unzip into StarPerf_Simulator-release-v2.0
-unzip v2.0.zip
-
-# copy the contents of the unzipped directory into StarPerf_Simulator to merge with the existing NetSatBench plugin files
-cp -r StarPerf_Simulator-release-v2.0/* StarPerf_Simulator
-
-# clean up the downloaded zip and unzipped directory
-rm v2.0.zip
-rm -rf StarPerf_Simulator-release-v2.0
-
-# optionally install dependencies into the NetSatBench Python environment if needed 
-# pip install -r StarPerf_Simulator/docs/third-party_libraries_list.txt
+# init StarPerf_Simulator v2.0 NetSatBench 
+git submodule update --init --recursive
 
 ```
 
-> **Note**: the StarPerf_Simulator we used is v2.0 at commit 009f2eb722c52b621a038904246be76ae906d993
 
 ## Workflow
 1. move to the `generators/StarPerf_Simulator` directory.
 2. Define the satellite constellation via XML StarPerf_Simulator input formats and store it in the `/config/XML_constellation/<constellation_name>.XML`
 3. Define users and ground station via XML file as per StarPerf_Simulator specifications and store them into `/config/users/<constellation_name>.XML` and `/config/ground_stations/<constellation_name>.XML` respectively.
-4. Run the `NetSatBenchKit/NetSatBenchGenerate.py` plugin to generate the extended H5 file containing the snapshots of the satellite system with delay, rate and loss values of all links. The file is stored in `/data/XML_constellation/<constellation_name>_ext.h5`
-5. Use the generated H5 file to create epoch files for NetSatBench emulation with `NetSatBenchKit/NetSatBenchExport.py`
+4. Run the `kits/NetSatBench/NetSatBenchGenerate.py` plugin to generate the extended H5 file containing the snapshots of the satellite system with delay, rate and loss values of all links. The file is stored in `/data/XML_constellation/<constellation_name>_ext.h5`
+5. Use the generated H5 file to create epoch files for NetSatBench emulation with `kits/NetSatBench/NetSatBenchExport.py`
 
 ## NetSatBenchGenerate
 
@@ -87,7 +73,7 @@ The existence of links for ground stations and users is managed by `NetSatBenchG
 
 The compuation of rate and loss values for any link is based on extended loss and rate plugins used by the `NetSatBenchGenerate.py` script. 
 
-The extended plugins are contained in the [ext_connectivity_plugin](generators/StarPerf_Simulator/NetSatBenchKit/ext_connectivity_plugin) directory. For their doculmentation, please refer to the docstrings in the dummy `pass_antenna, pass_loss, pass_rate` plugin files.
+The extended plugins are contained in the [ext_connectivity_plugin](generators/StarPerf_Simulator/kits/NetSatBench/ext_connectivity_plugin) directory. For their doculmentation, please refer to the docstrings in the dummy `pass_antenna, pass_loss, pass_rate` plugin files.
 
 Refer to the `NetSatBenchGenerate.py --help` script for more details on the input arguments and usage.
 
@@ -227,7 +213,7 @@ This XML file describes 6 users located in Rome (Italy), London (UK), Paris (Fra
 ### H5 Generation
 To generate the H5 file with the snapshots of the satellite system, run the following command:
 ```bash
-python3 NetSatBenchKit/NetSatBenchGenerate.py \
+python3 kits/NetSatBench/NetSatBenchGenerate.py \
 --constellation OneWeb \
 --dT 15 \
 --isl-connectivity-plugin positive_Grid \
@@ -260,9 +246,9 @@ The default rate values are set to 100 Mbit/s for ISL and ground station links, 
 To generate the `sat-config.json` and epoch files for NetSatBench emulation based on the generated H5 file, run the following command:
 
 ```bash
-python3 NetSatBenchKit/NetSatBenchExport.py \
+python3 kits/NetSatBench/NetSatBenchExport.py \
 --h5 data/XML_constellation/OneWeb_ext.h5 \
---sat-config-common NetSatBenchKit/sat-config-common.json
+--sat-config-common kits/NetSatBench/sat-config-common.json
 ```
 
 This will generate the `sat-config.json` file and epoch files for NetSatBench emulation based on the extended H5 file generated in the previous step for the OneWeb constellation. The generated files are in the root `examples/SatPerf/<constellation_name>`
