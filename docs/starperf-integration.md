@@ -28,8 +28,6 @@ To enable the integration, follow these steps:
 1. Download the StarPerf_Simulator v2.0 
 
 ```bash
-cd generators
-
 # init StarPerf_Simulator v2.0 NetSatBench 
 git submodule update --init --recursive
 
