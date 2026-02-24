@@ -345,10 +345,17 @@ def compute_streaming_stats(config_file: str,
                             ) -> None:
 
     # Load configurations
-    with open(config_file, "r", encoding="utf-8") as f:
-        config = json.load(f)
-    nodes = config.get("nodes", {})
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        nodes = config.get("nodes", {})
 
+    except FileNotFoundError:
+        log.error(f"❌ Configuration file not found: {config_file}")
+        raise
+    except json.JSONDecodeError as e:
+        log.error(f"❌ Invalid JSON in configuration file: {e}")
+        raise
 
     log.info("📁 Loading configuration from files...")
     log.info(f"🔎 Found {len(nodes)} nodes")
@@ -364,6 +371,16 @@ def compute_streaming_stats(config_file: str,
     if num_nodes == 0:
         raise ValueError("Configuration has 0 nodes.")
 
+    if not epoch_dir:
+        epoch_dir = config.get("epoch-config", "").get("epoch-dir", "")
+        if not epoch_dir:
+            log.error("⚠️ No epoch directory specified via CLI or config file; skipping epoch stats.")
+            return
+    if not file_pattern:
+        file_pattern = config.get("epoch-config", "").get("file-pattern", "")
+        if not file_pattern:
+            log.error("⚠️ No epoch file pattern specified via CLI or config file; skipping epoch stats.")
+            return
     epoch_files = list_epoch_files(epoch_dir, file_pattern)
     log.info(f"🔎 Found {len(epoch_files)} epoch files to process.")
     if not epoch_files:
@@ -655,13 +672,13 @@ def main() -> int:
     )
     parser.add_argument(
         "-e", "--epoch-dir",
-        default="epochs/",
-        help="Directory containing epoch JSON files.",
+        default="",
+        help="Directory containing epoch JSON files. Default is the dir included in the config file.",
     )
     parser.add_argument(
         "-p", "--file-pattern",
-        default="NetSatBench-epoch*.json",
-        help="Epoch filename glob pattern (inside epoch-dir).",
+        default="",
+        help="Epoch filename pattern. Default is the pattern included in the config file.",
     )
     parser.add_argument(
         "-w", "--worker-config",
