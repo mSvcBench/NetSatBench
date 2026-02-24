@@ -1,0 +1,56 @@
+<GSs>
+  <GS1>
+    <Latitude>37.913637773977435</Latitude>
+    <Longitude>13.362289636513902</Longitude>
+    <Description>Scanzano (Italy)</Description>
+    <Antenna_Count>8</Antenna_Count>
+    <Frequency>Ka</Frequency>
+    <Uplink_Ghz>2.1</Uplink_Ghz>
+    <Downlink_Ghz>1.3</Downlink_Ghz>
+  </GS1>
+  <GS2>
+    <Latitude>65.34334207699979</Latitude>
+    <Longitude>21.396971500146204</Longitude>
+    <Description>Öjebyn (Sweden)</Description>
+    <Antenna_Count>8</Antenna_Count>
+    <Frequency>Ka</Frequency>
+    <Uplink_Ghz>2.1</Uplink_Ghz>
+    <Downlink_Ghz>1.3</Downlink_Ghz>
+  </GS2>
+  <GS3>
+    <Latitude>42.48875195640523</Latitude>
+    <Longitude>23.408190420645646</Longitude>
+    <Description>Plana (Bulgaria)</Description>
+    <Antenna_Count>8</Antenna_Count>
+    <Frequency>Ka</Frequency>
+    <Uplink_Ghz>2.1</Uplink_Ghz>
+    <Downlink_Ghz>1.3</Downlink_Ghz>
+  </GS3>
+  <GS4>
+    <Latitude>78.24871490544288</Latitude>
+    <Longitude>15.490615165467464</Longitude>
+    <Description>Svalbard (Norway)</Description>
+    <Antenna_Count>8</Antenna_Count>
+    <Frequency>Ka</Frequency>
+    <Uplink_Ghz>2.1</Uplink_Ghz>
+    <Downlink_Ghz>1.3</Downlink_Ghz>
+  </GS4>
+  <GS5>
+    <Latitude>42.02097199610034</Latitude>
+    <Longitude>13.636767797109698</Longitude>
+    <Description>Fucino (Italy)</Description>
+    <Antenna_Count>8</Antenna_Count>
+    <Frequency>Ka</Frequency>
+    <Uplink_Ghz>2.1</Uplink_Ghz>
+    <Downlink_Ghz>1.3</Downlink_Ghz>
+  </GS5>
+    <GS6>
+    <Latitude>50.822530</Latitude>
+    <Longitude>-1.311470</Longitude>
+    <Description>Newport (UK)</Description>
+    <Antenna_Count>8</Antenna_Count>
+    <Frequency>Ka</Frequency>
+    <Uplink_Ghz>2.1</Uplink_Ghz>
+    <Downlink_Ghz>1.3</Downlink_Ghz>
+  </GS6>
+</GSs>

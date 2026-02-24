@@ -1,0 +1,19 @@
+<constellation>
+    <number_of_shells>2</number_of_shells>
+    <shell1>
+        <altitude>1015</altitude>
+        <orbit_cycle>6557</orbit_cycle>
+        <inclination>98.98</inclination>
+        <phase_shift>0</phase_shift>
+        <number_of_orbit>27</number_of_orbit>
+        <number_of_satellite_per_orbit>13</number_of_satellite_per_orbit>
+    </shell1>
+    <shell2>
+        <altitude>1325</altitude>
+        <orbit_cycle>6298</orbit_cycle>
+        <inclination>50.88</inclination>
+        <phase_shift>0</phase_shift>
+        <number_of_orbit>40</number_of_orbit>
+        <number_of_satellite_per_orbit>33</number_of_satellite_per_orbit>
+    </shell2>
+</constellation>

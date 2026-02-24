@@ -1,0 +1,8 @@
+# .gitignore
+*.h5
+*.pyc
+__pycache__/
+
+# UV virtual environment
+.venv/
+uv.lock

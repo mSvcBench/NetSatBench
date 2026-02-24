@@ -1,0 +1,4 @@
+[submodule "generators/StarPerf_Simulator"]
+	path = generators/StarPerf_Simulator
+	url = https://github.com/mSvcBench/StarPerf_Simulator.git
+	branch = NetSatBench
