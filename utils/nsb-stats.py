@@ -26,6 +26,28 @@ node_map: Dict[str, int] = {}                        # name -> index
 # ================================
 # HELPERS
 # ================================
+
+def setup_logging(logfile=None, log_level=logging.INFO) -> logging.Logger:
+    log = logging.getLogger()
+    log.setLevel(logging.INFO)
+
+    formatter = logging.Formatter(
+        "[%(levelname)s] %(message)s"
+    )
+
+    # Console handler (always active)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    log.addHandler(console_handler)
+
+    # Optional file handler
+    if logfile:
+        file_handler = logging.FileHandler(logfile, mode="a")
+        file_handler.setFormatter(formatter)
+        log.addHandler(file_handler)
+
+    return log
+
 def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
     if not epoch_dir or not file_pattern:
         return []
@@ -493,7 +515,7 @@ def compute_streaming_stats(config_file: str,
                 "components": components
             })
             log.warning(
-                f"❌ PARTITION at {ts_raw}: "
+                f"❌ PARTITION at {ts_raw}, file {path.split('/')[-1]}: "
                 f"{len(components)} components "
                 f"(largest={max(c['size'] for c in components)}/{num_nodes})"
                 # print each component dict separated by "----"
@@ -711,9 +733,14 @@ def main() -> int:
         default="INFO",
         help="Logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--log-file",
+        metavar="filename",
+        help="Write log to file",
+    )
 
     args = parser.parse_args()
-    log.setLevel(args.log_level.upper())
+    log = setup_logging(args.log_file, log_level=args.log_level.upper())
     
     compute_streaming_stats(
         config_file=args.config,
