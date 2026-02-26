@@ -27,62 +27,64 @@ def run_cmd(cmd: List[str], dry_run: bool) -> None:
         raise RuntimeError(res.stderr.strip() or f"Command failed: {' '.join(cmd)}")
 
 
-def send_handover_request(grd_addr: str, port: int,  usr_prefix: str, callback_port: int, new_sat: str) -> None:
+def send_handover_request(grd_ipv6: str, port: int,  user_ipv6: str, callback_port: int, new_sat_ipv6: str) -> None:
     txid = str(int(time.time() * 1000)) # simple nonce txid for correlation (current timestamp in ms)
     msg: Dict[str, Any] = {
         "type": "handover_request",
-        "user_id": os.environ["HOSTNAME"],
-        "usr_prefix": usr_prefix,
-        "new_sat": new_sat,
+        "user_id": os.environ["NODE_NAME"],
+        "user_ipv6": user_ipv6,
+        "new_sat_ipv6": new_sat_ipv6,
         "callback_port": callback_port,
         "txid": txid
     }
     data = json.dumps(msg).encode("utf-8")
     sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-    sock.sendto(data, (grd_addr, port))
+    sock.sendto(data, (grd_ipv6, port))
     sock.close()
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--grd", required=True, help="IPv6 address of the serving ground station or name resolvable via /etc/hosts (e.g., grd1 or 2001:db8:101::1)")
+    ap.add_argument("--grd-id", required=True, help="Name of ground station (e.g., grd1)")
     ap.add_argument("--grd-port", type=int, default=5005, help="UDP port on serving ground station (default: 5005)")
     ap.add_argument("--local-address", help='Local ipv6 address (Default: address found in /etc/hosts for the hostname)')
     ap.add_argument("--local-callback-port", type=int, default=5006, help='e.g., 5006 (callback port for handover_command)')
-    ap.add_argument("--new-sat", required=True, help='IPv6 of the new access satellite or name resolvable via /etc/hosts (e.g., sat2 or 2001:db8:100::3)')
+    ap.add_argument("--new-sat-id", required=True, help='Name of new sat (e.g., sat2)')
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)
 
     if args.local_address is None:
         # Derive local IPv6 address from the loopback interface
-        # cat /etc/hosts | grep $HOSTNAME
-        local_ipv6 = run_cmd_capture(["grep", os.environ["HOSTNAME"], "/etc/hosts"]).split()[0]
+        # cat /etc/hosts | grep $NODE_NAME
+        local_ipv6 = run_cmd_capture(["grep", os.environ["NODE_NAME"], "/etc/hosts"]).split()[0]
         logging.debug("Derived local IPv6 address from /etc/hosts: %s", local_ipv6)
     else:
         local_ipv6 = args.local_address
         logging.debug("Using provided local IPv6 address: %s", local_ipv6)
     
-    # resolve grd_address if it's a hostname
-    if not ":" in args.grd:  # crude check for hostname vs IPv6
+    grd_ipv6 = args.grd_id
+    # resolve grd_ipv6 if it's a hostname
+    if not ":" in args.grd_id:  # crude check for hostname vs IPv6
         try:
-            grd_addr = run_cmd_capture(["grep", args.grd, "/etc/hosts"]).split()[0]
-            logging.debug("Resolved ground station address %s to %s", args.grd, grd_addr)
+            grd_ipv6 = run_cmd_capture(["grep", args.grd_id, "/etc/hosts"]).split()[0]
+            logging.debug("Resolved ground station IPv6 address %s to %s", args.grd_id, grd_ipv6)
         except Exception as e:
-            logging.error(f"Failed to resolve ground station address {args.grd}: {e}")
+            logging.error(f"Failed to resolve ground station IPv6 address {args.grd_id}: {e}")
             sys.exit(1)
     
-    # resolve new_sat if it's a hostname
-    if not ":" in args.new_sat:  # crude check for hostname vs IPv6
+    new_sat_ipv6 = args.new_sat_id
+    # resolve new_sat_ipv6 if it's a hostname
+    if not ":" in args.new_sat_id:  # crude check for hostname vs IPv6
         try:
-            new_sat = run_cmd_capture(["grep", args.new_sat, "/etc/hosts"]).split()[0]
-            logging.debug("Resolved new satellite address %s to %s", args.new_sat, new_sat)
+            new_sat_ipv6 = run_cmd_capture(["grep", args.new_sat_id, "/etc/hosts"]).split()[0]
+            logging.debug("Resolved new satellite IPv6 address %s to %s", args.new_sat_id, new_sat_ipv6)
         except Exception as e:
-            logging.error(f"Failed to resolve new satellite address {args.new_sat}: {e}")
+            logging.error(f"Failed to resolve new satellite IPv6 address {args.new_sat_id}: {e}")
             sys.exit(1)
             
     try:
-        send_handover_request(grd_addr=grd_addr, port=args.grd_port, usr_prefix=local_ipv6, callback_port=args.local_callback_port, new_sat=new_sat)
-        logging.info(f"✉️ Handover request sent to ground station {args.grd} for new satellite {args.new_sat}")
+        send_handover_request(grd_ipv6=grd_ipv6, port=args.grd_port, user_ipv6=local_ipv6, callback_port=args.local_callback_port, new_sat_ipv6=new_sat_ipv6)
+        logging.info(f"✉️ Handover request sent to ground station {args.grd_id} for new satellite {args.new_sat_id}")
     except Exception as e:
         logging.error(f"❌ failed to send handover request: {e}")
         sys.exit(1)

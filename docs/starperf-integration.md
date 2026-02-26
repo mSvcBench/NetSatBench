@@ -232,11 +232,12 @@ python3 kits/NetSatBench/NetSatBenchGenerate.py \
 --include-ground-stations \
 --include-users \
 --minimum-elevation 25 \
+--duration 60 \
 --overwrite
 ```
-This command generates an H5 file with snapshots of the OneWeb constellation, including ground stations and users, with a timeslot interval of 15 seconds. 
+This command generates an H5 file with snapshots of the OneWeb constellation, including ground stations and users, with a timeslot interval of 15 seconds and a total duration of 60 seconds.
 The ISL connectivity is managed by the `positive_Grid` plugin (+Grid Inter-Satellite Link model), while the antenna limitations, rate and loss characteristics for links are managed by the `retain_antenna`, `pass_rate` and `pass_loss` plugins respectively. 
-In this case, all visible ground station and user links over minimum elevation angle are possible candidate, and the antenna plugin prefers to retain old links for limitation in the number of antennas (see also the `retain_antenna` plugin documentation in the pythoin file). 
+In this case, all visible ground station and user links over minimum elevation angle are possible candidate, and the antenna plugin prefers to retain old links for limitation in the number of antennas (see also theplugin documentation within the python files in `generators/StarPerf_Simulator/kits/NetSatBench/ext_connectivity_plugin`). 
 The pass_rate and pass_loss plugins are used to assign default rate and loss values to all links.
 The default rate values are set to 100 Mbit/s for ISL and ground station links, and 50 Mbit/s for user links, while the default loss values are set to 0% for all links. The minimum elevation angle for visibility is set to 25 degrees, and existing information in the output H5 file will be overwritten if they already exist.
 

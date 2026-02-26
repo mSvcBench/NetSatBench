@@ -17,6 +17,7 @@ COMMANDS = {
     "stats": "utils/nsb-stats.py",
     "exec": "utils/nsb-exec.py",
     "cp": "utils/nsb-cp.py",
+    "cptype": "utils/nsb-cptype.py",
     "unlink": "utils/nsb-unlink.py",
     "inspect": "utils/nsb-inspect.py",
     "status": "utils/nsb-status.py",

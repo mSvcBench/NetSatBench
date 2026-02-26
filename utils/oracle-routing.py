@@ -288,6 +288,7 @@ def compute_routes(
     out_epoch_dir: str,
     node_type_to_route: list,
     node_type_to_install: list,
+    node_type: list,
     drain_before_break_offset: int,
     link_creation_offset: int,
     ip_version: int,
@@ -298,16 +299,20 @@ def compute_routes(
     log.info("📁 Loading configuration from etcd...")
     nodes = get_prefix_data(etcd_client, "/config/nodes")
     log.info(f"🔎 Found {len(nodes)} nodes in configuration.")
+    log.info(f"     - Node type: {node_type}")
     log.info(f"     - Node type to route: {node_type_to_route}")
     log.info(f"     - Node type to install: {node_type_to_install}")
+
     
-    node_map: Dict[str, int] = {} # node_name -> index in adjacency matrix
+    node_map: Dict[str, int] = {} # node_name -> index in adjacency matrix 
     node_to_route: List[str] = []
     node_to_install: List[str] = []
 
     # Build node map and filter nodes to route/install based on type
     idx = 0
     for name, node_info in nodes.items():
+        if node_info.get("type") not in node_type and "any" not in node_type:
+            continue
         node_map[name] = idx
         idx += 1
         if node_info.get("type") in node_type_to_route or "any" in node_type_to_route:
@@ -453,8 +458,10 @@ def main() -> int:
     parser.add_argument("--file-pattern", help="Epoch filename pattern, takes precedence over Etcd.")
     parser.add_argument("--out-epoch-dir", help="Output dir for processed epochs with route injection.")
 
-    parser.add_argument("--node-type-to-route", default="any", help="Comma-separated node types to route to (default: any). Matches against node 'type' in config. Use 'any' to route to all nodes.")
-    parser.add_argument("--node-type-to-install", default="any", help="Comma-separated node types to install routes on (default: any). Matches against node 'type' in config. Use 'any' to install on all nodes.")
+    parser.add_argument("--node-type-to-route", default="", help="Comma-separated node types to route to (default: --node-type). Matches against node 'type' in config. Use 'any' to route to all nodes.")
+    parser.add_argument("--node-type-to-install", default="", help="Comma-separated node types to install routes on (default: --node-type). Matches against node 'type' in config. Use 'any' to install on all nodes.")
+    parser.add_argument("--node-type", default="any", help="Comma-separated node types to include in the Dijkstra graph (default: any). Matches against node 'type' in config. Use 'any' to install on all nodes.")
+    parser.add_argument("--node-type-no-forward", default="user", help="Comma-separated node types to treat as hosts not suporting IP forwarding (default: user). Matches against node 'type' in config.")
     parser.add_argument("--drain-before-break-offset", type=int, default=0, help="Seconds offset for drain-before-break epoch. If 0, no separate drain-before-break epoch is emitted.")
     parser.add_argument("--link-creation-offset", type=int, default=1, help="Seconds offset for route replacement after link creation. Default: 1 second after link creation.")
     parser.add_argument("--redundancy", action="store_true", help="Whether to compute secondary next hops for redundancy (default: False).")
@@ -479,6 +486,26 @@ def main() -> int:
         log.error(f"Details: {e}")
         return 2
 
+    
+    # node type checks
+    if args.node_type_to_route == "":
+            args.node_type_to_route = args.node_type
+    if args.node_type_to_install == "":
+        args.node_type_to_install = args.node_type
+    node_type_list = set(args.node_type.split(","))
+    node_type_to_route_list = set(args.node_type_to_route.split(","))
+    node_type_to_install_list = set(args.node_type_to_install.split(","))
+    
+    if "any" in node_type_list:
+        pass  # no filtering needed
+    else:
+        if not node_type_to_route_list.issubset(node_type_list):
+            log.error("❌ --node-type-to-route contains types not in global --node-type.")
+            return 5
+        if not node_type_to_install_list.issubset(node_type_list):
+            log.error("❌ --node-type-to-install contains types not in global --node-type.")
+            return 6
+    
     # epoch dir / pattern resolution
     epoch_dir = args.epoch_dir
     file_pattern = args.file_pattern
@@ -505,15 +532,17 @@ def main() -> int:
         else:
             log.error("❌ Please specify an empty output directory to proceed.")
             return 3
-
+        
+        
     try:
         compute_routes(
             etcd_client=etcd_client,
             epoch_dir=epoch_dir,
             file_pattern=file_pattern,
             out_epoch_dir=args.out_epoch_dir,
-            node_type_to_route=args.node_type_to_route.split(","),
-            node_type_to_install=args.node_type_to_install.split(","),
+            node_type_to_route=node_type_to_route_list,
+            node_type_to_install=node_type_to_install_list,
+            node_type=node_type_list,
             drain_before_break_offset=args.drain_before_break_offset,
             link_creation_offset=args.link_creation_offset,
             ip_version=args.ip_version,
