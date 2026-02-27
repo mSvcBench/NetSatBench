@@ -2,8 +2,9 @@
 import json
 import ipaddress
 import subprocess
-from time import time
-from typing import List
+import threading
+import time
+from typing import Dict, List, Tuple
 
 # ----------------------------
 #   HELPERS
@@ -14,7 +15,49 @@ def run_cmd_capture(cmd: List[str]) -> str:
     if res.returncode != 0:
         raise RuntimeError(res.stderr.strip() or f"Command failed: {' '.join(cmd)}")
     return res.stdout.strip()
-    
+
+def is_interface_up(interface: str) -> bool:
+    try:
+        return "UP" in run_cmd_capture(["ip", "link", "show", interface])
+    except Exception:
+        return False
+
+
+def resolve_peer_link_local(peer_ipv6: str, interface: str, attempts: int = 5, wait_s: float = 0.05) -> str:
+    def _lookup() -> str | None:
+        out = run_cmd_capture(["ip", "-6", "neigh", "show", "to", peer_ipv6, "dev", interface])
+        if out:
+            for token in out.split():
+                if token.lower().startswith("fe80:"):
+                    return token
+
+        out_dev = run_cmd_capture(["ip", "-6", "neigh", "show", "dev", interface])
+        for line in out_dev.splitlines():
+            if peer_ipv6 not in line:
+                continue
+            for token in line.split():
+                if token.lower().startswith("fe80:"):
+                    return token
+        return None
+
+    ll = _lookup()
+    if ll:
+        return ll
+
+    for _ in range(attempts):
+        subprocess.run(
+            ["ping", "-6", "-c", "1", "-W", "1", "-I", interface, peer_ipv6],
+            text=True,
+            capture_output=True,
+        )
+        ll = _lookup()
+        if ll:
+            return ll
+        time.sleep(wait_s)
+
+    return None
+
+
 # ----------------------------
 #   MAIN FUNCTIONS
 # ----------------------------
@@ -47,7 +90,7 @@ def link_add(etcd_client, node_name, interface) -> tuple[str, bool]:
         max_retries = 5
         up_flag = False
         while True:
-             if "UP" in run_cmd_capture(["ip", "link", "show", interface]):
+             if is_interface_up(interface):
                 up_flag = True
                 break
              time.sleep(0.1)
@@ -57,8 +100,14 @@ def link_add(etcd_client, node_name, interface) -> tuple[str, bool]:
         if not up_flag:
             msg=f" ❌ Configuration failed: Interface {interface} is not up."
             return msg, False
-        add_cmd = run_cmd_capture(["ip", "-6", "route", "replace", ip, "dev", interface, "metric", str(metric), "onlink"])
-        return f" ✅ Connected-only IPv6 route to {remote_node} added on {interface} with metric {metric}", True
+        ll_a = resolve_peer_link_local(ip, interface)
+        if not ll_a:
+            run_cmd_capture(["ip", "-6", "route", "replace", ip, "dev", interface, "metric", str(metric), "onlink"])
+            msg=f" ⚠️ Connected-only IPv6 route to {remote_node} added on {interface} with metric {metric}, no link-local address available."
+            return msg, True
+        else:
+            run_cmd_capture(["ip", "-6", "route", "replace", ip, "via", ll_a, "dev", interface, "metric", str(metric)])
+            return f" ✅ Connected-only IPv6 route to {remote_node} added on {interface} with metric {metric}", True
     except Exception as e:        
         msg=f" ❌ Exception adding route for node {remote_node}: {e}"
         return msg, False   

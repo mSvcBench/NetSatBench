@@ -1,8 +1,6 @@
 {
-  "time": "2024-06-01T12:00:30Z",
-  "links-add": [],
-  "links-update": [],
-  "links-del": [
+  "time": "2024-06-01T12:07:00Z",
+  "links-add": [
     {
       "endpoint1": "usr1",
       "endpoint2": "sat1",
@@ -11,5 +9,7 @@
       "delay": "1ms"
     }
   ],
+  "links-update": [],
+  "links-del": [],
   "run": {}
 }

@@ -28,19 +28,22 @@ def run_cmd(cmd: List[str], dry_run: bool) -> None:
 
 
 def send_handover_request(grd_ipv6: str, port: int,  user_ipv6: str, callback_port: int, new_sat_ipv6: str) -> None:
-    txid = str(int(time.time() * 1000)) # simple nonce txid for correlation (current timestamp in ms)
-    msg: Dict[str, Any] = {
-        "type": "handover_request",
-        "user_id": os.environ["NODE_NAME"],
-        "user_ipv6": user_ipv6,
-        "new_sat_ipv6": new_sat_ipv6,
-        "callback_port": callback_port,
-        "txid": txid
-    }
-    data = json.dumps(msg).encode("utf-8")
-    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-    sock.sendto(data, (grd_ipv6, port))
-    sock.close()
+    try:
+        txid = str(int(time.time() * 1000)) # simple nonce txid for correlation (current timestamp in ms)
+        msg: Dict[str, Any] = {
+            "type": "handover_request",
+            "user_id": os.environ["NODE_NAME"],
+            "user_ipv6": user_ipv6,
+            "new_sat_ipv6": new_sat_ipv6,
+            "callback_port": callback_port,
+            "txid": txid
+        }
+        data = json.dumps(msg).encode("utf-8")
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        sock.sendto(data, (grd_ipv6, port))
+        sock.close()
+    except Exception as e:
+        raise                    
 
 
 def main() -> None:

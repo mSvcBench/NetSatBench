@@ -26,18 +26,20 @@ def run_cmd(cmd: List[str]) -> None:
 
 def send_registration_request(grd_ipv6: str, grd_port: int,  usr_ipv6: str, callback_port: int, init_sat_ipv6: str) -> None:
     # add route to ground station via initial satellite (to ensure reachability for the registration request)
-    run_cmd(["ip", "-6", "route", "replace", grd_ipv6, "via", init_sat_ipv6])
-    msg: Dict[str, Any] = {
-        "type": "registration_request",
-        "user_id": os.environ["NODE_NAME"],
-        "user_ipv6": usr_ipv6,
-        "init_sat_ipv6": init_sat_ipv6,
-        "callback_port": callback_port
-    }
-    data = json.dumps(msg).encode("utf-8")
-    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-    sock.sendto(data, (grd_ipv6, grd_port))
-    sock.close()
+    try:
+        msg: Dict[str, Any] = {
+            "type": "registration_request",
+            "user_id": os.environ["NODE_NAME"],
+            "user_ipv6": usr_ipv6,
+            "init_sat_ipv6": init_sat_ipv6,
+            "callback_port": callback_port
+        }
+        data = json.dumps(msg).encode("utf-8")
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        sock.sendto(data, (grd_ipv6, grd_port))
+        sock.close()
+    except Exception as e:
+        raise
 
 
 def main() -> None:
@@ -79,6 +81,7 @@ def main() -> None:
             sys.exit(1)
 
     try:
+        run_cmd(["ip", "-6", "route", "replace", grd_ipv6, "via", init_sat_ipv6])
         send_registration_request(grd_ipv6=grd_ipv6, grd_port=args.grd_port, usr_ipv6=local_ipv6, callback_port=args.local_callback_port, init_sat_ipv6=init_sat_ipv6)
         logging.info(f"✉️ Registration request sent to ground station {args.grd_id} for initial satellite {args.init_sat_id}")
     except Exception as e:

@@ -7,7 +7,9 @@
 
 ## Table of Contents
 - [Command execution](#exec-cli)
+- [Command execution by type](#command-execution-by-type)
 - [File Copy](#file-copy)
+- [File Copy by Type](#file-copy-by-type)
 - [Remove all links](#remove-all-links)
 - [Dump System Status](#dump-system-status)
 - [Inspect Node Status](#inspect-node-status)
@@ -37,6 +39,32 @@ python3 nsb.py exec --help
 - To run a bash shell on a satellite container named `usr1`:
 ```bash
 python3 nsb.py exec -it usr1 bash
+```
+
+---
+
+## ▶️ Command execution by type
+`utils/nsb-exectype.py` or `nsb.py exectype`
+
+This utility executes the same command on all nodes matching a given node type (for example `satellite`, `gateway`, `user`) by delegating each execution to `nsb-exec`.
+
+Unlike `nsb.py exec`, interactive mode is not supported (`-it` / `--interactive`).
+
+### Usage
+
+```bash
+python3 nsb.py exectype [OPTIONS] <node-type> <command> [args...]
+```
+
+### Example
+
+```bash
+python3 nsb.py exectype satellite ip address show
+```
+
+Full command-line help is available via:
+```bash
+python3 nsb.py exectype --help
 ```
 
 ---
@@ -89,6 +117,38 @@ This transfers `config.json` from the local host into the container filesystem o
 
 ```bash
 python3 nsb.py cp -r ./configs sat1:/opt/app/configs
+```
+---
+
+## 💾 File Copy by Type
+
+`utils/nsb-cptype.py` or `nsb.py cptype`
+
+This utility copies files between the local host and all nodes of a given type (for example `satellite`, `gateway`, `user`) by delegating each per-node copy to `nsb-cp`.
+
+The syntax is similar to `nsb.py cp`, but uses:
+
+```text
+<node-type>:<path>
+```
+
+When copying from nodes to the host, output files are prefixed with the node name (for example `sat1_app.log`).
+
+### Usage
+
+```bash
+python3 nsb.py cptype [OPTIONS] <src> <dest>
+```
+
+### Example
+
+```bash
+python3 nsb.py cptype ./config.json satellite:/app/config.json
+```
+
+Full command-line help is available via:
+```bash
+python3 nsb.py cptype --help
 ```
 ---
 
