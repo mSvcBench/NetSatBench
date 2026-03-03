@@ -118,6 +118,7 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
         if "cidr-v6" not in l3_config:
             msg=f" ❌ Configuration failed: No CIDR v6 assigned to node."
             return msg, False
+        
         return f" ✅ IPv6 routing initialized for node {node_name}", True
     except Exception as e:
         msg=f" ❌ Exception triggering connected-only-v6 routing: {e}"
