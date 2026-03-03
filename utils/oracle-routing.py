@@ -38,6 +38,7 @@ from scipy.sparse.csgraph import dijkstra
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
+cross_type_penalty = 128  # used to prefer next hop of the same type
 
 # ==========================================
 # HELPERS
@@ -123,6 +124,7 @@ def pick_primary_secondary_next_hops(A_csr: csr_matrix, dist, src_idx: int, targ
 def compute_routes_single_epoch(
     epoch_data: dict,
     node_map: dict,
+    node_type: dict,
     A_lil: lil_matrix,
     node_to_route: list,
     node_to_install: list,
@@ -146,9 +148,10 @@ def compute_routes_single_epoch(
             j = node_map[dst]
             if i == j:
                 continue
+            w = cross_type_penalty if node_type.get(src) != node_type.get(dst) else 1
             if A_lil[i, j] == 0:
-                A_lil[i, j] = 1
-                A_lil[j, i] = 1
+                A_lil[i, j] = w
+                A_lil[j, i] = w
 
     # Apply link-del
     for link_del in epoch_data.get("links-del", []):
@@ -166,10 +169,14 @@ def compute_routes_single_epoch(
 
     # Run Dijkstra (unweighted hop-count)
     A_csr: csr_matrix = A_lil.tocsr()
-    dist, _predecessors = dijkstra(A_csr, directed=False, unweighted=True, return_predecessors=True)
+    dist, _predecessors = dijkstra(A_csr, directed=False, unweighted=False, return_predecessors=True)
 
     # Build route commands for this epoch
     route_string: Dict[int, str] = {}   # src_idx -> cmd string
+
+    def append_route_cmd(src_idx: int, cmd: str) -> None:
+        current = route_string.get(src_idx, "")
+        route_string[src_idx] = f"{current}; {cmd}" if current else cmd
     
     for target_node in node_to_route:
         if target_node not in node_map:
@@ -207,9 +214,6 @@ def compute_routes_single_epoch(
                 log.warning(f"\t ⚠️ No path from {inv_node_map[src_idx]} to {target_node}, skipping.")
                 continue
 
-            if src_idx not in route_string:
-                route_string[src_idx] = "sleep 0.1"  # allow preceding interface setup
-
             def route_add(src_name: str, dst_name: str, nh_name: str, metric: int) -> None:
                 src_idx = node_map[src_name]
 
@@ -232,19 +236,24 @@ def compute_routes_single_epoch(
                 dev_name = f"vl_{nh_name}_1"
 
                 if ip_version == 6:
-                    # check next-hop onlink route exists
-                    onlink_route_str = f"ip -6 route replace {nh_ip} dev {dev_name} metric {metric} onlink"
-                    if onlink_route_str not in route_string[src_idx]:
-                        route_string[src_idx] = route_string.get(src_idx, "") + "; " + onlink_route_str
-                    if nh_name != dst_name:
-                        # If next hop is the target itself, we already added the onlink route above, so we can skip adding a host route to itself and just rely on the onlink route. This also avoids the issue of needing to specify a dev for a host route to itself.
-                        route_append_str = f"ip -6 route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric}"
-                        route_string[src_idx] = route_string.get(src_idx, "") + "; " + route_append_str
-                        return
-                    # return f"extra/routing/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
+                    # if dst_name == nh_name:
+                    #     onlink_route_str = f"ip -6 route replace {nh_ip} dev {dev_name} metric {metric} onlink"
+                    #     wait_neigh_str = f"/app/extra/routing/wait_neigh_resolved.sh {nh_ip} 2 {dev_name} 0.05"
+                    #     prefix_cmd = f"{wait_neigh_str}; {onlink_route_str}"
+                    #     current = route_string.get(src_idx, "")
+                    #     route_string[src_idx] = f"{prefix_cmd}; {current}" if current else prefix_cmd
+                    #     return 
+                    # else:
+                    #     # If next hop is the target itself, we already added the onlink route above, so we can skip adding a host route to itself and just rely on the onlink route. This also avoids the issue of needing to specify a dev for a host route to itself.
+                    #     route_append_str = f"ip -6 route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric}"
+                    #     append_route_cmd(src_idx, route_append_str)
+                    #     return
+                    route_append_str = f"extra/routing/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
+                    append_route_cmd(src_idx, route_append_str)
+                    return 
                 elif ip_version == 4:
                     route_append_str = f"ip route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric} onlink"
-                    route_string[src_idx] = route_string.get(src_idx, "") + "; " + route_append_str
+                    append_route_cmd(src_idx, route_append_str)
                     return
                 else:
                     raise ValueError(f"Unsupported IP version: {ip_version}")
@@ -288,7 +297,7 @@ def compute_routes(
     out_epoch_dir: str,
     node_type_to_route: list,
     node_type_to_install: list,
-    node_type: list,
+    node_type_to_process: list,
     drain_before_break_offset: int,
     link_creation_offset: int,
     ip_version: int,
@@ -299,21 +308,23 @@ def compute_routes(
     log.info("📁 Loading configuration from etcd...")
     nodes = get_prefix_data(etcd_client, "/config/nodes")
     log.info(f"🔎 Found {len(nodes)} nodes in configuration.")
-    log.info(f"     - Node type: {node_type}")
+    log.info(f"     - Node type: {node_type_to_process}")
     log.info(f"     - Node type to route: {node_type_to_route}")
     log.info(f"     - Node type to install: {node_type_to_install}")
 
     
-    node_map: Dict[str, int] = {} # node_name -> index in adjacency matrix 
+    node_map: Dict[str, int] = {} # node_name -> index in adjacency matrix
+    node_type: Dict[str, str] = {} # node_name -> node_type 
     node_to_route: List[str] = []
     node_to_install: List[str] = []
 
     # Build node map and filter nodes to route/install based on type
     idx = 0
     for name, node_info in nodes.items():
-        if node_info.get("type") not in node_type and "any" not in node_type:
+        if node_info.get("type") not in node_type_to_process and "any" not in node_type_to_process:
             continue
         node_map[name] = idx
+        node_type[name] = node_info.get("type", "unknown")
         idx += 1
         if node_info.get("type") in node_type_to_route or "any" in node_type_to_route:
             node_to_route.append(name)
@@ -364,6 +375,7 @@ def compute_routes(
             dbb_epoch_data = compute_routes_single_epoch(
                 epoch_data=epoch_data,
                 node_map=node_map,
+                node_type=node_type,
                 A_lil=A_lil,
                 node_to_route=node_to_route,
                 node_to_install=node_to_install,
@@ -394,6 +406,7 @@ def compute_routes(
         new_epoch_data = compute_routes_single_epoch(
             epoch_data=epoch_data,
             node_map=node_map,
+            node_type=node_type,
             A_lil=A_lil,
             node_to_route=node_to_route,
             node_to_install=node_to_install,
@@ -425,6 +438,7 @@ def compute_routes(
         dbb_epoch_data0 = compute_routes_single_epoch(
             epoch_data=epoch_data0,
             node_map=node_map,
+            node_type=node_type,
             A_lil=A_lil,
             node_to_route=node_to_route,
             node_to_install=node_to_install,
@@ -492,17 +506,17 @@ def main() -> int:
             args.node_type_to_route = args.node_type
     if args.node_type_to_install == "":
         args.node_type_to_install = args.node_type
-    node_type_list = set(args.node_type.split(","))
+    node_type_to_process = set(args.node_type.split(","))
     node_type_to_route_list = set(args.node_type_to_route.split(","))
     node_type_to_install_list = set(args.node_type_to_install.split(","))
     
-    if "any" in node_type_list:
+    if "any" in node_type_to_process:
         pass  # no filtering needed
     else:
-        if not node_type_to_route_list.issubset(node_type_list):
+        if not node_type_to_route_list.issubset(node_type_to_process):
             log.error("❌ --node-type-to-route contains types not in global --node-type.")
             return 5
-        if not node_type_to_install_list.issubset(node_type_list):
+        if not node_type_to_install_list.issubset(node_type_to_process):
             log.error("❌ --node-type-to-install contains types not in global --node-type.")
             return 6
     
@@ -542,7 +556,7 @@ def main() -> int:
             out_epoch_dir=args.out_epoch_dir,
             node_type_to_route=node_type_to_route_list,
             node_type_to_install=node_type_to_install_list,
-            node_type=node_type_list,
+            node_type_to_process=node_type_to_process,
             drain_before_break_offset=args.drain_before_break_offset,
             link_creation_offset=args.link_creation_offset,
             ip_version=args.ip_version,

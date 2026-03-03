@@ -36,7 +36,7 @@ def get_nodes_by_type(etcd_client, wanted_type: str) -> List[str]:
             node_cfg = json.loads(val.decode("utf-8"))
         except Exception:
             continue
-        if (node_cfg.get("type") or "").lower() != wanted:
+        if (node_cfg.get("type") or "").lower() != wanted and wanted != "any":
             continue
         key = meta.key.decode("utf-8")
         node_name = key.rsplit("/", 1)[-1]
@@ -99,8 +99,8 @@ def main() -> int:
     p.add_argument("-a", "--archive", action="store_true", help="Archive mode; copy directories recursively and preserve attributes (default: False)"   )
 
     p.add_argument("--log-level", default="INFO", help="Logging level (default: INFO)")
-    p.add_argument("src", help="Source path with optional TYPE: prefix (e.g., 'satellite:/data/logs' or '/local/path')")
-    p.add_argument("dest", help="Destination path with optional TYPE: prefix (e.g., 'user:/output' or '/local/path')")
+    p.add_argument("src", help="Source path with optional TYPE: prefix (e.g., 'satellite:/data/logs', any:/output or '/local/path')")
+    p.add_argument("dest", help="Destination path with optional TYPE: prefix (e.g., 'user:/output', any:/output or '/local/path')")
 
     args = p.parse_args()
     log.setLevel(args.log_level.upper())

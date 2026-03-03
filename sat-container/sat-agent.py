@@ -132,7 +132,6 @@ def process_initial_topology(etcd_client):
     log.info("🏗️  Processing Initial Topology ...")
     
     ## Process links add
-    tc_flag = l3_flags.get("enable-netem", True)
     for value, meta in etcd_client.get_prefix(KEY_LINKS_PREFIX):
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -159,8 +158,7 @@ def process_initial_topology(etcd_client):
             log.warning(f"⚠️  Skipping initial link {ep1}<->{ep2} due to missing VNI.")
             continue
         
-        if tc_flag:
-            netem_opts = build_netem_opts(l)
+        netem_opts = build_netem_opts(l)
 
         key_str = meta.key.decode()
         # Extract interface name from the key, it is the last part of the key after /
@@ -173,25 +171,26 @@ def process_initial_topology(etcd_client):
             remote_ip = ip1
             local_ip = ip2
         
-        create_vxlan_link(
-            vxlan_if=vxlan_if,
-            target_vni=vni,
-            remote_ip=remote_ip,
-            local_ip=local_ip,
-        ) 
-        if tc_flag:
-            if netem_opts:
-                apply_tc_settings(
-                    vxlan_if=vxlan_if,
-                    netem_opts=netem_opts
-                )
-            else:
-                log.info(f"🎛️  No netem options defined for {vxlan_if}, skipping tc")
+        threading.Thread(
+            target=create_vxlan_link,
+            kwargs={
+                "vxlan_if": vxlan_if,
+                "target_vni": vni,
+                "remote_ip": remote_ip,
+                "local_ip": local_ip,
+                "netem_opts": netem_opts,
+            },
+            daemon=True,
+        ).start()
     
     ## Execute any pending runtime commands
     val, _ = etcd_client.get(KEY_RUN)
     if val:
-        execute_commands(val.decode())
+        threading.Thread(
+            target=execute_commands,
+            args=(val.decode(),),
+            daemon=True
+        ).start()
     
     log.info("📝 Updating /etc/hosts with known nodes (IPv4 + IPv6, one line per hostname)...")
 
@@ -207,7 +206,7 @@ def process_initial_topology(etcd_client):
                 continue
             update_hosts_entry(node_name, ip_addr)
 
-    # Prefer IPv4 first, then IPv6 overwrites (or vice versa if you swap order).
+    # Prefer IPv6 first, then IPv4 overwrites (or vice versa if you swap order).
     _bootstrap_hosts_from_prefix("/config/etchosts6/")
     _bootstrap_hosts_from_prefix("/config/etchosts/")
     
@@ -226,12 +225,18 @@ def create_vxlan_link(
     vxlan_if,
     target_vni,
     remote_ip,
-    local_ip
+    local_ip,
+    netem_opts=None
     ):
 
     # ⛔ If already exists, do nothing
     if link_exists(vxlan_if):
         log.info(f"♻️ Link {vxlan_if} already exists, updating...")
+        if l3_flags.get("enable-netem", True):
+            if netem_opts:
+                apply_tc_settings(vxlan_if=vxlan_if, netem_opts=netem_opts)
+            else:
+                log.info(f" 🎛️  No netem options defined for {vxlan_if}, skipping tc")
         return
     
     log.info(f"🛜 Creating Link: {vxlan_if} (VNI: {target_vni})")
@@ -278,6 +283,12 @@ def create_vxlan_link(
             log.info(msg)
         else:
             log.error(msg)
+    
+    if l3_flags.get("enable-netem", True):
+        if netem_opts:
+            apply_tc_settings(vxlan_if=vxlan_if, netem_opts=netem_opts)
+        else:
+            log.info(f" 🎛️  No netem options defined for {vxlan_if}, skipping tc")
 
 def delete_vxlan_link(
     vxlan_if):
@@ -334,7 +345,6 @@ def apply_tc_settings(vxlan_if, netem_opts):
 
 def process_link_action(etcd_client, event):
     try:
-        tc_flag = l3_flags.get("enable-netem", True)
         key_str = event.key.decode()
         # Extract interface name, it is the last part of the key after /
         vxlan_if = key_str.split('/')[-1]
@@ -360,26 +370,27 @@ def process_link_action(etcd_client, event):
                 else:
                     remote_ip = ip1
                     local_ip = ip2
-                create_vxlan_link(
-                    vxlan_if=vxlan_if,
-                    target_vni=vni,
-                    remote_ip=remote_ip,
-                    local_ip=local_ip,
-                )
-                if tc_flag:
-                    netem_opts=build_netem_opts(l)
-                    if netem_opts:
-                        apply_tc_settings(
-                            vxlan_if=vxlan_if,
-                            netem_opts=netem_opts
-                    ) 
-                    else:
-                        log.info(f" 🎛️  No netem options defined for {vxlan_if}, skipping tc")
+                netem_opts = build_netem_opts(l)
+                threading.Thread(
+                    target=create_vxlan_link,
+                    kwargs={
+                        "vxlan_if": vxlan_if,
+                        "target_vni": vni,
+                        "remote_ip": remote_ip,
+                        "local_ip": local_ip,
+                        "netem_opts": netem_opts,
+                    },
+                    daemon=True,
+                ).start()
         
         ## Process DeleteEvent
         elif isinstance(event, etcd3.events.DeleteEvent):
                 # interface delete removes possible TC automatically 
-                delete_vxlan_link(vxlan_if)
+                threading.Thread(
+                    target=delete_vxlan_link,
+                    args=(vxlan_if,),
+                    daemon=True,
+                ).start()
     except: 
         log.error(" ❌ Failed to parse link action.")
         return
@@ -418,7 +429,11 @@ def watch_command_loop():
                 if not getattr(e, "value", None):
                     continue
                 try:
-                    execute_commands(e.value.decode())
+                    threading.Thread(
+                        target=execute_commands,
+                        args=(e.value.decode(),),
+                        daemon=True
+                    ).start()
                 except Exception:
                     # This ensures a bad value never kills the watch loop
                     log.exception("❌ Runtime command processing failed (but watcher continues).")           
