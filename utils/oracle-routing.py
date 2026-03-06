@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Tuple
 import os
 import re
 import json
+import shutil
 import argparse
 from glob import glob
 from datetime import datetime, timedelta
@@ -38,7 +39,7 @@ from scipy.sparse.csgraph import dijkstra
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
-cross_type_penalty = 128  # used to prefer next hop of the same type
+cross_type_penalty = 255  # used to prefer next hop of the same type
 
 # ==========================================
 # HELPERS
@@ -135,10 +136,31 @@ def compute_routes_single_epoch(
     inv_node_map: dict,
     ip_map: dict,
     ip_version: int,
-    redundancy: bool
+    redundancy: bool,
+    routing_metric: str,
 ) -> dict:
-    # Apply link-add only if not drain-before-break epoch
+    
+    def compute_link_weight(src: str, dst: str, link: dict) -> int:
+        # apply cross-type penalty
+        w = 0
+        if node_type.get(src) != node_type.get(dst):
+            w = cross_type_penalty
+        else:
+            w = 1
+        if routing_metric == "hops":
+            return w
+        elif routing_metric == "delay":
+            # Simulated delay-based weight (in practice, this would be derived from actual delay data)
+            delay = link.get("delay", 0)
+            return max(w + delay,255)
+        
+    no_links_added = 0
+    no_links_updated = 0
+    no_links_deleted = 0
+    
+    # Apply link-add and update only if not drain-before-break epoch
     if not drain_before_break:
+        # Apply link add
         for link_add in epoch_data.get("links-add", []):
             src = link_add.get("endpoint1")
             dst = link_add.get("endpoint2")
@@ -148,10 +170,28 @@ def compute_routes_single_epoch(
             j = node_map[dst]
             if i == j:
                 continue
-            w = cross_type_penalty if node_type.get(src) != node_type.get(dst) else 1
             if A_lil[i, j] == 0:
+                w = compute_link_weight(src, dst, link_add)
                 A_lil[i, j] = w
                 A_lil[j, i] = w
+                no_links_added += 1
+        
+        # Apply link update
+        if routing_metric != 'hops': 
+            # no need to consider link updates if using hop count as metric, since weight is always 1 or cross_type_penalty
+            for link_update in epoch_data.get("links-update", []):
+                src = link_update.get("endpoint1")
+                dst = link_update.get("endpoint2")
+                if src not in node_map or dst not in node_map:
+                    continue
+                i = node_map[src]
+                j = node_map[dst]
+                if i == j:
+                    continue
+                w = compute_link_weight(src, dst, link_update)
+                A_lil[i, j] = w
+                A_lil[j, i] = w
+                no_links_updated += 1
 
     # Apply link-del
     for link_del in epoch_data.get("links-del", []):
@@ -166,7 +206,12 @@ def compute_routes_single_epoch(
         if A_lil[i, j] != 0:
             A_lil[i, j] = 0
             A_lil[j, i] = 0
+            no_links_deleted += 1
 
+
+    if no_links_added == 0 and no_links_updated == 0 and no_links_deleted == 0:
+        return {}
+    
     # Run Dijkstra (unweighted hop-count)
     A_csr: csr_matrix = A_lil.tocsr()
     dist, _predecessors = dijkstra(A_csr, directed=False, unweighted=False, return_predecessors=True)
@@ -236,18 +281,6 @@ def compute_routes_single_epoch(
                 dev_name = f"vl_{nh_name}_1"
 
                 if ip_version == 6:
-                    # if dst_name == nh_name:
-                    #     onlink_route_str = f"ip -6 route replace {nh_ip} dev {dev_name} metric {metric} onlink"
-                    #     wait_neigh_str = f"/app/extra/routing/wait_neigh_resolved.sh {nh_ip} 2 {dev_name} 0.05"
-                    #     prefix_cmd = f"{wait_neigh_str}; {onlink_route_str}"
-                    #     current = route_string.get(src_idx, "")
-                    #     route_string[src_idx] = f"{prefix_cmd}; {current}" if current else prefix_cmd
-                    #     return 
-                    # else:
-                    #     # If next hop is the target itself, we already added the onlink route above, so we can skip adding a host route to itself and just rely on the onlink route. This also avoids the issue of needing to specify a dev for a host route to itself.
-                    #     route_append_str = f"ip -6 route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric}"
-                    #     append_route_cmd(src_idx, route_append_str)
-                    #     return
                     route_append_str = f"extra/routing/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
                     append_route_cmd(src_idx, route_append_str)
                     return 
@@ -302,7 +335,8 @@ def compute_routes(
     link_creation_offset: int,
     ip_version: int,
     etcd_etchosts_prefix: str,
-    redundancy: bool
+    redundancy: bool,
+    routing_metric: str,
 ) -> None:
     # Load config and build node map (same as original)
     log.info("📁 Loading configuration from etcd...")
@@ -387,6 +421,7 @@ def compute_routes(
                 ip_map=ip_map,
                 ip_version=ip_version,
                 redundancy=redundancy,
+                routing_metric=routing_metric,
             )
             if dbb_epoch_data.get("run", {}) != {}:
                 file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
@@ -399,8 +434,7 @@ def compute_routes(
         file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
         file_counter += 1
         out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
-        with open(out_epoch_path, "w", encoding="utf-8") as f_out:
-            json.dump(epoch_data, f_out, indent=2)
+        shutil.copyfile(path, out_epoch_path)
 
         # 3) Add routes to original epoch (shifted earlier by link_creation_offset)
         new_epoch_data = compute_routes_single_epoch(
@@ -418,13 +452,14 @@ def compute_routes(
             ip_map=ip_map,
             ip_version=ip_version,
             redundancy = redundancy,
+            routing_metric=routing_metric,
         )
-
-        file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
-        file_counter += 1
-        out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
-        with open(out_epoch_path, "w", encoding="utf-8") as f_out:
-            json.dump(new_epoch_data, f_out, indent=2)
+        if new_epoch_data.get("run", {}) != {}:
+            file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
+            file_counter += 1
+            out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
+            with open(out_epoch_path, "w", encoding="utf-8") as f_out:
+                json.dump(new_epoch_data, f_out, indent=2)
 
         num_epochs += 1
         if num_epochs % 10 == 0:
@@ -450,6 +485,7 @@ def compute_routes(
             ip_map=ip_map,
             ip_version=ip_version,
             redundancy = redundancy,
+            routing_metric=routing_metric,
         )
         file_path0 = unnumbered_file_pattern.replace("??????", "0")
         out_epoch_path0 = os.path.join(out_epoch_dir, os.path.basename(file_path0))
@@ -480,6 +516,7 @@ def main() -> int:
     parser.add_argument("--link-creation-offset", type=int, default=1, help="Seconds offset for route replacement after link creation. Default: 1 second after link creation.")
     parser.add_argument("--redundancy", action="store_true", help="Whether to compute secondary next hops for redundancy (default: False).")
     parser.add_argument("--ip-version", type=int, choices=[4, 6], default=4, help="Generate IPv4 or IPv6 route commands. Default: 4 (IPv4).")
+    parser.add_argument("--routing-metrics", choices=["hops","delay"], default="hops", help="Whether to use hop count or delay as routing metric (default: hops)")
     
     parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
 
@@ -562,6 +599,7 @@ def main() -> int:
             ip_version=args.ip_version,
             etcd_etchosts_prefix="/config/etchosts/" if args.ip_version == 4 else "/config/etchosts6/",
             redundancy=args.redundancy if args.drain_before_break_offset == 0 else True,  # redundancy needed with drain-before-break
+            routing_metric=args.routing_metrics if args.routing_metrics else "hops",
         )
     except Exception as e:
         log.error(f"❌ Error during route computation: {e}")

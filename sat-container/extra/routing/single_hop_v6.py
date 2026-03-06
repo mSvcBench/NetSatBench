@@ -45,7 +45,7 @@ def wait_for_link_local_resolution(interface: str, retries: int = 15, delay_s: f
         ll_addr = get_resolved_link_local(interface)
         if ll_addr is not None:
             return ll_addr
-
+        time.sleep(delay_s)
         # Trigger neighbor activity on-link without relying on a global unicast target.
         print(f" ⏳ Waiting for link-local address resolution on {interface}...attempt {_retry_attempt+1}/{retries}")
         subprocess.run(
@@ -54,7 +54,6 @@ def wait_for_link_local_resolution(interface: str, retries: int = 15, delay_s: f
             text=True,
             check=False,
         )
-        time.sleep(delay_s)
     return None
 
 def _neighbor_keepalive_loop(interface: str, target_ip: str, stop_event: threading.Event) -> None:
