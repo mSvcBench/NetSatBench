@@ -152,13 +152,13 @@ python3 nsb.py cptype --help
 ```
 ---
 
-## ✂️ Remove all links
-`utils/nsb-unlink.py` or `nsb.py unlink`
-Remove all links among nodes of the satellite system by deleting all link entries from Etcd under the `/config/links` prefix.Can be useful to reset the satellite system to a clean state before starting a new emulation run (nsb-run), without the need to redeploy containers or restart the control script.
+## ✂️ Reset Links and Run Configurations
+`utils/nsb-reset.py` or `nsb.py reset`
+Remove all links and run configurations of the satellite system.Can be useful to reset the satellite system to a clean state before starting a new emulation run (nsb-run), without the need to redeploy containers or restart the control script.
 
 ### Usage
 ```bash
-python3 nsb.py unlink
+python3 nsb.py reset
 ```
 ---
 

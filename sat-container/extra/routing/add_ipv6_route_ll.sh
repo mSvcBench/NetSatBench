@@ -30,7 +30,7 @@ if ! ip link show "$IF" >/dev/null 2>&1; then
     exit 1
 fi
 
-PROBE_TRIES=15
+PROBE_TRIES=30
 PROBE_SLEEP_SEC=0.02
 
 # echo "Discovering link-local neighbor on $IF ..."
@@ -56,7 +56,7 @@ if [ -z "$NHLL" ]; then
 fi
 
 if [ -z "$NHLL" ]; then
-    echo "No link-local neighbor discovered on $IF"
+    echo "No link-local neighbor discovered on $IF, cannot add route to $DST"
     exit 1
 fi
 

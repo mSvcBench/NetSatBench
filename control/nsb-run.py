@@ -383,7 +383,7 @@ def process_epoch_from_queue(json_path: str) -> None:
     log.info(f"✅ [{os.path.basename(json_path)}] Epoch applied successfully.")
 
 
-def process_epoch_from_dir(json_path: str, queue_path: str, fixed_wait: int = -1) -> None:
+def process_epoch_from_file(json_path: str, queue_path: str, fixed_wait: int = -1) -> None:
     """
     Reads an epoch file from epoch_dir, waits according to epoch time, then enqueues it
     into epoch-queue using atomic publish.
@@ -416,6 +416,7 @@ def run_all_epochs(
     queue_path: str,
     fixed_wait: int = -1,
     loop_delay: Optional[int] = None,
+    resume: bool = False,
 ) -> int:
     global TIME_OFFSET
 
@@ -423,11 +424,25 @@ def run_all_epochs(
     if not files:
         log.warning(f"⚠️ No epoch files found in {os.path.join(epoch_dir, file_pattern)}")
         return 1
-
     log.info(f"🚀 Starting emulation with {len(files)} epochs found.")
+    
+    if resume:
+        log.info("🔄 Resume emulation from state in Etcd...")
+        cfg_val, _ = etcd_client.get(f"/config/epoch-config")
+        cfg = json.loads(cfg_val.decode())
+        if "epoch-file" in cfg:
+            last_epoch = os.path.join(epoch_dir, cfg["epoch-file"])
+            log.info(f"🔍 Last applied epoch according to Etcd: {last_epoch}")
+            if last_epoch in files:
+                idx = files.index(last_epoch)
+                files = files[idx:]  # resume from last applied epoch
+                log.info(f"✅ Resuming emulation from epoch {last_epoch} (index {idx})")
+            else:
+                log.warning(f"⚠️ Last applied epoch {last_epoch} not found in current epoch list. Restarting from the beginning.")
+                exit(1)
     while True:
         for f in files:
-            process_epoch_from_dir(json_path=f, queue_path=queue_path, fixed_wait=fixed_wait)
+            process_epoch_from_file(json_path=f, queue_path=queue_path, fixed_wait=fixed_wait)
 
         if loop_delay is not None:
             log.info(f"🔄 Looping emulation after {loop_delay} seconds...")
@@ -497,6 +512,11 @@ def main() -> int:
         help="Enable interactive mode: only watch epoch-queue for new epochs. No epoch directory scanning.",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the emulation process.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (default: INFO)",
@@ -507,6 +527,7 @@ def main() -> int:
         type=int,
         help="Number of worker threads for per-epoch Etcd operations (default: 4).",
     )
+
 
     args = parser.parse_args()
     log.setLevel(args.log_level.upper())
@@ -559,6 +580,7 @@ def main() -> int:
                 queue_path=epoch_queue_dir,
                 fixed_wait=args.fixed_wait,
                 loop_delay=args.loop_delay,
+                resume=args.resume,
             )
     finally:
         queue_observer.stop()

@@ -17,7 +17,7 @@ log = logging.getLogger("nsb-unlink")
 def main() -> int:
     p = argparse.ArgumentParser(
         prog="nsb-unlink",
-        description="Remove all links among nodes of the satellite system.",
+        description="Remove all links among nodes of the satellite system and clean run.",
     )
 
     # Etcd
@@ -51,7 +51,8 @@ def main() -> int:
         return 1
 
     etcd.delete_prefix("/config/links/")  # clean up any stale locks from previous runs
-    log.info("✂️ Removed all links of the satellite system")
+    etcd.delete_prefix("/config/run/")  # clean up any stale locks from previous runs
+    log.info("✂️ Removed all links and run configurations of the satellite system")
 
      # =========================
 

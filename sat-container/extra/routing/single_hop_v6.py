@@ -106,6 +106,24 @@ def stop_neighbor_keepalive(interface: str) -> None:
     if t is not None and t.is_alive():
         t.join(timeout=0.5)
 
+def refresh_hosts_ipv6_cache() -> None:
+    global hosts_ipv6_cache
+    parsed: Dict[str, str] = {}
+    with open("/etc/hosts", "r", encoding="utf-8", errors="ignore") as hosts_file:
+        for raw_line in hosts_file:
+            line = raw_line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            fields = line.split()
+            if len(fields) < 2:
+                continue
+            ip = fields[0]
+            if ":" not in ip:
+                continue
+            for alias in fields[1:]:
+                parsed[alias] = ip
+    hosts_ipv6_cache = parsed
+
 # ----------------------------
 #   MAIN FUNCTIONS
 # ----------------------------
@@ -117,7 +135,7 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
         if "cidr-v6" not in l3_config:
             msg=f" ❌ Configuration failed: No CIDR v6 assigned to node."
             return msg, False
-        
+        refresh_hosts_ipv6_cache()
         return f" ✅ IPv6 routing initialized for node {node_name}", True
     except Exception as e:
         msg=f" ❌ Exception triggering connected-only-v6 routing: {e}"
@@ -130,7 +148,18 @@ def link_add(etcd_client, node_name, interface) -> tuple[str, bool]:
     try:
         # retrieve remote node name from interface name (assumes format vl_<name_remote>_<antenna_id>)
         remote_node = interface.split('_')[1]
-        ip = run_cmd_capture(["grep", remote_node, "/etc/hosts"]).split()[0]
+        ip = hosts_ipv6_cache.get(remote_node)
+        if ip is None:
+            # 3 attempts to repopulate hosts cache in case of recent changes (e.g., due to dynamic DNS updates or recent node additions)
+            for _ in range(3):
+                refresh_hosts_ipv6_cache()
+                ip = hosts_ipv6_cache.get(remote_node)
+                if ip is not None:
+                    break
+                time.sleep(1)  # brief pause before refresh to allow for any pending updates to /etc/hosts
+        if ip is None:
+            msg=f" ❌ Configuration failed: No IPv6 address found for node {remote_node} in /etc/hosts."
+            return msg, False
         if not ipaddress.ip_address(ip).version == 6:
             msg=f" ❌ Configuration failed: IP address {ip} for node {remote_node} is not IPv6."
             return msg, False

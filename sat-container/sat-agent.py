@@ -611,23 +611,6 @@ def main():
     l3_flags = my_config.get("L3-config", {})
     
     # Bootstrapping
-
-
-    # L3 Routing Init
-    routing_flags = l3_flags.get("enable-routing", False)
-    if routing_flags:
-        routing_mod_name = l3_flags.get("routing-module", "extra.routing.isis")
-        routing = __import__(routing_mod_name, fromlist=[''])
-        try:
-            log.info(f"🌐 Initializing L3 Routing using module: {routing_mod_name} ...")
-            msg, success = routing.init(etcd_client, node_name)
-            if success:
-                log.info(msg)
-            else:
-                log.error(msg)
-        except Exception as e:
-            log.error(f"❌ Failed to initialize L3 routing: {e}")
-            routing = None
     
     # Publish node IPs for /etc/hosts usage
     l3_cfg = my_config.get("L3-config", {})
@@ -687,6 +670,22 @@ def main():
     while True:
         if register_my_underlay_ip(etcd_client): break
         time.sleep(2)
+
+    # L3 Routing Init
+    routing_flags = l3_flags.get("enable-routing", False)
+    if routing_flags:
+        routing_mod_name = l3_flags.get("routing-module", "extra.routing.isis")
+        routing = __import__(routing_mod_name, fromlist=[''])
+        try:
+            log.info(f"🌐 Initializing L3 Routing using module: {routing_mod_name} ...")
+            msg, success = routing.init(etcd_client, node_name)
+            if success:
+                log.info(msg)
+            else:
+                log.error(msg)
+        except Exception as e:
+            log.error(f"❌ Failed to initialize L3 routing: {e}")
+            routing = None
 
     while True: time.sleep(1)
 

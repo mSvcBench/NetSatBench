@@ -19,7 +19,7 @@ COMMANDS = {
     "exectype": "utils/nsb-exectype.py",
     "cp": "utils/nsb-cp.py",
     "cptype": "utils/nsb-cptype.py",
-    "unlink": "utils/nsb-unlink.py",
+    "reset": "utils/nsb-reset.py",
     "inspect": "utils/nsb-inspect.py",
     "status": "utils/nsb-status.py",
 }

@@ -385,7 +385,6 @@ def handle_registration_request() -> None:
                     f"⚠️ No route with link-local next-hop for {init_sat_ipv6} before handover request timeout window."
                 )
             ip_cmd = build_srv6_route_replace(grd_ipv6, init_sat_ipv6, init_dev)
-            print(f"Running command to add srv6 route for registration: {' '.join(ip_cmd)}")
             run_cmd(ip_cmd)
             send_registration_request_udp(
                 grd_ipv6=grd_ipv6,
@@ -463,13 +462,13 @@ def watch_link_actions_loop (etcd_client) -> None:
                     if link_dev not in links_db:
                         remote_endpoint = l.get("endpoint1") if l.get("endpoint2") == node_name else l.get("endpoint2")
                         remote_endpoint_ipv6 = resolve_ipv6_from_hosts(remote_endpoint) if remote_endpoint else ""
-                        logging.info(f"➕ Detected new link {link_dev} with data {l}")
+                        logging.info(f"➕ Detected new link dev {link_dev}")
                         update_link_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", remote_endpoint_ipv6=remote_endpoint_ipv6)
                     elif links_db[link_dev].get("status") == "available":
-                            logging.info(f"🔄 Detected update for existing link {link_dev}")
+                            logging.info(f"🔄 Detected update for existing link dev {link_dev}")
                             update_link_db(link_dev=link_dev, etcd_link_data=l, last_updated=time.time(), status="available")
                     elif links_db[link_dev].get("status") == "unavailable":
-                            logging.info(f"🔁 Detected re-appearance of previously link {link_dev}, updating status to available")
+                            logging.info(f"🔁 Detected re-appearance of previously link dev {link_dev}, updating status to available")
                             update_link_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available")
                     if status == "not_registered":
                         handle_registration_request()
@@ -477,6 +476,7 @@ def watch_link_actions_loop (etcd_client) -> None:
                 elif isinstance(event, etcd3.events.DeleteEvent):
                     # update link_db
                     deleted_dev = event.key.decode().split("/")[-1]
+                    logging.info(f"➖ Detected deletion of link dev {deleted_dev}")
                     last_duration = time.time() - links_db.get(deleted_dev, {}).get("last_created", time.time())
                     update_link_db(link_dev=deleted_dev, last_updated=time.time(), status="unavailable", last_duration=last_duration)
                     if deleted_dev == current_dev:

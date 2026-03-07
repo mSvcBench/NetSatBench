@@ -83,6 +83,28 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
 def is_ipv6(addr: str) -> bool:
     return ":" in addr
 
+def parse_epoch_time(epoch_time: str) -> datetime:
+    return datetime.fromisoformat(epoch_time.replace("Z", "+00:00"))
+
+def join_route_commands_with_sleep(
+    commands: List[str],
+    max_routes_per_epoch: int,
+    sleep_seconds: int,
+) -> str:
+    if not commands:
+        return ""
+    if max_routes_per_epoch <= 0 or sleep_seconds <= 0:
+        return "; ".join(commands)
+
+    output_cmds: List[str] = []
+    for idx, cmd in enumerate(commands):
+        output_cmds.append(cmd)
+        reached_batch_end = (idx + 1) % max_routes_per_epoch == 0
+        is_last_cmd = idx == len(commands) - 1
+        if reached_batch_end and not is_last_cmd:
+            output_cmds.append(f"sleep {sleep_seconds}")
+    return "; ".join(output_cmds)
+
 # ==========================================
 # ROUTE COMPUTATION LOGIC
 # ==========================================
@@ -138,6 +160,8 @@ def compute_routes_single_epoch(
     ip_version: int,
     redundancy: bool,
     routing_metric: str,
+    max_routes_per_epoch: int,
+    sleep_seconds: int,
 ) -> dict:
     
     def compute_link_weight(src: str, dst: str, link: dict) -> int:
@@ -217,11 +241,11 @@ def compute_routes_single_epoch(
     dist, _predecessors = dijkstra(A_csr, directed=False, unweighted=False, return_predecessors=True)
 
     # Build route commands for this epoch
-    route_string: Dict[int, str] = {}   # src_idx -> cmd string
+    route_commands: Dict[str, List[str]] = {}   # src_name -> list of cmd strings
 
     def append_route_cmd(src_idx: int, cmd: str) -> None:
-        current = route_string.get(src_idx, "")
-        route_string[src_idx] = f"{current}; {cmd}" if current else cmd
+        src_name = inv_node_map[src_idx]
+        route_commands.setdefault(src_name, []).append(cmd)
     
     for target_node in node_to_route:
         if target_node not in node_map:
@@ -307,17 +331,18 @@ def compute_routes_single_epoch(
     new_epoch_data["time"] = epoch_data.get("time", "")
 
     try:
-        t = datetime.fromisoformat(new_epoch_data["time"].replace("Z", "+00:00"))
+        t = parse_epoch_time(new_epoch_data["time"])
         t_new = t - timedelta(seconds=offset_seconds)
         new_epoch_data["time"] = t_new.strftime("%Y-%m-%dT%H:%M:%SZ")
         new_epoch_data["run"] = {}
-
-        for src_idx, routes in route_string.items():
-            src_name = inv_node_map[src_idx]
-            run = new_epoch_data.get("run", {}).get(src_name, [])
-            run.append(routes)
-            new_epoch_data["run"][src_name] = run
-
+        for src_name, commands in route_commands.items():
+            combined_cmd = join_route_commands_with_sleep(
+                commands=commands,
+                max_routes_per_epoch=max_routes_per_epoch,
+                sleep_seconds=sleep_seconds,
+            )
+            if combined_cmd:
+                new_epoch_data["run"][src_name] = [combined_cmd]
     except ValueError as ve:
         log.warning(f"\t ⚠️ Error parsing time '{new_epoch_data['time']}': {ve}")
 
@@ -337,6 +362,8 @@ def compute_routes(
     etcd_etchosts_prefix: str,
     redundancy: bool,
     routing_metric: str,
+    max_routes_per_epoch: int,
+    route_batch_sleep_seconds: int,
 ) -> None:
     # Load config and build node map (same as original)
     log.info("📁 Loading configuration from etcd...")
@@ -397,10 +424,12 @@ def compute_routes(
     num_epochs = 0
     previous_next_hops: Dict[int, Dict[int, list]] = {}
     file_counter = 1
+    last_inserted_epoc_time: datetime | None = None
 
     for path in epoch_files:
         with open(path, "r", encoding="utf-8") as f:
             epoch_data = json.load(f)
+        original_epoch_time = parse_epoch_time(epoch_data.get("time", ""))
 
         log.info(f"\t 💾 Processing epoch file: {path} (time: {epoch_data.get('time','UNKNOWN')})")
 
@@ -422,6 +451,8 @@ def compute_routes(
                 ip_version=ip_version,
                 redundancy=redundancy,
                 routing_metric=routing_metric,
+                max_routes_per_epoch=max_routes_per_epoch,
+                sleep_seconds=route_batch_sleep_seconds,
             )
             if dbb_epoch_data.get("run", {}) != {}:
                 file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
@@ -429,12 +460,19 @@ def compute_routes(
                 out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
                 with open(out_epoch_path, "w", encoding="utf-8") as f_out:
                     json.dump(dbb_epoch_data, f_out, indent=2)
+                last_inserted_epoc_time = parse_epoch_time(dbb_epoch_data.get("time", ""))
 
         # 2) Add original epoch
+        if last_inserted_epoc_time is not None and original_epoch_time <= last_inserted_epoc_time:
+            raise ValueError(
+                "❌ Original epoch time must be strictly greater than the last inserted epoch time "
+                f"({epoch_data.get('time')} !> {last_inserted_epoc_time.strftime('%Y-%m-%dT%H:%M:%SZ')})."
+            )
         file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
         file_counter += 1
         out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
         shutil.copyfile(path, out_epoch_path)
+        last_inserted_epoc_time = original_epoch_time
 
         # 3) Add routes to original epoch (shifted earlier by link_creation_offset)
         new_epoch_data = compute_routes_single_epoch(
@@ -453,6 +491,8 @@ def compute_routes(
             ip_version=ip_version,
             redundancy = redundancy,
             routing_metric=routing_metric,
+            max_routes_per_epoch=max_routes_per_epoch,
+            sleep_seconds=route_batch_sleep_seconds,
         )
         if new_epoch_data.get("run", {}) != {}:
             file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
@@ -460,6 +500,7 @@ def compute_routes(
             out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
             with open(out_epoch_path, "w", encoding="utf-8") as f_out:
                 json.dump(new_epoch_data, f_out, indent=2)
+            last_inserted_epoc_time = parse_epoch_time(new_epoch_data.get("time", ""))
 
         num_epochs += 1
         if num_epochs % 10 == 0:
@@ -486,11 +527,14 @@ def compute_routes(
             ip_version=ip_version,
             redundancy = redundancy,
             routing_metric=routing_metric,
+            max_routes_per_epoch=max_routes_per_epoch,
+            sleep_seconds=route_batch_sleep_seconds,
         )
-        file_path0 = unnumbered_file_pattern.replace("??????", "0")
-        out_epoch_path0 = os.path.join(out_epoch_dir, os.path.basename(file_path0))
-        with open(out_epoch_path0, "w", encoding="utf-8") as f_out:
-            json.dump(dbb_epoch_data0, f_out, indent=2)
+        if dbb_epoch_data0.get("run", {}) != {}:
+            file_path0 = unnumbered_file_pattern.replace("??????", "0")
+            out_epoch_path0 = os.path.join(out_epoch_dir, os.path.basename(file_path0))
+            with open(out_epoch_path0, "w", encoding="utf-8") as f_out:
+                json.dump(dbb_epoch_data0, f_out, indent=2)
 
 # ==========================================
 # MAIN
@@ -517,6 +561,8 @@ def main() -> int:
     parser.add_argument("--redundancy", action="store_true", help="Whether to compute secondary next hops for redundancy (default: False).")
     parser.add_argument("--ip-version", type=int, choices=[4, 6], default=4, help="Generate IPv4 or IPv6 route commands. Default: 4 (IPv4).")
     parser.add_argument("--routing-metrics", choices=["hops","delay"], default="hops", help="Whether to use hop count or delay as routing metric (default: hops)")
+    parser.add_argument("--max-routes-per-epoch", type=int, default=50, help="Maximum number of route commands before inserting a sleep in the combined command string. If <=0, no sleeps are inserted. Default: 50.")
+    parser.add_argument("--route-batch-sleep-seconds", type=int, default=1, help="Seconds to sleep between route batches inside a single command string. Default: 1.")
     
     parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
 
@@ -558,6 +604,10 @@ def main() -> int:
             return 6
     
     # epoch dir / pattern resolution
+    if args.route_batch_sleep_seconds < 0:
+        log.error("❌ --route-batch-sleep-seconds must be >= 0.")
+        return 7
+
     epoch_dir = args.epoch_dir
     file_pattern = args.file_pattern
     if epoch_dir is None or file_pattern is None:
@@ -600,6 +650,8 @@ def main() -> int:
             etcd_etchosts_prefix="/config/etchosts/" if args.ip_version == 4 else "/config/etchosts6/",
             redundancy=args.redundancy if args.drain_before_break_offset == 0 else True,  # redundancy needed with drain-before-break
             routing_metric=args.routing_metrics if args.routing_metrics else "hops",
+            max_routes_per_epoch=args.max_routes_per_epoch,
+            route_batch_sleep_seconds=args.route_batch_sleep_seconds,
         )
     except Exception as e:
         log.error(f"❌ Error during route computation: {e}")
