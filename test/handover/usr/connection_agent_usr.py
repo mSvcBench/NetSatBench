@@ -36,26 +36,26 @@ node_name = os.getenv("NODE_NAME")
 KEY_LINKS_PREFIX = f"/config/links/{node_name}/"
 link_setup_delay_s = 0.2 # estimated time needed by sat-agent to setup relevat routes and interfaces after a link is added in etcd, used to delay registration after link event to increase chances that the link is fully setup in the sat-agent before registration attempt (which can reduce registration failures due to missing routes/interfaces in the sat-agent at the time of registration)
 registration_accept_timeout_s = None
-handover_command_timeout_s = None
-handover_metadata = {} # metadata used by the handover strategy to evaluate handover eligibility
-handover_periodic_check_s = 3.3 # periodic check interval for handover decision 
+reporting_period_s = 3.3 # periodic check interval for handover decision 
 link_duration_initial_value_s = 4*60  # initial value for link duration (sec)
+heartbeat_interval_s = 1.0
+heartbeat_max_failures = 3
+heartbeat_failures = 0
+heartbeat_lock = threading.Lock()
 
 # Status not_registered, registration_in_progress, registered, handover_in_progress
 status = "not_registered" # initial status before registration
 current_dev = None # current iface used for data transfer
-new_dev = None # new iface being considered for handover
 
 # ho eligibility strategy function, set in main() based on args
-is_handover_needed = None
+chose_reg_device = None
 grd_ipv6 = None
 grd_port = None
 grd_id = None
-callback_port_runtime = None
+user_callback_port = None
 local_ipv6 = None
 etcd_client_runtime = None
 registration_timeout_timer = None
-handover_timeout_timer = None
 _UNSET = object()
 
 # ----------------------------
@@ -141,37 +141,66 @@ def send_registration_request_udp(
     grd_ipv6: str,
     grd_port: int,
     user_ipv6: str,
-    callback_port: int,
-    init_sat_ipv6: str,
+    user_callback_port: int,
+    init_sat_dev: str, 
+    user_links_db: str,
 ) -> None:
     msg: Dict[str, Any] = {
         "type": "registration_request",
         "user_id": os.environ["NODE_NAME"],
         "user_ipv6": user_ipv6,
-        "init_sat_ipv6": init_sat_ipv6,
-        "callback_port": callback_port,
-        "txid": str(int(time.time() * 1000)),
+        "init_sat_dev": init_sat_dev,
+        "callback_port": user_callback_port,
+        "user_links_db": user_links_db,
     }
     send_udp_json(grd_ipv6, grd_port, msg)
 
 
-def send_handover_request_udp(
+def send_link_report_udp(
     grd_ipv6: str,
-    port: int,
-    user_ipv6: str,
-    callback_port: int,
-    new_sat_ipv6: str,
+    grd_port: int,
+    user_sat_ipv6: str,
+    user_dev: str,
+    user_links_db: str,
 ) -> None:
     msg: Dict[str, Any] = {
-        "type": "handover_request",
+        "type": "measurement_report",
         "user_id": os.environ["NODE_NAME"],
-        "user_ipv6": user_ipv6,
-        "new_sat_ipv6": new_sat_ipv6,
-        "callback_port": callback_port,
+        "user_sat_ipv6": user_sat_ipv6,
+        "user_dev": user_dev,
+        "user_links_db": user_links_db,
+    }
+    send_udp_json(grd_ipv6, grd_port, msg)
+
+def send_hello_udp(
+    grd_ipv6: str,
+    grd_port: int,
+) -> None:
+    msg: Dict[str, Any] = {
+        "type": "hello",
+        "user_id": os.environ["NODE_NAME"],
+        "grd_id": grd_id,
         "txid": str(int(time.time() * 1000)),
     }
-    send_udp_json(grd_ipv6, port, msg)
+    send_udp_json(grd_ipv6, grd_port, msg)
 
+def send_handover_complete_udp(
+    grd_ipv6: str,
+    grd_port: int,
+    user_dev: str,
+    user_ipv6: str,
+    upstream_sids: str,
+) -> None:
+    msg: Dict[str, Any] = {
+        "type": "handover_complete",
+        "user_id": os.environ["NODE_NAME"],
+        "user_dev": user_dev,
+        "user_ipv6": user_ipv6,
+        "upstream_sids": upstream_sids,
+        "grd_id": grd_id,
+        "txid": str(int(time.time() * 1000)),
+    }
+    send_udp_json(grd_ipv6, grd_port, msg)
 
 def derive_egress_dev(addr: str) -> str:
     out = run_cmd_capture(["ip", "-6", "route", "get", addr])
@@ -219,7 +248,7 @@ def cancel_registration_timeout() -> None:
         registration_timeout_timer.cancel()
         registration_timeout_timer = None
 
-def update_link_db(link_dev: str, etcd_link_data: Any = _UNSET, last_created: Any = _UNSET, last_updated: Any = _UNSET, status: Any = _UNSET, last_duration: Any = _UNSET, remote_endpoint_ipv6: Any = _UNSET) -> None:
+def update_links_db(link_dev: str, etcd_link_data: Any = _UNSET, last_created: Any = _UNSET, last_updated: Any = _UNSET, status: Any = _UNSET, last_duration: Any = _UNSET, remote_endpoint_ipv6: Any = _UNSET) -> None:
     global links_db
     links_db.setdefault(link_dev, {})
     if etcd_link_data is not _UNSET and etcd_link_data is not None:
@@ -258,22 +287,6 @@ def cancel_handover_command_timeout() -> None:
         handover_timeout_timer.cancel()
         handover_timeout_timer = None
 
-def on_handover_command_timeout() -> None:
-    global status, new_dev
-    if status != "handover_in_progress":
-        return
-    logging.warning("⏱️ Handover command timeout reached.")
-    new_dev = None
-    status = "registered" if status == "handover_in_progress" else status
-    cancel_handover_command_timeout()
-    return
-
-def start_handover_command_timeout(timeout_s: float) -> None:
-    global handover_timeout_timer
-    cancel_handover_command_timeout()
-    handover_timeout_timer = threading.Timer(timeout_s, on_handover_command_timeout)
-    handover_timeout_timer.daemon = True
-    handover_timeout_timer.start()
 
 def parse_delay(delay) -> float:
     if isinstance(delay, (int, float)):
@@ -319,6 +332,12 @@ def resolve_ipv6_from_hosts(hostname: str) -> str:
         return ipv6
     raise RuntimeError(f"❌ Could not derive IPv6 for endpoint '{hostname}' from /etc/hosts")
 
+def build_links_report() -> Dict[str, Any]:
+    sat_report = {}
+    for link_dev, link_info in links_db.items():
+        if link_info.get("status") == "available":
+            sat_report[link_dev] = link_info
+    return sat_report   
 
 # ----------------------------
 #   MAIN LOGIC
@@ -346,7 +365,7 @@ def preload_links_db_from_etcd(etcd_client) -> None:
                     continue
                 remote_endpoint = ep2 if ep1 == node_name else ep1
                 remote_endpoint_ipv6 = resolve_ipv6_from_hosts(remote_endpoint) if remote_endpoint else ""
-                update_link_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", last_duration=link_duration_initial_value_s, remote_endpoint_ipv6=remote_endpoint_ipv6)
+                update_links_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", last_duration=link_duration_initial_value_s, remote_endpoint_ipv6=remote_endpoint_ipv6)
                 loaded += 1
             except Exception as e:
                 skipped += 1
@@ -369,7 +388,7 @@ def handle_registration_request() -> None:
     logging.info("🌍  Processing Registration Request...")
     
     ## Process initial registration using link with minimum delay (if any)
-    init_dev, _ = is_handover_needed(handover_metadata) # chose of the initial dev to serve the user based on handover strategy 
+    init_dev, _ = chose_reg_device(reg_metadata) # chose of the initial dev to serve the user based on handover strategy 
     
     if init_dev != "":
         init_sat_ipv6 = links_db.get(init_dev, {}).get("remote_endpoint_ipv6", "")
@@ -386,12 +405,14 @@ def handle_registration_request() -> None:
                 )
             ip_cmd = build_srv6_route_replace(grd_ipv6, init_sat_ipv6, init_dev)
             run_cmd(ip_cmd)
+            links_report = build_links_report()
             send_registration_request_udp(
                 grd_ipv6=grd_ipv6,
                 grd_port=grd_port,
                 user_ipv6=local_ipv6,
-                callback_port=callback_port_runtime,
-                init_sat_ipv6=init_sat_ipv6,
+                user_callback_port=user_callback_port,
+                init_sat_dev=init_dev,
+                user_links_db=json.dumps(links_report),
             )
             current_dev = init_dev
             start_registration_timeout()
@@ -405,7 +426,7 @@ def handle_registration_request() -> None:
         logging.warning("⚠️ No suitable access link found for registration.")
 
 def lifetime_strategy(metadata: dict) -> Tuple[str, bool]:
-    # Example handover strategy: always prefer the link with greatest ttl
+    # Example strategy: always prefer the link with greatest ttl
     threshold_s = metadata.get("threshold_s", link_duration_initial_value_s/4.0)  # threshold for minimum remaining duration to consider a handover
     # compute remaining duration for available links and select the one with the longest remaining duration above threshold
     if current_dev == None:
@@ -431,16 +452,41 @@ def lifetime_strategy(metadata: dict) -> Tuple[str, bool]:
     else:
         return candidate_dev[0],False
 
-def processing_handover_loop() -> None:
+def reporting_loop() -> None:
     while True:
         if status != "registered":
-            time.sleep(handover_periodic_check_s)
+            time.sleep(reporting_period_s)
             continue
-        candidate_dev, local_handover_needed = is_handover_needed(handover_metadata)
-        if local_handover_needed:
-            logging.info(f"🔀 Handover decision selected newest dev {candidate_dev}")
-            handle_handover(candidate_dev)
-        time.sleep(handover_periodic_check_s)  # periodic check interval for handover decision (can be tuned based on expected link dynamics and handover time requirements)
+        links_report = build_links_report()
+        send_link_report_udp(
+            grd_ipv6=grd_ipv6,
+            grd_port=grd_port,
+            user_sat_ipv6=links_db.get(current_dev, {}).get("remote_endpoint_ipv6", "") if current_dev else "",
+            user_dev=current_dev,
+            user_links_db=json.dumps(links_report)
+        )
+        time.sleep(reporting_period_s)  # periodic check interval for handover decision (can be tuned based on expected link dynamics and handover time requirements)
+
+def heartbeat_loop() -> None:
+    global status, current_dev, heartbeat_failures
+    while True:
+        if status == "registered":
+            try:
+                send_hello_udp(grd_ipv6=grd_ipv6, grd_port=grd_port)
+                with heartbeat_lock:
+                    heartbeat_failures += 1
+                    misses = heartbeat_failures
+                if misses >= heartbeat_max_failures:
+                    logging.warning("⚠️ Missed %d heartbeat ACKs from %s; resetting to not_registered and retrying registration.", misses, grd_id)
+                    status = "not_registered"
+                    current_dev = None
+                    with heartbeat_lock:
+                        heartbeat_failures = 0
+                    cancel_registration_timeout()
+                    handle_registration_request()
+            except Exception as e:
+                logging.warning("⚠️ Failed to send heartbeat HELLO to %s: %s", grd_id, e)
+        time.sleep(heartbeat_interval_s)
 
 
 # ----------------------------
@@ -463,13 +509,13 @@ def watch_link_actions_loop (etcd_client) -> None:
                         remote_endpoint = l.get("endpoint1") if l.get("endpoint2") == node_name else l.get("endpoint2")
                         remote_endpoint_ipv6 = resolve_ipv6_from_hosts(remote_endpoint) if remote_endpoint else ""
                         logging.info(f"➕ Detected new link dev {link_dev}")
-                        update_link_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", remote_endpoint_ipv6=remote_endpoint_ipv6)
+                        update_links_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", remote_endpoint_ipv6=remote_endpoint_ipv6)
                     elif links_db[link_dev].get("status") == "available":
                             logging.info(f"🔄 Detected update for existing link dev {link_dev}")
-                            update_link_db(link_dev=link_dev, etcd_link_data=l, last_updated=time.time(), status="available")
+                            update_links_db(link_dev=link_dev, etcd_link_data=l, last_updated=time.time(), status="available")
                     elif links_db[link_dev].get("status") == "unavailable":
                             logging.info(f"🔁 Detected re-appearance of previously link dev {link_dev}, updating status to available")
-                            update_link_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available")
+                            update_links_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available")
                     if status == "not_registered":
                         handle_registration_request()
 
@@ -478,7 +524,7 @@ def watch_link_actions_loop (etcd_client) -> None:
                     deleted_dev = event.key.decode().split("/")[-1]
                     logging.info(f"➖ Detected deletion of link dev {deleted_dev}")
                     last_duration = time.time() - links_db.get(deleted_dev, {}).get("last_created", time.time())
-                    update_link_db(link_dev=deleted_dev, last_updated=time.time(), status="unavailable", last_duration=last_duration)
+                    update_links_db(link_dev=deleted_dev, last_updated=time.time(), status="unavailable", last_duration=last_duration)
                     if deleted_dev == current_dev:
                         logging.warning(
                             "🛑 Current link %s deleted, resetting state and re-registering.",
@@ -487,8 +533,6 @@ def watch_link_actions_loop (etcd_client) -> None:
                         status = "not_registered"
                         current_dev = None
                         new_dev = None
-                        if handover_timeout_timer is not None:
-                            handover_timeout_timer.cancel()
                         if registration_timeout_timer is not None:
                             registration_timeout_timer.cancel()
                         handle_registration_request()
@@ -502,71 +546,7 @@ def watch_link_actions_loop (etcd_client) -> None:
                     cancel()
                 except Exception:
                     pass
-
-# def is_handover_eligible_delay(current_iface,new_iface) -> bool:
-#     # Example eligibility check: only trigger handover if delay difference is > 5ms
-#     if current_iface is None:
-#         return True
-#     new_link_delay_ms = parse_delay(links_db.get(new_iface, {}).get("delay", float('inf')))
-#     current_link_delay_ms = parse_delay(links_db.get(current_iface, {}).get("delay", float('inf')))
-#     delay_diff = new_link_delay_ms - current_link_delay_ms
-#     return delay_diff < -5  # Trigger handover if new link is at least 5ms better
-
-# def is_handover_eligible_lifetime(current_iface,new_iface) -> bool:
-#     ttl_current = links_db.get(current_iface, {}).get("last_duration", float('inf')) - (time.time() - links_db.get(current_iface, {}).get("last_created", 0))
-#     ttl_new = links_db.get(new_iface, {}).get("last_duration", float('inf')) - (time.time() - links_db.get(new_iface, {}).get("last_created", 0))
-#     return ttl_new > ttl_current  # Eligible if new link has longer expected lifetime than current
-
-
-def handle_handover(candidate_dev: str) -> None:
-    global status, current_dev, new_dev
-    try:
-        status = "handover_in_progress"
-        candidate_sat = candidate_dev.split("_")[1]  # Assuming link_dev format is "vl_{remote_endpoint}_1"
-        candidate_sat_ipv6 = resolve_ipv6_from_hosts(candidate_sat)
-        if not wait_for_link_local_via_route(candidate_sat_ipv6, timeout_s=link_setup_delay_s):
-            logging.warning(
-                f"⚠️ No route with link-local next-hop for {candidate_sat_ipv6} before handover request timeout window."
-            )
-        send_handover_request_udp(
-            grd_ipv6=grd_ipv6,
-            port=grd_port,
-            user_ipv6=local_ipv6,
-            callback_port=callback_port_runtime,
-            new_sat_ipv6=candidate_sat_ipv6,
-        )
-        logging.info(f"✉️ Sent handover request for new sat {candidate_sat} to {grd_id}.")
-        start_handover_command_timeout(timeout_s=handover_command_timeout_s)
-        new_dev = candidate_dev
-    except Exception as ex:
-        logging.error("❌ Failed to send handover request: %s", ex)
-        return
-
-def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None:
-    global status, current_dev, new_dev
-
-    if status != "handover_in_progress" and payload.get("type") != "handover_command_unsolicited":
-        logging.warning("⚠️ Received handover_command while not in handover_in_progress state, ignoring.")
-        return
-
-    grd_id_recv = payload["grd_id"]
-    if grd_id_recv != grd_id:
-        logging.warning(f"⚠️ Received handover_command for grd_id {grd_id_recv} while current grd_id is {grd_id}, ignoring.")
-        return                  
-    upstream_sids = payload["sids"]                  # new sid sequence for the user (e.g., "2001:db8:200::1")
-    new_sat_ipv6_recv = upstream_sids.split(",")[0]          # first SID is the new sat to reach the grd.
-    if status == "handover_in_progress":
-        route_dev = new_dev
-        new_sat_ipv6 = links_db.get(new_dev, {}).get("remote_endpoint_ipv6", "")
-    else:
-        # unsolicited handover should not change current dev
-        route_dev = current_dev
-        new_sat_ipv6 = links_db.get(current_dev, {}).get("remote_endpoint_ipv6", "")
-    
-    if new_sat_ipv6_recv != new_sat_ipv6:
-        type_str = "unsolicited handover_command" if payload.get("type") == "handover_command_unsolicited" else "handover_command"
-        logging.warning(f"⚠️ Received {type_str} with new sat {new_sat_ipv6_recv} different from expected {new_sat_ipv6}, rejecting.")
-        return
+def traffic_pause(ho_delay_ms: float) -> None:
     # Apply handover delay rate reduction if configured (e.g., to allow user to switch satellite link)
     if ho_delay_ms > 0:
         logging.info("⧴ Applying handover delay of %dms", ho_delay_ms)
@@ -574,7 +554,7 @@ def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None
         rate_kbit = max(1, int(mtu * 8 / ho_delay_ms))  # kbit/s (since ms in denominator)
         burst_bytes = mtu * 2
         cburst_bytes = mtu * 2
-        idx = grd_list.index(payload["grd_id"])
+        idx = grd_list.index(grd_id) if grd_id in grd_list else 0
 
         run_cmd([
         "tc","class","change","dev","veth0_rt",
@@ -596,30 +576,88 @@ def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None
         "burst","15kb","cburst","15kb",   # example “normal” values
         ])
         logging.info("⧴ Handover delay completed, restored original qdisc settings")
+
+def traffic_pause2(ho_delay_ms: float) -> None:
+    # Pause traffic by throttling the GRD class to near-zero rate, then restore.
+    if ho_delay_ms <= 0:
+        return
+
+    idx = grd_list.index(grd_id) if grd_id in grd_list else 0
+    classid = f"1:{idx+10}"
+    delay_ms = max(1.0, float(ho_delay_ms))
+
+    logging.info("⧴ Pausing class %s for %.3fms", classid, delay_ms)
+    run_cmd([
+        "tc", "class", "change", "dev", "veth0_rt",
+        "parent", "1:", "classid", classid,
+        "htb",
+        "rate", "1bit", "ceil", "1bit",
+        "burst", "1b", "cburst", "1b",
+    ])
+
+    deadline = time.monotonic_ns() + int(delay_ms * 1_000_000)
+    sleep_until(deadline)
+
+    run_cmd([
+        "tc", "class", "change", "dev", "veth0_rt",
+        "parent", "1:", "classid", classid,
+        "htb",
+        "rate", "10gbit", "ceil", "10gbit",
+        "burst", "15kb", "cburst", "15kb",
+    ])
+    logging.info("⧴ Pause completed, restored class %s shaping", classid)
+
+def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None:
+    global status, current_dev, new_dev
+
+    if status != "registered":
+        logging.warning("⚠️ Received handover_command while not in registered state, ignoring.")
+        return
+
+    grd_id_recv = payload["grd_id"]
+    if grd_id_recv != grd_id:
+        logging.warning(f"⚠️ Received handover_command for grd_id {grd_id_recv} while current grd_id is {grd_id}, ignoring.")
+        return                  
     
-    # add new route to grd
-    if not wait_for_link_local_via_route(new_sat_ipv6, timeout_s=link_setup_delay_s):
-        logging.warning(
-            f"⚠️ No route with link-local next-hop for {new_sat_ipv6} before handover command timeout window."
-        )
-    ip_cmd = build_srv6_route_replace(grd_ipv6, new_sat_ipv6, route_dev)
-    run_cmd(ip_cmd)
+    upstream_sids = payload["sids"]                  # new sid sequence for the user (e.g., "2001:db8:200::1")
+    new_sat_ipv6 = upstream_sids.split(",")[0]          # first SID is the new sat to reach the grd.
+    new_dev = derive_egress_dev(new_sat_ipv6)  # derive the egress dev to reach the grd via the new satellite
+    
+    traffic_pause(ho_delay_ms)
+    
+    # add new route to grd if necessary
+    if new_dev != current_dev:
+        current_dev = new_dev
+        if not wait_for_link_local_via_route(new_sat_ipv6, timeout_s=link_setup_delay_s):
+            logging.warning(
+                f"⚠️ No route with link-local next-hop for {new_sat_ipv6} before handover command timeout window."
+            )
+        ip_cmd = build_srv6_route_replace(grd_ipv6, new_sat_ipv6, new_dev)
+        run_cmd(ip_cmd)
+    
     # add new default route
     default_prefix = "default"
-    ip_cmd = build_srv6_route_replace(default_prefix, upstream_sids, route_dev)
+    ip_cmd = build_srv6_route_replace(default_prefix, upstream_sids, new_dev)
     run_cmd(ip_cmd)
-    if payload.get("type") == "handover_command":
-        current_dev = new_dev
-        new_dev = None
+
+    # status update and logging
     status = "registered" if payload.get("type") == "handover_command" else status
-    cancel_handover_command_timeout() if payload.get("type") == "handover_command" else None
     if payload.get("type") == "handover_command":
-        logging.info(f"📡 Handover accepted by {grd_id} with upstream SIDs {upstream_sids} via new dev {current_dev}")
+        logging.info(f"📡 Handover command received by {grd_id} with upstream SIDs {upstream_sids} via new dev {current_dev}")
     elif payload.get("type") == "handover_command_unsolicited":
         logging.info(f"📡 Unsolicited handover command received for {grd_id} with upstream SIDs {upstream_sids} via dev {current_dev}")
+    
+    send_handover_complete_udp(
+        grd_ipv6=grd_ipv6,
+        grd_port=grd_port,
+        user_dev=current_dev,
+        user_ipv6=local_ipv6,
+        upstream_sids=upstream_sids,
+    )
+    logging.info(f"✉️ Sent handover complete to {grd_id}")
 
 def handle_registration_accept(payload: Dict[str, Any]) -> None:
-    global status, current_dev
+    global status, current_dev, heartbeat_failures
 
     if status != "registration_in_progress":
         logging.debug("⚠️ Received registration_accept while not in registration_in_progress state, ignoring.")
@@ -628,24 +666,46 @@ def handle_registration_accept(payload: Dict[str, Any]) -> None:
     grd_id_recv = payload["grd_id"]                      
     upstream_sids = payload["sids"]                  # new sid sequence for the user (e.g., "2001:db8:200::1")
     init_sat_ipv6_recv = upstream_sids.split(",")[0]         # first SID is the new egress SID to reach the grd. Shall be the IP address of a connected sat
-    
-    init_sat_ipv6 = links_db.get(current_dev, {}).get("remote_endpoint_ipv6", "")
+    init_sat_dev_recv = derive_egress_dev(init_sat_ipv6_recv)  # derive the egress dev to reach the grd via the initial satellite
     if grd_id_recv != grd_id:
         logging.warning(f"⚠️ Received registration_accept from {grd_id_recv} while current grd is {grd_id}, ignoring.")
         return
-    if init_sat_ipv6_recv != init_sat_ipv6:
-        logging.warning(f"⚠️ Received registration_accept with init sat {init_sat_ipv6_recv} different from expected {init_sat_ipv6}, ignoring.")
+    if init_sat_ipv6_recv != links_db.get(current_dev, {}).get("remote_endpoint_ipv6", ""):
+        logging.warning(f"⚠️ Received registration_accept with initial sat {init_sat_ipv6_recv} different from expected {links_db.get(current_dev, {}).get('remote_endpoint_ipv6', '')}, ignoring.")
         return
-
+    if links_db.get(current_dev, {}).get("status", None) != "available":
+        logging.warning(f"⚠️ Received registration_accept with initial sat {init_sat_ipv6_recv} whose link is not available according to links_db, ignoring.")
+        return
+    
+    # add new grd route if necessary
+    if init_sat_dev_recv != current_dev:
+        current_dev = init_sat_dev_recv
+        ip_cmd = build_srv6_route_replace(grd_ipv6, init_sat_ipv6_recv, current_dev)
+        if not wait_for_link_local_via_route(init_sat_ipv6_recv, timeout_s=link_setup_delay_s):
+            logging.warning(
+                f"⚠️ No route with link-local next-hop for {init_sat_ipv6_recv} before handover request timeout window."
+            )
+        run_cmd(ip_cmd)
     # add ipv6 default route via grd_ipv6
     default_prefix = "default"
     ip_cmd = build_srv6_route_replace(default_prefix, upstream_sids, current_dev)
     run_cmd(ip_cmd)
     cancel_registration_timeout()
+    with heartbeat_lock:
+        heartbeat_failures = 0
     status = "registered"
     logging.info(f"📡 Registration accepted by {grd_id} with with upstream SIDs {upstream_sids} via dev {current_dev}")
-    
-def handle_command(payload: Dict[str, Any], ho_delay_ms: float, grd_id: int) -> None:
+
+def handle_hello(payload: Dict[str, Any]) -> None:
+    global heartbeat_failures
+    grd_id_recv = payload.get("grd_id", "")
+    if grd_id_recv and grd_id_recv != grd_id:
+        logging.debug("Ignoring HELLO from unexpected GRD %s", grd_id_recv)
+        return
+    with heartbeat_lock:
+        heartbeat_failures = 0
+
+def handle_command(payload: Dict[str, Any], ho_delay_ms: float) -> None:
     if payload.get("type") == "handover_command":
         handle_handover_command(payload, ho_delay_ms)
         return
@@ -654,6 +714,8 @@ def handle_command(payload: Dict[str, Any], ho_delay_ms: float, grd_id: int) -> 
         return
     elif payload.get("type") == "registration_accept":
         handle_registration_accept(payload)
+    elif payload.get("type") == "hello":
+        handle_hello(payload)
     else:
         raise ValueError(f"Unsupported command type: {payload.get('type')}")
 
@@ -676,13 +738,13 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
                 grd_list.append(grd_id)
                 if ho_delay > 0:
                     prepare_qdisc_for_grd(grd_ipv6=msg.get("grd_ipv6"), grd_id=grd_id)
-            handle_command(msg, ho_delay_ms=ho_delay, grd_id=grd_id)
+            handle_command(msg, ho_delay_ms=ho_delay)
         except Exception as e:
             logging.warning("❌ Failed command from [%s]:%d: %s", peer[0], peer[1], e)
 
 
 def main() -> None:
-    global is_handover_needed, grd_ipv6, grd_port, grd_id, callback_port_runtime, local_ipv6, etcd_client_runtime, link_setup_delay_s, handover_metadata, registration_accept_timeout_s, handover_command_timeout_s, link_duration_initial_value_s
+    global chose_reg_device, grd_ipv6, grd_port, grd_id, user_callback_port, local_ipv6, etcd_client_runtime, link_setup_delay_s, reg_metadata, registration_accept_timeout_s, handover_command_timeout_s, link_duration_initial_value_s, heartbeat_interval_s, heartbeat_max_failures
     
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="::")
@@ -691,12 +753,8 @@ def main() -> None:
     ap.add_argument("--grd", required=True, help="IPv6 address of the serving ground station or name resolvable via /etc/hosts (e.g., grd1 or 2001:db8:101::1)")
     ap.add_argument("--grd-port", type=int, default=5005, help="UDP port on serving ground station (default: 5005)")
     ap.add_argument("--registration-timeout", type=float, default=3.0, help="seconds to wait for registration_accept before retrying registration")
-    ap.add_argument("--handover-timeout", type=float, default=3.0, help="seconds to wait for handover_command before considering handover failed and reverting to registered state")
-    ap.add_argument("--handover-strategy", choices=["lifetime"], default="lifetime", help="handover eligibility strategy (default: lifetime)")
-    ap.add_argument("--handover-strategy-metadata", type=json.loads, default='{}', help="JSON string with metadata parameters for the handover strategy (e.g., threshold values, weights, etc.)")  
     ap.add_argument("--link-setup-delay", type=float, default=3, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
     ap.add_argument("--link-duration-initial-value", type=float, default=4*60, help="Initial value in seconds for the duration of new links, default: 4min)")
-    ap.add_argument("--no-auto", action="store_true", help="disable automatic handover and registration")
     ap.add_argument("--log-level", default="INFO", help="Logging level (e.g., DEBUG, INFO, WARNING)")
     args = ap.parse_args()
     
@@ -716,40 +774,35 @@ def main() -> None:
     
     grd_id = args.grd
     grd_port = args.grd_port
-    callback_port_runtime = args.port
+    user_callback_port = args.port
     registration_accept_timeout_s = args.registration_timeout
-    handover_command_timeout_s = args.handover_timeout
-    handover_metadata = args.handover_strategy_metadata
     etcd_client=get_etcd_client()
     etcd_client_runtime = etcd_client
     link_setup_delay_s = args.link_setup_delay
     link_duration_initial_value_s = args.link_duration_initial_value
-    
-    if args.handover_strategy == "lifetime":
-        is_handover_needed = lifetime_strategy
-    else:
-        logging.error(f"Unsupported handover strategy: {args.handover_strategy}")
-        sys.exit(1)
+    chose_reg_device = lifetime_strategy
+    reg_metadata = {}
 
     preload_links_db_from_etcd(etcd_client)
     
-    if args.no_auto:
-        logging.info("🚫 Auto handover and registration disabled, skipping initial registration.")
-    else:
-        handle_registration_request()
+    handle_registration_request()
 
-    if not args.no_auto:
-        threading.Thread(
-            target=watch_link_actions_loop,
-            args=(etcd_client,),
-            daemon=True,
-            name="watch-link-actions",
-        ).start()
+    threading.Thread(
+        target=watch_link_actions_loop,
+        args=(etcd_client,),
+        daemon=True,
+        name="watch-link-actions",
+    ).start()
 
-        threading.Thread(
-            target=processing_handover_loop,
-            daemon=True,
-            name="processing-handover",
+    threading.Thread(
+        target=reporting_loop,
+        daemon=True,
+        name="processing-handover",
+    ).start()
+    threading.Thread(
+        target=heartbeat_loop,
+        daemon=True,
+        name="heartbeat-loop",
         ).start()
     
     serve(bind_addr=args.bind, port=args.port, ho_delay=args.ho_delay)
