@@ -259,9 +259,24 @@ def main():
                     f"STDOUT:\n{removed.stdout}\n"
                     f"STDERR:\n{removed.stderr}"
                 )
+        mtu_opt = ""
+        default_gw_mtu_cmd = (
+            f"ssh {remote_str} "
+            "'iface=$(ip route show default | awk \"{print \\$5; exit}\"); "
+            "if [ -n \"$iface\" ] && [ -r /sys/class/net/\"$iface\"/mtu ]; then "
+            "cat /sys/class/net/\"$iface\"/mtu; fi'"
+        )
+        default_gw_mtu_result = run(default_gw_mtu_cmd)
+        if default_gw_mtu_result.returncode == 0:
+            default_gw_mtu = default_gw_mtu_result.stdout.strip()
+            if default_gw_mtu.isdigit():
+                mtu_opt = f" -o com.docker.network.driver.mtu={default_gw_mtu}"
+                log.info(f"    ✅ Discovered default gateway MTU: {default_gw_mtu}, applying to docker network.")
+
         create_cmd = (
             f"ssh {remote_str} docker network create --driver=bridge"
             f" --subnet={sat_vnet_cidr}"
+            f"{mtu_opt}"
             f" -o com.docker.network.bridge.enable_ip_masquerade=false"
             f" -o com.docker.network.bridge.trusted_host_interfaces=\"{ssh_interface_name}\""
             f" {sat_vnet}"

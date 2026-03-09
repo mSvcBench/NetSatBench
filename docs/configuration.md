@@ -366,6 +366,13 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 * **Units / Format**: Binary units `KiB`, `MiB`, `GiB`, `TiB` (e.g., `200MiB`).
 * **Description**: Requested memory for container scheduling and relative priority for OOM behavior (e.g., reservation semantics).
 
+##### `mtu`
+
+* **Type**: integer
+* **Requirement**: optional
+* **Units / Format**: bytes (e.g., `1450`)
+* **Description**: VXLAN interface MTU override used by `sat-agent` when creating overlay links. If omitted, `sat-agent` derives MTU as `eth0_mtu - VXLAN header` (default behavior).
+
 ##### `cpu-limit`
 
 * **Type**: string

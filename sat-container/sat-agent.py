@@ -41,6 +41,8 @@ my_config = None
 etcd_client = None
 routing = None
 HOSTS_LOCK = threading.Lock()
+VXLAN_OVERHEAD_BYTES = 50
+vxlan_link_mtu = None
 
 # ----------------------------
 #   Helpers
@@ -72,6 +74,35 @@ def run(cmd, log_errors=True):
         log.warning(f"⚠️ Command failed: {' '.join(cmd)}")
         log.warning(result.stderr.strip())
     return result
+
+def get_iface_mtu(ifname: str) -> int | None:
+    result = run(["ip", "link", "show", "dev", ifname], log_errors=False)
+    if result.returncode != 0:
+        return None
+    match = re.search(r"\bmtu\s+(\d+)\b", result.stdout)
+    if not match:
+        return None
+    return int(match.group(1))
+
+def resolve_vxlan_mtu(node_cfg: dict) -> int:
+    mtu_override = node_cfg.get("mtu")
+    if mtu_override is not None:
+        try:
+            mtu = int(mtu_override)
+            if mtu > 0:
+                log.info(f"📏 Using VXLAN MTU override from node config: {mtu}")
+                return mtu
+        except (TypeError, ValueError):
+            pass
+        log.warning(f"⚠️ Invalid node-config mtu override '{mtu_override}', falling back to derived MTU.")
+
+    eth0_mtu = get_iface_mtu("eth0")
+    if eth0_mtu is None:
+        log.warning("⚠️ Could not derive eth0 MTU, using fallback VXLAN MTU 1450.")
+        return 1450
+    derived = max(eth0_mtu - VXLAN_OVERHEAD_BYTES, 576)
+    log.info(f"📏 Derived VXLAN MTU: {derived} (eth0 MTU {eth0_mtu} - {VXLAN_OVERHEAD_BYTES})")
+    return derived
 
 def build_netem_opts(l):
     """
@@ -251,7 +282,7 @@ def create_vxlan_link(
         "dstport", "4789",
     ])
 
-    run(["ip", "link", "set", vxlan_if, "mtu", "1350"])
+    run(["ip", "link", "set", vxlan_if, "mtu", str(vxlan_link_mtu)])
     run(["ip", "link", "set", "dev", vxlan_if, "up"])
     
     # ----------------------------
@@ -604,10 +635,11 @@ def get_config(etcd_client):
     return json.loads(val.decode())
 
 def main():
-    global my_config, l3_flags, etcd_client, routing
+    global my_config, l3_flags, etcd_client, routing, vxlan_link_mtu
     log.info(f"🚀 Sat Agent Starting for {node_name}")
     etcd_client = get_etcd_client()
-    my_config = get_config(etcd_client)
+    my_config = get_config(etcd_client) or {}
+    vxlan_link_mtu = resolve_vxlan_mtu(my_config)
     l3_flags = my_config.get("L3-config", {})
     
     # Bootstrapping
