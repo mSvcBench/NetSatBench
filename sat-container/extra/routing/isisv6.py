@@ -67,7 +67,7 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
         if loopback_ip is None:
             msg = "  ❌ IS-ISv6 configuration failed: Unable to derive loopback IPv6 from cidr-v6."
             return msg, False
-        loopback_mask = l3_config.get("cidr-v6","").split('/')[1] if '/' in l3_config.get("cidr-v6","") else '128'
+        loopback_mask = l3_config.get("cidr-v6","").split('/')[1] if '/' in l3_config.get("cidr-v6","") else '126'
         loopback_ip_mask = f"{loopback_ip}/{loopback_mask}"
         
         # Extract sys_id from node name (deterministic, stable)

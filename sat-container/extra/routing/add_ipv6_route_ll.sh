@@ -8,6 +8,13 @@
 
 set -e
 
+# LOCK_FILE="/tmp/add_ipv6_route_ll.lock"
+# exec 9>"$LOCK_FILE"
+# if ! flock -w 30 9; then
+#     echo "Could not acquire lock: $LOCK_FILE"
+#     exit 1
+# fi
+
 IF="$1"
 DST="$2"
 MET="$3"
@@ -23,34 +30,34 @@ if ! ip link show "$IF" >/dev/null 2>&1; then
     exit 1
 fi
 
+PROBE_TRIES=30
+PROBE_SLEEP_SEC=0.02
+
 # echo "Discovering link-local neighbor on $IF ..."
 
-NH=""
+# If a link-local neighbor is already cached on this interface, reuse it and skip probing.
+NHLL=$(ip -6 neigh show dev "$IF" 2>/dev/null \
+    | awk '/^fe80:/ {print $1; exit}')
 
-# Try up to 30 times (~3 seconds total)
-for _ in $(seq 1 30); do
-    # Trigger NDP activity (harmless multicast ping)
-    ping -6 -c1 -w1 -I "$IF" ff02::1 >/dev/null 2>&1 || true
+# Try up to PROBE_TRIES times
+if [ -z "$NHLL" ]; then
+    for _ in $(seq 1 "$PROBE_TRIES"); do
+        # Trigger NDP activity via link-local multicast, independent of reverse routing
+        ping -6 -n -c1 -W1 -I "$IF" "ff02::1%$IF" >/dev/null 2>&1 || true
+        # Try to extract first fe80:: neighbor
+        NHLL=$(ip -6 neigh show dev "$IF" 2>/dev/null \
+            | awk '/^fe80:/ {print $1; exit}')
 
-    # Try to extract first fe80:: neighbor
-    NH=$(ip -6 neigh show dev "$IF" 2>/dev/null \
-        | awk '/^fe80:/ {print $1; exit}')
+        if [ -n "$NHLL" ]; then  
+            break
+        fi
+        sleep "$PROBE_SLEEP_SEC"
+    done
+fi
 
-    if [ -n "$NH" ]; then
-        break
-    fi
-
-    sleep 0.1
-done
-
-if [ -z "$NH" ]; then
-    echo "No link-local neighbor discovered on $IF"
+if [ -z "$NHLL" ]; then
+    echo "No link-local neighbor discovered on $IF, cannot add route to $DST"
     exit 1
 fi
 
-# echo "Using next-hop: $NH"
-
-ip -6 route replace "$DST" via "$NH" dev "$IF" metric "$MET"
-
-echo "Route installed:"
-ip -6 route show "$DST"
+ip -6 route replace "$DST" via "$NHLL" dev "$IF" metric "$MET"

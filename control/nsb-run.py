@@ -10,6 +10,7 @@ Producer side (this script):
 
 import argparse
 import calendar
+import concurrent.futures
 import glob
 import json
 import logging
@@ -36,6 +37,7 @@ log = logging.getLogger(__name__)
 TIME_OFFSET: Optional[float] = None
 etcd_client = None
 writing_lock = threading.Lock()
+PARALLEL_WORKERS = 1
 
 # ==========================================
 # HELPERS
@@ -289,7 +291,7 @@ def process_epoch_from_queue(json_path: str) -> None:
     delete = epoch_dict.get("links-del", [])
     update = epoch_dict.get("links-update", [])
 
-    for l in add:
+    def apply_link_add(l: Dict) -> None:
         ep2_antenna = 1
         ep1_antenna = 1
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
@@ -307,7 +309,7 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_client.put(etcd_key1, json.dumps(l))
         etcd_client.put(etcd_key2, json.dumps(l))
 
-    for l in delete:
+    def apply_link_delete(l: Dict) -> None:
         ep2_antenna = 1
         ep1_antenna = 1
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
@@ -324,7 +326,7 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_client.delete(etcd_key1)
         etcd_client.delete(etcd_key2)
 
-    for l in update:
+    def apply_link_update(l: Dict) -> None:
         ep2_antenna = 1
         ep1_antenna = 1
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
@@ -340,7 +342,7 @@ def process_epoch_from_queue(json_path: str) -> None:
                 f"⚠️  [{os.path.basename(json_path)}] Link not found in Etcd for "
                 f"{l['endpoint1']} - {l['endpoint2']}. Skipping update."
             )
-            continue
+            return
 
         vni = calculate_vni(l["endpoint1"], ep1_antenna, l["endpoint2"], ep2_antenna)
         l["vni"] = vni
@@ -352,17 +354,36 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_client.put(etcd_key1, json.dumps(l))
         etcd_client.put(etcd_key2, json.dumps(l))
 
-    # D. Push Runtime Commands
-    for node, cmds in epoch_dict.get("run", {}).items():
+    def apply_run_cmd(node_and_cmds: Tuple[str, List]) -> None:
+        node, cmds = node_and_cmds
         log.debug(
             f"▶️  [{os.path.basename(json_path)}] Pushing run commands to node {node}: {cmds}"
         )
         etcd_client.put(f"/config/run/{node}", json.dumps(cmds))
 
+    def execute_items(items: List, fn) -> None:
+        if not items:
+            return
+        if PARALLEL_WORKERS <= 1 or len(items) == 1:
+            for item in items:
+                fn(item)
+            return
+        with concurrent.futures.ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as pool:
+            futures = [pool.submit(fn, item) for item in items]
+            for fut in concurrent.futures.as_completed(futures):
+                fut.result()
+
+    execute_items(add, apply_link_add)
+    execute_items(delete, apply_link_delete)
+    execute_items(update, apply_link_update)
+
+    # D. Push Runtime Commands
+    execute_items(list(epoch_dict.get("run", {}).items()), apply_run_cmd)
+
     log.info(f"✅ [{os.path.basename(json_path)}] Epoch applied successfully.")
 
 
-def process_epoch_from_dir(json_path: str, queue_path: str, fixed_wait: int = -1) -> None:
+def process_epoch_from_file(json_path: str, queue_path: str, fixed_wait: int = -1) -> None:
     """
     Reads an epoch file from epoch_dir, waits according to epoch time, then enqueues it
     into epoch-queue using atomic publish.
@@ -395,6 +416,7 @@ def run_all_epochs(
     queue_path: str,
     fixed_wait: int = -1,
     loop_delay: Optional[int] = None,
+    resume: bool = False,
 ) -> int:
     global TIME_OFFSET
 
@@ -402,11 +424,25 @@ def run_all_epochs(
     if not files:
         log.warning(f"⚠️ No epoch files found in {os.path.join(epoch_dir, file_pattern)}")
         return 1
-
     log.info(f"🚀 Starting emulation with {len(files)} epochs found.")
+    
+    if resume:
+        log.info("🔄 Resume emulation from state in Etcd...")
+        cfg_val, _ = etcd_client.get(f"/config/epoch-config")
+        cfg = json.loads(cfg_val.decode())
+        if "epoch-file" in cfg:
+            last_epoch = os.path.join(epoch_dir, cfg["epoch-file"])
+            log.info(f"🔍 Last applied epoch according to Etcd: {last_epoch}")
+            if last_epoch in files:
+                idx = files.index(last_epoch)
+                files = files[idx:]  # resume from last applied epoch
+                log.info(f"✅ Resuming emulation from epoch {last_epoch} (index {idx})")
+            else:
+                log.warning(f"⚠️ Last applied epoch {last_epoch} not found in current epoch list. Restarting from the beginning.")
+                exit(1)
     while True:
         for f in files:
-            process_epoch_from_dir(json_path=f, queue_path=queue_path, fixed_wait=fixed_wait)
+            process_epoch_from_file(json_path=f, queue_path=queue_path, fixed_wait=fixed_wait)
 
         if loop_delay is not None:
             log.info(f"🔄 Looping emulation after {loop_delay} seconds...")
@@ -423,7 +459,7 @@ def run_all_epochs(
 # MAIN
 # ==========================================
 def main() -> int:
-    global etcd_client
+    global etcd_client, PARALLEL_WORKERS
 
     parser = argparse.ArgumentParser(
         description="Apply all epoch JSON files to Etcd (with optional virtual-time synchronization)."
@@ -476,13 +512,26 @@ def main() -> int:
         help="Enable interactive mode: only watch epoch-queue for new epochs. No epoch directory scanning.",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the emulation process.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--parallel-workers",
+        default=4,
+        type=int,
+        help="Number of worker threads for per-epoch Etcd operations (default: 4).",
+    )
+
 
     args = parser.parse_args()
     log.setLevel(args.log_level.upper())
+    PARALLEL_WORKERS = max(1, args.parallel_workers)
 
     etcd_client = connect_etcd(
         etcd_host=args.etcd_host,
@@ -531,6 +580,7 @@ def main() -> int:
                 queue_path=epoch_queue_dir,
                 fixed_wait=args.fixed_wait,
                 loop_delay=args.loop_delay,
+                resume=args.resume,
             )
     finally:
         queue_observer.stop()

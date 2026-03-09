@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Tuple
 import os
 import re
 import json
+import shutil
 import argparse
 from glob import glob
 from datetime import datetime, timedelta
@@ -38,6 +39,7 @@ from scipy.sparse.csgraph import dijkstra
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
+cross_type_penalty = 255  # used to prefer next hop of the same type
 
 # ==========================================
 # HELPERS
@@ -81,6 +83,28 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
 def is_ipv6(addr: str) -> bool:
     return ":" in addr
 
+def parse_epoch_time(epoch_time: str) -> datetime:
+    return datetime.fromisoformat(epoch_time.replace("Z", "+00:00"))
+
+def join_route_commands_with_sleep(
+    commands: List[str],
+    max_routes_per_epoch: int,
+    sleep_seconds: int,
+) -> str:
+    if not commands:
+        return ""
+    if max_routes_per_epoch <= 0 or sleep_seconds <= 0:
+        return "; ".join(commands)
+
+    output_cmds: List[str] = []
+    for idx, cmd in enumerate(commands):
+        output_cmds.append(cmd)
+        reached_batch_end = (idx + 1) % max_routes_per_epoch == 0
+        is_last_cmd = idx == len(commands) - 1
+        if reached_batch_end and not is_last_cmd:
+            output_cmds.append(f"sleep {sleep_seconds}")
+    return "; ".join(output_cmds)
+
 # ==========================================
 # ROUTE COMPUTATION LOGIC
 # ==========================================
@@ -123,6 +147,7 @@ def pick_primary_secondary_next_hops(A_csr: csr_matrix, dist, src_idx: int, targ
 def compute_routes_single_epoch(
     epoch_data: dict,
     node_map: dict,
+    node_type: dict,
     A_lil: lil_matrix,
     node_to_route: list,
     node_to_install: list,
@@ -133,10 +158,33 @@ def compute_routes_single_epoch(
     inv_node_map: dict,
     ip_map: dict,
     ip_version: int,
-    redundancy: bool
+    redundancy: bool,
+    routing_metric: str,
+    max_routes_per_epoch: int,
+    sleep_seconds: int,
 ) -> dict:
-    # Apply link-add only if not drain-before-break epoch
+    
+    def compute_link_weight(src: str, dst: str, link: dict) -> int:
+        # apply cross-type penalty
+        w = 0
+        if node_type.get(src) != node_type.get(dst):
+            w = cross_type_penalty
+        else:
+            w = 1
+        if routing_metric == "hops":
+            return w
+        elif routing_metric == "delay":
+            # Simulated delay-based weight (in practice, this would be derived from actual delay data)
+            delay = link.get("delay", 0)
+            return max(w + delay,255)
+        
+    no_links_added = 0
+    no_links_updated = 0
+    no_links_deleted = 0
+    
+    # Apply link-add and update only if not drain-before-break epoch
     if not drain_before_break:
+        # Apply link add
         for link_add in epoch_data.get("links-add", []):
             src = link_add.get("endpoint1")
             dst = link_add.get("endpoint2")
@@ -147,8 +195,27 @@ def compute_routes_single_epoch(
             if i == j:
                 continue
             if A_lil[i, j] == 0:
-                A_lil[i, j] = 1
-                A_lil[j, i] = 1
+                w = compute_link_weight(src, dst, link_add)
+                A_lil[i, j] = w
+                A_lil[j, i] = w
+                no_links_added += 1
+        
+        # Apply link update
+        if routing_metric != 'hops': 
+            # no need to consider link updates if using hop count as metric, since weight is always 1 or cross_type_penalty
+            for link_update in epoch_data.get("links-update", []):
+                src = link_update.get("endpoint1")
+                dst = link_update.get("endpoint2")
+                if src not in node_map or dst not in node_map:
+                    continue
+                i = node_map[src]
+                j = node_map[dst]
+                if i == j:
+                    continue
+                w = compute_link_weight(src, dst, link_update)
+                A_lil[i, j] = w
+                A_lil[j, i] = w
+                no_links_updated += 1
 
     # Apply link-del
     for link_del in epoch_data.get("links-del", []):
@@ -163,13 +230,22 @@ def compute_routes_single_epoch(
         if A_lil[i, j] != 0:
             A_lil[i, j] = 0
             A_lil[j, i] = 0
+            no_links_deleted += 1
 
+
+    if no_links_added == 0 and no_links_updated == 0 and no_links_deleted == 0:
+        return {}
+    
     # Run Dijkstra (unweighted hop-count)
     A_csr: csr_matrix = A_lil.tocsr()
-    dist, _predecessors = dijkstra(A_csr, directed=False, unweighted=True, return_predecessors=True)
+    dist, _predecessors = dijkstra(A_csr, directed=False, unweighted=False, return_predecessors=True)
 
     # Build route commands for this epoch
-    route_string: Dict[int, str] = {}   # src_idx -> cmd string
+    route_commands: Dict[str, List[str]] = {}   # src_name -> list of cmd strings
+
+    def append_route_cmd(src_idx: int, cmd: str) -> None:
+        src_name = inv_node_map[src_idx]
+        route_commands.setdefault(src_name, []).append(cmd)
     
     for target_node in node_to_route:
         if target_node not in node_map:
@@ -207,9 +283,6 @@ def compute_routes_single_epoch(
                 log.warning(f"\t ⚠️ No path from {inv_node_map[src_idx]} to {target_node}, skipping.")
                 continue
 
-            if src_idx not in route_string:
-                route_string[src_idx] = "sleep 0.1"  # allow preceding interface setup
-
             def route_add(src_name: str, dst_name: str, nh_name: str, metric: int) -> None:
                 src_idx = node_map[src_name]
 
@@ -232,19 +305,12 @@ def compute_routes_single_epoch(
                 dev_name = f"vl_{nh_name}_1"
 
                 if ip_version == 6:
-                    # check next-hop onlink route exists
-                    onlink_route_str = f"ip -6 route replace {nh_ip} dev {dev_name} metric {metric} onlink"
-                    if onlink_route_str not in route_string[src_idx]:
-                        route_string[src_idx] = route_string.get(src_idx, "") + "; " + onlink_route_str
-                    if nh_name != dst_name:
-                        # If next hop is the target itself, we already added the onlink route above, so we can skip adding a host route to itself and just rely on the onlink route. This also avoids the issue of needing to specify a dev for a host route to itself.
-                        route_append_str = f"ip -6 route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric}"
-                        route_string[src_idx] = route_string.get(src_idx, "") + "; " + route_append_str
-                        return
-                    # return f"extra/routing/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
+                    route_append_str = f"extra/routing/add_ipv6_route_ll.sh {dev_name} {dst_ip} {metric}"
+                    append_route_cmd(src_idx, route_append_str)
+                    return 
                 elif ip_version == 4:
                     route_append_str = f"ip route replace {dst_ip} via {nh_ip} dev {dev_name} metric {metric} onlink"
-                    route_string[src_idx] = route_string.get(src_idx, "") + "; " + route_append_str
+                    append_route_cmd(src_idx, route_append_str)
                     return
                 else:
                     raise ValueError(f"Unsupported IP version: {ip_version}")
@@ -265,17 +331,18 @@ def compute_routes_single_epoch(
     new_epoch_data["time"] = epoch_data.get("time", "")
 
     try:
-        t = datetime.fromisoformat(new_epoch_data["time"].replace("Z", "+00:00"))
+        t = parse_epoch_time(new_epoch_data["time"])
         t_new = t - timedelta(seconds=offset_seconds)
         new_epoch_data["time"] = t_new.strftime("%Y-%m-%dT%H:%M:%SZ")
         new_epoch_data["run"] = {}
-
-        for src_idx, routes in route_string.items():
-            src_name = inv_node_map[src_idx]
-            run = new_epoch_data.get("run", {}).get(src_name, [])
-            run.append(routes)
-            new_epoch_data["run"][src_name] = run
-
+        for src_name, commands in route_commands.items():
+            combined_cmd = join_route_commands_with_sleep(
+                commands=commands,
+                max_routes_per_epoch=max_routes_per_epoch,
+                sleep_seconds=sleep_seconds,
+            )
+            if combined_cmd:
+                new_epoch_data["run"][src_name] = [combined_cmd]
     except ValueError as ve:
         log.warning(f"\t ⚠️ Error parsing time '{new_epoch_data['time']}': {ve}")
 
@@ -288,27 +355,37 @@ def compute_routes(
     out_epoch_dir: str,
     node_type_to_route: list,
     node_type_to_install: list,
+    node_type_to_process: list,
     drain_before_break_offset: int,
     link_creation_offset: int,
     ip_version: int,
     etcd_etchosts_prefix: str,
-    redundancy: bool
+    redundancy: bool,
+    routing_metric: str,
+    max_routes_per_epoch: int,
+    route_batch_sleep_seconds: int,
 ) -> None:
     # Load config and build node map (same as original)
     log.info("📁 Loading configuration from etcd...")
     nodes = get_prefix_data(etcd_client, "/config/nodes")
     log.info(f"🔎 Found {len(nodes)} nodes in configuration.")
+    log.info(f"     - Node type: {node_type_to_process}")
     log.info(f"     - Node type to route: {node_type_to_route}")
     log.info(f"     - Node type to install: {node_type_to_install}")
+
     
     node_map: Dict[str, int] = {} # node_name -> index in adjacency matrix
+    node_type: Dict[str, str] = {} # node_name -> node_type 
     node_to_route: List[str] = []
     node_to_install: List[str] = []
 
     # Build node map and filter nodes to route/install based on type
     idx = 0
     for name, node_info in nodes.items():
+        if node_info.get("type") not in node_type_to_process and "any" not in node_type_to_process:
+            continue
         node_map[name] = idx
+        node_type[name] = node_info.get("type", "unknown")
         idx += 1
         if node_info.get("type") in node_type_to_route or "any" in node_type_to_route:
             node_to_route.append(name)
@@ -347,10 +424,12 @@ def compute_routes(
     num_epochs = 0
     previous_next_hops: Dict[int, Dict[int, list]] = {}
     file_counter = 1
+    last_inserted_epoc_time: datetime | None = None
 
     for path in epoch_files:
         with open(path, "r", encoding="utf-8") as f:
             epoch_data = json.load(f)
+        original_epoch_time = parse_epoch_time(epoch_data.get("time", ""))
 
         log.info(f"\t 💾 Processing epoch file: {path} (time: {epoch_data.get('time','UNKNOWN')})")
 
@@ -359,6 +438,7 @@ def compute_routes(
             dbb_epoch_data = compute_routes_single_epoch(
                 epoch_data=epoch_data,
                 node_map=node_map,
+                node_type=node_type,
                 A_lil=A_lil,
                 node_to_route=node_to_route,
                 node_to_install=node_to_install,
@@ -370,6 +450,9 @@ def compute_routes(
                 ip_map=ip_map,
                 ip_version=ip_version,
                 redundancy=redundancy,
+                routing_metric=routing_metric,
+                max_routes_per_epoch=max_routes_per_epoch,
+                sleep_seconds=route_batch_sleep_seconds,
             )
             if dbb_epoch_data.get("run", {}) != {}:
                 file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
@@ -377,18 +460,25 @@ def compute_routes(
                 out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
                 with open(out_epoch_path, "w", encoding="utf-8") as f_out:
                     json.dump(dbb_epoch_data, f_out, indent=2)
+                last_inserted_epoc_time = parse_epoch_time(dbb_epoch_data.get("time", ""))
 
         # 2) Add original epoch
+        if last_inserted_epoc_time is not None and original_epoch_time <= last_inserted_epoc_time:
+            raise ValueError(
+                "❌ Original epoch time must be strictly greater than the last inserted epoch time "
+                f"({epoch_data.get('time')} !> {last_inserted_epoc_time.strftime('%Y-%m-%dT%H:%M:%SZ')})."
+            )
         file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
         file_counter += 1
         out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
-        with open(out_epoch_path, "w", encoding="utf-8") as f_out:
-            json.dump(epoch_data, f_out, indent=2)
+        shutil.copyfile(path, out_epoch_path)
+        last_inserted_epoc_time = original_epoch_time
 
         # 3) Add routes to original epoch (shifted earlier by link_creation_offset)
         new_epoch_data = compute_routes_single_epoch(
             epoch_data=epoch_data,
             node_map=node_map,
+            node_type=node_type,
             A_lil=A_lil,
             node_to_route=node_to_route,
             node_to_install=node_to_install,
@@ -400,13 +490,17 @@ def compute_routes(
             ip_map=ip_map,
             ip_version=ip_version,
             redundancy = redundancy,
+            routing_metric=routing_metric,
+            max_routes_per_epoch=max_routes_per_epoch,
+            sleep_seconds=route_batch_sleep_seconds,
         )
-
-        file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
-        file_counter += 1
-        out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
-        with open(out_epoch_path, "w", encoding="utf-8") as f_out:
-            json.dump(new_epoch_data, f_out, indent=2)
+        if new_epoch_data.get("run", {}) != {}:
+            file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
+            file_counter += 1
+            out_epoch_path = os.path.join(out_epoch_dir, os.path.basename(file_path))
+            with open(out_epoch_path, "w", encoding="utf-8") as f_out:
+                json.dump(new_epoch_data, f_out, indent=2)
+            last_inserted_epoc_time = parse_epoch_time(new_epoch_data.get("time", ""))
 
         num_epochs += 1
         if num_epochs % 10 == 0:
@@ -420,6 +514,7 @@ def compute_routes(
         dbb_epoch_data0 = compute_routes_single_epoch(
             epoch_data=epoch_data0,
             node_map=node_map,
+            node_type=node_type,
             A_lil=A_lil,
             node_to_route=node_to_route,
             node_to_install=node_to_install,
@@ -431,11 +526,15 @@ def compute_routes(
             ip_map=ip_map,
             ip_version=ip_version,
             redundancy = redundancy,
+            routing_metric=routing_metric,
+            max_routes_per_epoch=max_routes_per_epoch,
+            sleep_seconds=route_batch_sleep_seconds,
         )
-        file_path0 = unnumbered_file_pattern.replace("??????", "0")
-        out_epoch_path0 = os.path.join(out_epoch_dir, os.path.basename(file_path0))
-        with open(out_epoch_path0, "w", encoding="utf-8") as f_out:
-            json.dump(dbb_epoch_data0, f_out, indent=2)
+        if dbb_epoch_data0.get("run", {}) != {}:
+            file_path0 = unnumbered_file_pattern.replace("??????", "0")
+            out_epoch_path0 = os.path.join(out_epoch_dir, os.path.basename(file_path0))
+            with open(out_epoch_path0, "w", encoding="utf-8") as f_out:
+                json.dump(dbb_epoch_data0, f_out, indent=2)
 
 # ==========================================
 # MAIN
@@ -453,12 +552,17 @@ def main() -> int:
     parser.add_argument("--file-pattern", help="Epoch filename pattern, takes precedence over Etcd.")
     parser.add_argument("--out-epoch-dir", help="Output dir for processed epochs with route injection.")
 
-    parser.add_argument("--node-type-to-route", default="any", help="Comma-separated node types to route to (default: any). Matches against node 'type' in config. Use 'any' to route to all nodes.")
-    parser.add_argument("--node-type-to-install", default="any", help="Comma-separated node types to install routes on (default: any). Matches against node 'type' in config. Use 'any' to install on all nodes.")
+    parser.add_argument("--node-type-to-route", default="", help="Comma-separated node types to route to (default: --node-type). Matches against node 'type' in config. Use 'any' to route to all nodes.")
+    parser.add_argument("--node-type-to-install", default="", help="Comma-separated node types to install routes on (default: --node-type). Matches against node 'type' in config. Use 'any' to install on all nodes.")
+    parser.add_argument("--node-type", default="any", help="Comma-separated node types to include in the Dijkstra graph (default: any). Matches against node 'type' in config. Use 'any' to install on all nodes.")
+    parser.add_argument("--node-type-no-forward", default="user", help="Comma-separated node types to treat as hosts not suporting IP forwarding (default: user). Matches against node 'type' in config.")
     parser.add_argument("--drain-before-break-offset", type=int, default=0, help="Seconds offset for drain-before-break epoch. If 0, no separate drain-before-break epoch is emitted.")
     parser.add_argument("--link-creation-offset", type=int, default=1, help="Seconds offset for route replacement after link creation. Default: 1 second after link creation.")
     parser.add_argument("--redundancy", action="store_true", help="Whether to compute secondary next hops for redundancy (default: False).")
     parser.add_argument("--ip-version", type=int, choices=[4, 6], default=4, help="Generate IPv4 or IPv6 route commands. Default: 4 (IPv4).")
+    parser.add_argument("--routing-metrics", choices=["hops","delay"], default="hops", help="Whether to use hop count or delay as routing metric (default: hops)")
+    parser.add_argument("--max-routes-per-epoch", type=int, default=50, help="Maximum number of route commands before inserting a sleep in the combined command string. If <=0, no sleeps are inserted. Default: 50.")
+    parser.add_argument("--route-batch-sleep-seconds", type=int, default=1, help="Seconds to sleep between route batches inside a single command string. Default: 1.")
     
     parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
 
@@ -479,7 +583,31 @@ def main() -> int:
         log.error(f"Details: {e}")
         return 2
 
+    
+    # node type checks
+    if args.node_type_to_route == "":
+            args.node_type_to_route = args.node_type
+    if args.node_type_to_install == "":
+        args.node_type_to_install = args.node_type
+    node_type_to_process = set(args.node_type.split(","))
+    node_type_to_route_list = set(args.node_type_to_route.split(","))
+    node_type_to_install_list = set(args.node_type_to_install.split(","))
+    
+    if "any" in node_type_to_process:
+        pass  # no filtering needed
+    else:
+        if not node_type_to_route_list.issubset(node_type_to_process):
+            log.error("❌ --node-type-to-route contains types not in global --node-type.")
+            return 5
+        if not node_type_to_install_list.issubset(node_type_to_process):
+            log.error("❌ --node-type-to-install contains types not in global --node-type.")
+            return 6
+    
     # epoch dir / pattern resolution
+    if args.route_batch_sleep_seconds < 0:
+        log.error("❌ --route-batch-sleep-seconds must be >= 0.")
+        return 7
+
     epoch_dir = args.epoch_dir
     file_pattern = args.file_pattern
     if epoch_dir is None or file_pattern is None:
@@ -505,20 +633,25 @@ def main() -> int:
         else:
             log.error("❌ Please specify an empty output directory to proceed.")
             return 3
-
+        
+        
     try:
         compute_routes(
             etcd_client=etcd_client,
             epoch_dir=epoch_dir,
             file_pattern=file_pattern,
             out_epoch_dir=args.out_epoch_dir,
-            node_type_to_route=args.node_type_to_route.split(","),
-            node_type_to_install=args.node_type_to_install.split(","),
+            node_type_to_route=node_type_to_route_list,
+            node_type_to_install=node_type_to_install_list,
+            node_type_to_process=node_type_to_process,
             drain_before_break_offset=args.drain_before_break_offset,
             link_creation_offset=args.link_creation_offset,
             ip_version=args.ip_version,
             etcd_etchosts_prefix="/config/etchosts/" if args.ip_version == 4 else "/config/etchosts6/",
             redundancy=args.redundancy if args.drain_before_break_offset == 0 else True,  # redundancy needed with drain-before-break
+            routing_metric=args.routing_metrics if args.routing_metrics else "hops",
+            max_routes_per_epoch=args.max_routes_per_epoch,
+            route_batch_sleep_seconds=args.route_batch_sleep_seconds,
         )
     except Exception as e:
         log.error(f"❌ Error during route computation: {e}")

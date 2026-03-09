@@ -27,26 +27,30 @@ node_map: Dict[str, int] = {}                        # name -> index
 # HELPERS
 # ================================
 
-def setup_logging(logfile=None, log_level=logging.INFO) -> logging.Logger:
-    log = logging.getLogger()
-    log.setLevel(logging.INFO)
+# def setup_logging(logfile=None, log_level=logging.INFO) -> logging.Logger:
+#     log = logging.getLogger()
+#     log.setLevel(log_level)
 
-    formatter = logging.Formatter(
-        "[%(levelname)s] %(message)s"
-    )
+#     # Avoid duplicate logs when setup is called after a prior basicConfig/handler setup.
+#     for h in list(log.handlers):
+#         log.removeHandler(h)
 
-    # Console handler (always active)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    log.addHandler(console_handler)
+#     formatter = logging.Formatter(
+#         "[%(levelname)s] %(message)s"
+#     )
 
-    # Optional file handler
-    if logfile:
-        file_handler = logging.FileHandler(logfile, mode="a")
-        file_handler.setFormatter(formatter)
-        log.addHandler(file_handler)
+#     # Console handler (always active)
+#     console_handler = logging.StreamHandler()
+#     console_handler.setFormatter(formatter)
+#     log.addHandler(console_handler)
 
-    return log
+#     # Optional file handler
+#     if logfile:
+#         file_handler = logging.FileHandler(logfile, mode="a")
+#         file_handler.setFormatter(formatter)
+#         log.addHandler(file_handler)
+
+#     return log
 
 def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
     if not epoch_dir or not file_pattern:
@@ -430,7 +434,7 @@ def compute_streaming_stats(config_file: str,
     duration_max = None
     partition_log: List[Dict] = []
 
-    # For METIS clustering (time-weighted adjacency):
+
     # counts how many epochs each undirected edge was active
     edge_active_count: Dict[Tuple[int, int], int] = defaultdict(int)
 
@@ -501,7 +505,6 @@ def compute_streaming_stats(config_file: str,
         num_epochs += 1
 
         # --- accumulate time-weighted adjacency (one count per epoch an edge is active)
-        # TODO: change with epoch duration if epochs are irregularly spaced
         for key in active_links:
             edge_active_count[key] += 1
 
@@ -740,7 +743,7 @@ def main() -> int:
     )
 
     args = parser.parse_args()
-    log = setup_logging(args.log_file, log_level=args.log_level.upper())
+    log.setLevel(args.log_level.upper())
     
     compute_streaming_stats(
         config_file=args.config,

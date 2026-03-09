@@ -161,6 +161,16 @@ def main() -> int:
             ssh_cmd = ssh_base + docker_cmd
 
             log.info("📤 Copying from local host to node")
+            if sys.platform == "darwin":
+                try:
+                    subprocess.run(
+                        ["xattr", "-d", "-r", "com.apple.provenance", args.src],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                except FileNotFoundError:
+                    pass
             tar_cmd = ["tar", "cf", "-", "-C", os.path.dirname(args.src) or ".", os.path.basename(args.src)]
 
             p_tar = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE)

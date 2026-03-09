@@ -16,8 +16,10 @@ COMMANDS = {
     "rm": "control/nsb-rm.py",
     "stats": "utils/nsb-stats.py",
     "exec": "utils/nsb-exec.py",
+    "exectype": "utils/nsb-exectype.py",
     "cp": "utils/nsb-cp.py",
-    "unlink": "utils/nsb-unlink.py",
+    "cptype": "utils/nsb-cptype.py",
+    "reset": "utils/nsb-reset.py",
     "inspect": "utils/nsb-inspect.py",
     "status": "utils/nsb-status.py",
 }
@@ -65,5 +67,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

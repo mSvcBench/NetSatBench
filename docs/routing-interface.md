@@ -141,5 +141,8 @@ By adhering to this interface, developers can integrate new routing mechanisms i
 
 ---
 
-## Example Implementation
+## Built-in Implementation
+### FRR-based Routing Module
 An example routing module implementing this interface using FRR can be found in the `sat-container/extra/routing/isis.py` file for IS-IS routing protocol IPv4 and in `sat-container/extra/routing/isisv6.py` for IPv6.
+### Single-hop IPv6 Routing Module
+A routing module that configures IPv6 routes with neighbour nodes only based on link-local-address. This module can be found in the `sat-container/extra/routing/single_hop_ipv6.py` file.

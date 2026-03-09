@@ -7,8 +7,6 @@
     "sidecars": [],
     "cpu-request": "100m",
     "mem-request": "200MiB",
-    "cpu-limit": "200m",
-    "mem-limit": "400MiB",
     "L3-config": {
       "enable-netem"  : true,
       "enable-routing" : false,
