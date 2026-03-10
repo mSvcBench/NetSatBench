@@ -534,7 +534,9 @@ All fields except `time` are optional.
       "endpoint2": "sat2",  
       "rate": "50mbit",  
       "loss": 0,  
-      "delay": "5ms"  
+      "delay": "5ms",
+      "pos1": "-1.311470,50.822530,0.00",
+      "pos2": "-7.910557,36.775805,1198.28"   
     }  
   ],  
 
@@ -632,6 +634,20 @@ All fields except `time` are optional.
 * **Requirement**: optional
 * **Units / Format**: Number of packets.
 * **Description**: Maximum number of packets that can be queued in the `tc netem` buffer.
+
+#### `pos1`
+* **Type**: string
+* **Requirement**: optional
+* **Units / Format**: "longitude (deg),latitude (deg), altitude (km)" (e.g., `-1.311470,50.822530,0.00`).
+* **Description**: Position of the first endpoint.
+* **Note**: This field is informational and does not affect the emulation behavior. It can be used by user-defined applications or visualization tools that consume epoch data.
+
+#### `pos2`
+* **Type**: string
+* **Requirement**: optional
+* **Units / Format**: "longitude (deg),latitude (deg), altitude (km)" (e.g., `-7.910557,36.775805,1198.28`).
+* **Description**: Position of the second endpoint.
+* **Note**: This field is informational and does not affect the emulation behavior. It can be used by user-defined applications or visualization tools that consume epoch data.
 
 ---
 
