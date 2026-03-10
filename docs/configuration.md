@@ -557,11 +557,13 @@ All fields except `time` are optional.
   "run": {  
     "grd1": [
       "screen -dmS iperf_test iperf3 -s"  
+    ],
+    "type:user": [
+      "screen -dmS ping_test ping grd1"  
     ]  
   }  
 }
 ```
----
 
 ### Field Descriptions
 
@@ -682,17 +684,21 @@ Structure:
   "<node-name>": [
     "<command-1>",
     "<command-2>"
+  ],
+  "type:<node-type>": [
+    "<command-3>",
+    "<command-4>"
   ]
 }
 ```
 
 Per-entry:
 
-* **Key** (`<node-name>`)
+* **Key** `<node-name>` or `type:<node-type>` (e.g., `type:user`)
 
   * **Type**: string 
-  * **Requirement**: mandatory, must match a node defined in `sat-config.json`)
-  * **Description**: Target node in which commands are executed.
+  * **Requirement**: mandatory, must match a node or node type defined in `sat-config.json`)
+  * **Description**: Target node or node type in which commands are executed.
   * **Value** (list of commands)
 
   * **Type**: array of strings

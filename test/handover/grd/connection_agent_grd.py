@@ -776,8 +776,6 @@ def main() -> None:
     ap.add_argument("--sat-ipv6-prefix", default="2001:db8:100::/64", help="IPv6 prefix used for satellite IPv6 addresses (default: 2001:db8:100::/64)")
     ap.add_argument("--link-setup-delay", type=float, default=5, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
     ap.add_argument("--link-duration-initial-value", type=float, default=4*60, help="Initial value in seconds for the duration of new links, default: 4min)")
-    ap.add_argument("--heartbeat-interval", type=float, default=1.0, help="Heartbeat HELLO period in seconds (default: 1.0)")
-    ap.add_argument("--heartbeat-max-failures", type=int, default=3, help="Max consecutive missed heartbeat ACKs before user removal (default: 3)")
     ap.add_argument("--log-level", default=os.getenv("LOG_LEVEL", "INFO"), help="Logging level (default: INFO or value of LOG_LEVEL env var)")
     args = ap.parse_args()
     
@@ -805,8 +803,6 @@ def main() -> None:
     etcd_client = get_etcd_client()
     link_setup_delay_s = args.link_setup_delay
     link_duration_initial_value_s = args.link_duration_initial_value
-    heartbeat_interval_s = args.heartbeat_interval
-    heartbeat_max_failures = args.heartbeat_max_failures
     # Add grd to user_db to use handover stratey for the default route towards satellites. The route is stored in downstream_sids 
     
     user_db[os.environ["NODE_NAME"]] = {
