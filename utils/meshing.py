@@ -39,11 +39,7 @@ def main() -> int:
     # Load the emulation configuration
     with open(args.config, "r") as f:
         config = json.load(f)
-    # parse node to mesh based on type and json format, e.g
-    # "nodes": {
-    # "grd1": {
-    #     "type": "gateway"
-    # }},
+
     node_to_mesh = []
     for node_name, node_cfg in config.get("nodes", {}).items():
         if node_cfg.get("type") == args.type:
@@ -52,20 +48,7 @@ def main() -> int:
     # Load the epoc file    with open(args.epoc_file, "r") as f:
     with open(args.epoc_file, "r") as f:
         epoc = json.load(f)
-    # Add links among all nodes of the specified type, e.g.
-    # "links-add": [
-    #   {
-    #     "endpoint1": "grd1",
-    #     "endpoint2": "grd2",
-    #     "rate": "200mbit",
-    #     "loss":0,
-    #     "delay": "1ms"
-    #   }],
-    #   "run": {
-    #    "grd1": [
-    #        "ip6tables -t nat -A POSTROUTING -o vl_grd2_1 -j MASQUERADE"
-    #    ],
-    #   }
+    # Add links among all node to mesh
     for i in range(len(node_to_mesh)):
         for j in range(i+1, len(node_to_mesh)):
             node1 = node_to_mesh[i]

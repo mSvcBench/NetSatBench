@@ -215,6 +215,9 @@ def wait_for_link_local_via_route(dst_ipv6: str, timeout_s: float = 2.0, poll_s:
         time.sleep(poll_s)
     return has_link_local_via_route(dst_ipv6)
 
+# ----------------------------
+#   MAIN LOGIC FOR LINK MANAGEMENT LOCAL SIDE
+# ----------------------------
 def preload_links_db_from_etcd(etcd_client) -> None:
     loaded = 0
     skipped = 0
@@ -243,36 +246,6 @@ def preload_links_db_from_etcd(etcd_client) -> None:
     except Exception as e:
         logging.error("❌ Failed to preload initial links from Etcd: %s", e)
 
-# ----------------------------
-#   WATCHERS
-# ----------------------------
-def watch_link_actions_loop (etcd_client) -> None:
-    global status, current_iface, current_link, new_link
-    logging.info("👀 Watching /config/links (Dynamic Events)...")
-    backoff = 1
-    while True:
-        cancel = None
-        try:
-            events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS_PREFIX)
-            for event in events_iterator:
-                if isinstance(event, etcd3.events.PutEvent):
-                    handle_link_put_action(event)
-                elif isinstance(event, etcd3.events.DeleteEvent):
-                    handle_link_delete_action(event)
-        except Exception as ex:
-            logging.error("❌ Failed to watch link actions (will retry): %s", ex)
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 30)
-        finally:
-            if cancel is not None:
-                try:
-                    cancel()
-                except Exception:
-                    pass
-
-# ----------------------------
-#   MAIN LOGIC FOR LINK MANAGEMENT LOCAL SIDE
-# ----------------------------
 def handle_link_put_action(event):
     ## Process PutEvent (Add/Update)
     if not isinstance(event, etcd3.events.PutEvent):
@@ -475,10 +448,18 @@ def heartbeat_monitor_loop() -> None:
                 misses = heartbeat_failures.get(user_id, 0) + 1
                 heartbeat_failures[user_id] = misses
             if misses >= heartbeat_max_failures:
+                user_ipv6 = user_info.get("user_ipv6", "unknown")
+                if user_ipv6 != "unknown":
+                    # remove user route before removing user from db
+                    try:
+                        ip_cmd = ["ip", "-6", "route", "del", user_ipv6, "dev", user_info.get("grd_dev", "unknown")]
+                        run_cmd(ip_cmd)
+                    except Exception as e:
+                        logging.error("❌ Failed to remove route for user %s with IPv6 %s after missed heartbeats: %s", user_id, user_ipv6, e)
                 user_db.pop(user_id, None)
                 with heartbeat_lock:
                     heartbeat_failures.pop(user_id, None)
-                logging.warning("⚠️ Removed user %s from user_db after %d missed heartbeat ACKs", user_id, misses)
+                logging.warning("⚠️ Removed user %s from user_db after %d missed heartbeat", user_id, misses)
         time.sleep(heartbeat_interval_s)
 
 
@@ -564,10 +545,8 @@ def process_user_handover(user_id ,new_grd_dev = None, new_user_dev=None) -> Non
 
 
 # ----------------------------
-#   MAIN LOGIC FOR LINK MANAGEMENT USER SIDE
+#   COMMAND HANDLERS
 # ----------------------------
-
-
 def handle_user_registration_request(
     sock: socket.socket,
     payload: Dict[str, Any],
@@ -790,6 +769,37 @@ def handle_user_request(
     else:
         logging.warning("❌ Unknown command type: %s", payload.get("type", "N/A"))
 
+# ----------------------------
+#   WATCHERS
+# ----------------------------
+def watch_link_actions_loop (etcd_client) -> None:
+    global status, current_iface, current_link, new_link
+    logging.info("👀 Watching /config/links (Dynamic Events)...")
+    backoff = 1
+    while True:
+        cancel = None
+        try:
+            events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS_PREFIX)
+            for event in events_iterator:
+                if isinstance(event, etcd3.events.PutEvent):
+                    handle_link_put_action(event)
+                elif isinstance(event, etcd3.events.DeleteEvent):
+                    handle_link_delete_action(event)
+        except Exception as ex:
+            logging.error("❌ Failed to watch link actions (will retry): %s", ex)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+        finally:
+            if cancel is not None:
+                try:
+                    cancel()
+                except Exception:
+                    pass
+
+
+# ----------------------------
+#   SERVER
+# ----------------------------
 def prepare_qdisc_for_new_user(user_ipv6: str, user_id: str) -> None:
     dev = "veth0_rt" # Assuming this is the shaping interface
     dst = user_ipv6.split("/")[0]  # Extract IP from possible prefix
@@ -808,7 +818,7 @@ def init_qdisc() -> None:
     run_cmd(["tc", "qdisc", "add", "dev", dev, "root", "handle", "1:", "htb", "default", "1"])
     run_cmd(["tc", "class", "add", "dev", dev, "parent", "1:", "classid", "1:1", "htb", "rate", "10gbit", "ceil", "10gbit"])
     logging.info(f"🎛️ Initialized root qdisc on dev {dev} for handover delay shaping")
-    
+
 def serve(bind_addr: str, port: int, ho_delay: float) -> None:
     # prepare qdisk for users (if ho_delay is set)
     if ho_delay > 0:
@@ -826,6 +836,9 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
             logging.warning("❌ Request failed from [%s]:%d: %s", peer[0], peer[1], e)
 
 
+# ----------------------------
+#   ENTRYPOINT
+# ----------------------------
 def main() -> None:
     global is_user_handover_needed, is_grd_handover_needed, process_connection_handover, grd_ipv6, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links
     ap = argparse.ArgumentParser()
