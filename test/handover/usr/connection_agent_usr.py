@@ -206,7 +206,7 @@ def derive_egress_dev(addr: str) -> str:
     out = run_cmd_capture(["ip", "-6", "route", "get", addr])
     dev_match = DEV_RE.search(out)
     if not dev_match:
-        raise RuntimeError(f"Could not parse egress dev from: {out}")
+        raise RuntimeError(f"❌ Could not parse egress dev from: {out}")
     return dev_match.group(1)
 
 
@@ -268,7 +268,7 @@ def on_registration_accept_timeout() -> None:
     if status != "registration_in_progress":
         return
 
-    logging.warning("⏱️ Registration accept timeout reached. Resetting state and retrying registration.")
+    logging.warning("⚠️ Registration accept timeout reached. Resetting state and retrying registration.")
     status = "not_registered"
     current_dev = None
 
@@ -370,10 +370,10 @@ def preload_links_db_from_etcd(etcd_client) -> None:
                 loaded += 1
             except Exception as e:
                 skipped += 1
-                logging.warning("⚠️ Skipping malformed initial link entry: %s", e)
+                logging.error("❌ Skipping malformed initial link entry: %s", e)
         logging.info("📥 Initial links preload completed: loaded=%d skipped=%d", loaded, skipped)
     except Exception as e:
-        logging.warning("⚠️ Failed to preload initial links from Etcd: %s", e)
+        logging.error("❌ Failed to preload initial links from Etcd: %s", e)
 
 #  Registration
 def handle_registration_request() -> None:
@@ -390,13 +390,13 @@ def handle_registration_request() -> None:
     
     ## Process initial registration using link with minimum delay (if any)
     init_dev, _ = chose_reg_device(reg_metadata) # chose of the initial dev to serve the user based on handover strategy 
-    
+    init_sat_name = links_db.get(init_dev, {}).get("remote_endpoint_name", "") if init_dev else ""
     if init_dev != "":
         init_sat_ipv6 = links_db.get(init_dev, {}).get("remote_endpoint_ipv6", "")
         if not init_sat_ipv6:
-            logging.info(f"❌ Failed to resolve access satellite IPv6 address for dev {init_dev}")
+            logging.info(f"❌ Failed to resolve access satellite IPv6 address for satellite {init_sat_name}")
             return
-        logging.info(f"🛰️ Found access link via {init_sat_ipv6} dev {init_dev}. Registering...")
+        logging.info(f"🛰️ Chosen access satellite {init_sat_name}. Registering...")
         try:
             status = "registration_in_progress"
             # add route to grd via initial satellite to ensure registration request can reach the grd
@@ -418,13 +418,13 @@ def handle_registration_request() -> None:
             current_dev = init_dev
             start_registration_timeout()
             # For this example, we just log the registration action.
-            logging.info(f"✉️ Sent registration request via {init_dev} to {grd_id}.")
+            logging.info(f"✉️ Sent registration request to {grd_id}.")
         except Exception as e:
             logging.error(f"❌ Failed to send registration request: {e}")
             status = "not_registered"
             current_dev = None
     else:
-        logging.warning("⚠️ No suitable access link found for registration.")
+        logging.warning("⚠️ No suitable access satellite found for registration.")
 
 def lifetime_strategy(metadata: dict) -> Tuple[str, bool]:
     # Example strategy: always prefer the link with greatest ttl
@@ -486,7 +486,7 @@ def heartbeat_loop() -> None:
                     cancel_registration_timeout()
                     handle_registration_request()
             except Exception as e:
-                logging.warning("⚠️ Failed to send heartbeat HELLO to %s: %s", grd_id, e)
+                logging.error("❌ Failed to send heartbeat HELLO to %s: %s", grd_id, e)
         time.sleep(heartbeat_interval_s)
 
 
@@ -506,16 +506,16 @@ def watch_link_actions_loop (etcd_client) -> None:
                     # update link_db
                     l = json.loads(event.value.decode())
                     link_dev = event.key.decode().split("/")[-1]
+                    remote_endpoint = l.get("endpoint1") if l.get("endpoint2") == node_name else l.get("endpoint2")
                     if link_dev not in links_db:
-                        remote_endpoint = l.get("endpoint1") if l.get("endpoint2") == node_name else l.get("endpoint2")
                         remote_endpoint_ipv6 = resolve_ipv6_from_hosts(remote_endpoint) if remote_endpoint else ""
-                        logging.info(f"➕ Detected new link dev {link_dev}")
+                        logging.info(f"➕ Detected new satellite {remote_endpoint}")
                         update_links_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", remote_endpoint_ipv6=remote_endpoint_ipv6)
                     elif links_db[link_dev].get("status") == "available":
-                            logging.info(f"🔄 Detected update for existing link dev {link_dev}")
+                            logging.info(f"🔄 Detected update for existing link of satellite {remote_endpoint}")
                             update_links_db(link_dev=link_dev, etcd_link_data=l, last_updated=time.time(), status="available")
                     elif links_db[link_dev].get("status") == "unavailable":
-                            logging.info(f"🔁 Detected re-appearance of previously link dev {link_dev}, updating status to available")
+                            logging.info(f"🔁 Detected re-appearance of previous satellite {remote_endpoint}")
                             update_links_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available")
                     if status == "not_registered":
                         handle_registration_request()
@@ -523,14 +523,12 @@ def watch_link_actions_loop (etcd_client) -> None:
                 elif isinstance(event, etcd3.events.DeleteEvent):
                     # update link_db
                     deleted_dev = event.key.decode().split("/")[-1]
-                    logging.info(f"➖ Detected deletion of link dev {deleted_dev}")
+                    remote_endpoint = links_db.get(deleted_dev, {}).get("remote_endpoint_name", "")
+                    logging.info(f"➖ Detected out of range for satellite {remote_endpoint}")
                     last_duration = time.time() - links_db.get(deleted_dev, {}).get("last_created", time.time())
                     update_links_db(link_dev=deleted_dev, last_updated=time.time(), status="unavailable", last_duration=last_duration)
                     if deleted_dev == current_dev:
-                        logging.warning(
-                            "🛑 Current link %s deleted, resetting state and re-registering.",
-                            deleted_dev,
-                        )
+                        logging.warning(f"⚠️ Current access satellite {remote_endpoint} out of range, resetting state and re-registering.")
                         status = "not_registered"
                         current_dev = None
                         new_dev = None
@@ -578,36 +576,6 @@ def traffic_pause(ho_delay_ms: float) -> None:
         ])
         logging.info("⧴ Handover delay completed, restored original qdisc settings")
 
-def traffic_pause2(ho_delay_ms: float) -> None:
-    # Pause traffic by throttling the GRD class to near-zero rate, then restore.
-    if ho_delay_ms <= 0:
-        return
-
-    idx = grd_list.index(grd_id) if grd_id in grd_list else 0
-    classid = f"1:{idx+10}"
-    delay_ms = max(1.0, float(ho_delay_ms))
-
-    logging.info("⧴ Pausing class %s for %.3fms", classid, delay_ms)
-    run_cmd([
-        "tc", "class", "change", "dev", "veth0_rt",
-        "parent", "1:", "classid", classid,
-        "htb",
-        "rate", "1bit", "ceil", "1bit",
-        "burst", "1b", "cburst", "1b",
-    ])
-
-    deadline = time.monotonic_ns() + int(delay_ms * 1_000_000)
-    sleep_until(deadline)
-
-    run_cmd([
-        "tc", "class", "change", "dev", "veth0_rt",
-        "parent", "1:", "classid", classid,
-        "htb",
-        "rate", "10gbit", "ceil", "10gbit",
-        "burst", "15kb", "cburst", "15kb",
-    ])
-    logging.info("⧴ Pause completed, restored class %s shaping", classid)
-
 def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None:
     global status, current_dev, new_dev
 
@@ -617,17 +585,22 @@ def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None
 
     grd_id_recv = payload["grd_id"]
     if grd_id_recv != grd_id:
-        logging.warning(f"⚠️ Received handover_command for grd_id {grd_id_recv} while current grd_id is {grd_id}, ignoring.")
+        logging.warning(f"⚠️ Received handover_command for grd {grd_id_recv} while current grd is {grd_id}, ignoring.")
         return                  
     
     upstream_sids = payload["sids"]                  # new sid sequence for the user (e.g., "2001:db8:200::1")
-    new_sat_ipv6 = upstream_sids.split(",")[0]          # first SID is the new sat to reach the grd.
+    new_sat_ipv6 = upstream_sids.split(",")[0]          # first SID is the new satellite to reach the grd.
     new_dev = derive_egress_dev(new_sat_ipv6)  # derive the egress dev to reach the grd via the new satellite
-    
-    traffic_pause(ho_delay_ms)
     
     # add new route to grd if necessary
     if new_dev != current_dev:
+        # pause traffic while switching current_dev to emulate handover execution delay 
+        threading.Thread(
+            target=traffic_pause,
+            args=(ho_delay_ms,),
+            daemon=True,
+            name="traffic-pause",
+        ).start()
         current_dev = new_dev
         if not wait_for_link_local_via_route(new_sat_ipv6, timeout_s=link_setup_delay_s):
             logging.warning(
@@ -642,12 +615,12 @@ def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None
     run_cmd(ip_cmd)
 
     # status update and logging
-    status = "registered" if payload.get("type") == "handover_command" else status
+    status = "registered"
+    new_dev_sat_name = links_db.get(new_dev, {}).get("remote_endpoint_name", "unknown")
+
     if payload.get("type") == "handover_command":
-        logging.info(f"📡 Handover command received by {grd_id} with upstream SIDs {upstream_sids} via new dev {current_dev}")
-    elif payload.get("type") == "handover_command_unsolicited":
-        logging.info(f"📡 Unsolicited handover command received for {grd_id} with upstream SIDs {upstream_sids} via dev {current_dev}")
-    
+        logging.info(f"📡 Handover command received by {grd_id} with upstream SIDs {upstream_sids} through satellite {new_dev_sat_name}")
+
     send_handover_complete_udp(
         grd_ipv6=grd_ipv6,
         grd_port=grd_port,
@@ -672,10 +645,10 @@ def handle_registration_accept(payload: Dict[str, Any]) -> None:
         logging.warning(f"⚠️ Received registration_accept from {grd_id_recv} while current grd is {grd_id}, ignoring.")
         return
     if init_sat_ipv6_recv != links_db.get(current_dev, {}).get("remote_endpoint_ipv6", ""):
-        logging.warning(f"⚠️ Received registration_accept with initial sat {init_sat_ipv6_recv} different from expected {links_db.get(current_dev, {}).get('remote_endpoint_ipv6', '')}, ignoring.")
+        logging.warning(f"⚠️ Received registration_accept with initial satellite {init_sat_ipv6_recv} different from expected {links_db.get(current_dev, {}).get('remote_endpoint_ipv6', '')}, ignoring.")
         return
     if links_db.get(current_dev, {}).get("status", None) != "available":
-        logging.warning(f"⚠️ Received registration_accept with initial sat {init_sat_ipv6_recv} whose link is not available according to links_db, ignoring.")
+        logging.warning(f"⚠️ Received registration_accept with initial satellite {init_sat_ipv6_recv} whose link is not available according to links_db, ignoring.")
         return
     
     # add new grd route if necessary
@@ -695,7 +668,8 @@ def handle_registration_accept(payload: Dict[str, Any]) -> None:
     with heartbeat_lock:
         heartbeat_failures = 0
     status = "registered"
-    logging.info(f"📡 Registration accepted by {grd_id} with with upstream SIDs {upstream_sids} via dev {current_dev}")
+    remote_endpoint = links_db.get(current_dev, {}).get("remote_endpoint_name", "unknown")
+    logging.info(f"📡 Registration accepted by {grd_id} with with upstream SIDs {upstream_sids} via satellite {remote_endpoint}")
 
 def handle_hello(payload: Dict[str, Any]) -> None:
     global heartbeat_failures
@@ -708,9 +682,6 @@ def handle_hello(payload: Dict[str, Any]) -> None:
 
 def handle_command(payload: Dict[str, Any], ho_delay_ms: float) -> None:
     if payload.get("type") == "handover_command":
-        handle_handover_command(payload, ho_delay_ms)
-        return
-    elif payload.get("type") == "handover_command_unsolicited":
         handle_handover_command(payload, ho_delay_ms)
         return
     elif payload.get("type") == "registration_accept":
