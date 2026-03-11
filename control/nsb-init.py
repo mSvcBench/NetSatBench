@@ -259,17 +259,28 @@ def main() -> int:
     
     # check that workers exist in etcd otherwise ask to proceed with system-init-docker.py first
     try:
-            existing_workers = etcd.get_prefix("/config/workers/")
-            if not existing_workers:
-                log.warning("⚠️  Workers do not found in Etcd under /config/workers/. This may indicate system init-docker.py has not been run.")
-                cont = input("Do you want to continue with nsb-init? (y/n): ")
-                if cont.lower() != 'y':
-                    log.info("Exiting as per user request.")
-                    sys.exit(0)
+        existing_workers = etcd.get_prefix("/config/workers/")
+        if not existing_workers:
+            log.warning("⚠️  Workers do not found in Etcd under /config/workers/. This may indicate system init-docker.py has not been run.")
+            cont = input("Do you want to continue with nsb-init? (y/n): ")
+            if cont.lower() != 'y':
+                log.info("Exiting as per user request.")
+                sys.exit(0)
+    except Exception as e:
+        log.error(f"❌ Error checking existing workers in Etcd: {e}")
+        sys.exit(1)
+    
+    try:
+        existing_nodes = etcd.get_prefix("/config/nodes/")
+        if existing_nodes:
+            log.warning("⚠️  Nodes already found in Etcd under /config/nodes/. This may indicate nsb-init has been already run.")
+            cont = input("Do you want to continue with nsb-init? (y/n): ")
+            if cont.lower() != 'y':
+                log.info("Exiting as per user request.")
+                sys.exit(0)
     except Exception as e:
         log.error(f"❌ Error checking existing nodes in Etcd: {e}")
         sys.exit(1)
-
 
     config_file = args.config
 

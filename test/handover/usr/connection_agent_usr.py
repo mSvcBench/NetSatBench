@@ -254,6 +254,7 @@ def update_links_db(link_dev: str, etcd_link_data: Any = _UNSET, last_created: A
     if etcd_link_data is not _UNSET and etcd_link_data is not None:
         for key in etcd_link_data:
             links_db[link_dev][key] = etcd_link_data[key]
+        links_db[link_dev]["remote_endpoint_name"] = etcd_link_data.get("endpoint2") if etcd_link_data.get("endpoint1") == node_name else etcd_link_data.get("endpoint1")
 
     links_db[link_dev]["last_created"] = last_created if last_created is not _UNSET else links_db.get(link_dev, {}).get("last_created", None)
     links_db[link_dev]["last_updated"] = last_updated if last_updated is not _UNSET else links_db.get(link_dev, {}).get("last_updated", None)
