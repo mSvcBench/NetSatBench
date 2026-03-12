@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 """
-scheduler_metis.py  —  Epoch-driven hierarchical METIS scheduler for NetSatBench
-=================================================================================
-
 OVERVIEW
 --------
 This scheduler replaces the flat best-fit logic with a two-level METIS-based
@@ -21,48 +18,41 @@ PHASE 2  —  analyse_requirements()
     Reads CPU / MEM requests for every node and every worker.
     Computes:
       • total demand vs. total supply (logs a warning on overcommit)
+      • per-worker max_nodes  (min of cpu-slots, mem-slots, len(nodes)/num_workers)
       • METIS integer node-weight = resource_weight + activity_weight
         so that heavy AND topologically central nodes are kept together.
 
 PHASE 3  —  hierarchical_metis_schedule()
     PRE-ASSIGNED nodes  (node config has 'worker' field pointing to a valid worker)
-        → resources deducted immediately; node enters METIS as an anchor so
-          its edges bias neighbours toward the correct worker.
+        → kept on their assigned worker, their resources deducted immediately.
+          They still participate in METIS so their edges affect the partition.
 
     ZERO-RESOURCE nodes  (cpu-request == 0  AND  mem-request == 0)
-        → kept as METIS anchors so their topology edges influence neighbours.
-          Placed on their partition's preferred worker if headroom allows,
-          else on the globally richest worker.
+        → treated as "privileged": placed on the worker with the most free
+          resources (highest score) BEFORE the METIS partition is applied,
+          since they can consume an unbounded amount of resources at runtime.
 
-    ALL other nodes  →  two-phase METIS placement:
-        L1  incremental-k:
-            Try k=1 first (all nodes → one worker).
-            If they fit within max_load → done, no split needed.
-            If not → try k=2, k=3, … up to k=n_workers.
-            The minimum k whose partitions all fit is chosen.
-            Pre-assigned anchors are included in the graph so their edges
-            bias each partition toward the correct worker.
-        L2  deploy:
-            Each L1 partition is assigned to its preferred worker.
-            If a partition still doesn't fit (e.g. due to resource changes
-            from pre-assigned deductions) → best_worker fallback per node.
+    ALL other nodes  →  two-level pymetis:
+        L1: partition all schedulable nodes into k = num_workers spatial groups
+            using combined (epoch-count + activity) edge/node weights.
+            Pre-assigned nodes are included in the graph so their links pull
+            their neighbours toward the correct worker, but they are not
+            reassigned.
+        L2: for each spatial group check if it fits on its preferred worker.
+            If not  →  sub-partition recursively with resource-weighted METIS
+            until every piece fits or max_depth is reached.
 
 
 Parameters
 ----------
 config_data : dict
     Merged sat-config (output of merge_node_common_config).
-etcd_client : etcd3 client
-    Live connection to Etcd; workers are read from /config/workers/.
 alpha : float
-    Scales edge_active_count into METIS edge weights (auto-derived from CV).
-    Higher → topology locality matters more.
+    Multiplier that scales edge_active_count into METIS edge weights.
+    Higher  →  topology locality matters more.
 beta : float
-    Scales node_activity into METIS node weights (auto-derived from CV).
-    Higher → busy nodes attract their neighbours more strongly.
-max_load : float  (default 1.0)
-    Fraction of each worker's capacity available for scheduling  ∈ (0, 1].
-    E.g. 0.8 reserves 20 % headroom on every worker for load balancing.
+    Multiplier that scales node_activity into the METIS node weight addend.
+    Higher  →  busy nodes attract their neighbours more strongly.
 """
 
 import argparse
@@ -74,7 +64,6 @@ import sys
 import logging
 from collections import defaultdict
 from glob import glob
-import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pymetis  # noqa: PLC0415
@@ -87,7 +76,7 @@ log = logging.getLogger("nsb-scheduler")
 # UNIT HELPERS  (identical to the rest of the codebase)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def parse_cpu(value) -> float:
+def _parse_cpu(value) -> float:
     if not value:
         return 0.0
     val = str(value).strip()
@@ -102,7 +91,7 @@ def parse_cpu(value) -> float:
         return 0.0
 
 
-def parse_mem(value) -> float:
+def _parse_mem(value) -> float:
     if not value:
         return 0.0
     val = str(value).strip()
@@ -122,7 +111,7 @@ def parse_mem(value) -> float:
         return 0.0
 
 
-def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
+def _get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for val, meta in etcd.get_prefix(prefix):
         key = meta.key.decode().split("/")[-1]
@@ -137,7 +126,7 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
 # EPOCH FILE HELPERS
 # ──────────────────────────────────────────────────────────────────────────────
 
-def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
+def _list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
     if not epoch_dir or not file_pattern:
         return []
     search_path = os.path.join(epoch_dir, file_pattern)
@@ -149,7 +138,7 @@ def list_epoch_files(epoch_dir: str, file_pattern: str) -> List[str]:
     return sorted(glob(search_path), key=_last_num)
 
 
-def load_json(path: str) -> dict:
+def _load_json(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -183,7 +172,7 @@ def build_epoch_weights(
     # Reverse map  global index → name  (built once; O(1) lookups in hot loop)
     inv_node_map: Dict[int, str] = {i: n for n, i in node_map.items()}
 
-    files = list_epoch_files(ep_dir, ep_pat)
+    files = _list_epoch_files(ep_dir, ep_pat)
 
     edge_cnt: Dict[Tuple[int, int], int] = defaultdict(int)
     node_act: Dict[str, int]             = defaultdict(int)
@@ -197,7 +186,7 @@ def build_epoch_weights(
         return {}, {}
 
     for path in files:
-        ep = load_json(path)
+        ep = _load_json(path)
 
         # Apply links-add
         for lnk in ep.get("links-add", []):
@@ -228,7 +217,7 @@ def build_epoch_weights(
             node_act[name] += cnt
 
     log.info(
-        f"🪢 Epoch weights built: {len(files)} files, "
+        f"📡 Epoch weights built: {len(files)} files, "
         f"{len(edge_cnt)} edges with activity, "
         f"{len(node_act)} nodes with activity"
     )
@@ -239,9 +228,14 @@ def build_epoch_weights(
 # ADAPTIVE ALPHA / BETA  —  derive weights from statistical signal strength
 # ──────────────────────────────────────────────────────────────────────────────
 
-def cv(values: List[float]) -> float:
+def _cv(values: List[float]) -> float:
     """
     Coefficient of Variation = std_dev / mean.
+
+    Returns 0.0 for empty or constant distributions (no signal to exploit).
+    CV measures *relative* spread:
+    a high CV means the distribution is skewed and it is worth paying attention to its outliers;
+    a low CV means values are uniform and weighting them heavily adds no information.
     """
     if len(values) < 2:
         return 0.0
@@ -283,17 +277,11 @@ def auto_alpha_beta(
         High heterogeneity → busy/heavy nodes matter more → beta near 100.
         Low heterogeneity  → all nodes similar            → beta near 1.
 
-    Why scale to [1, 100]
-    ──────────────────────
-        METIS uses integer weights. Without scaling, normalised values in (0, 1]
-        all round to 0 or 1 — METIS sees a uniform graph and alpha/beta have no effect.
-
     max_depth
     ─────────
-        Safety guard for L2: if a partition unexpectedly doesn't fit its
-        preferred worker (e.g. after pre-assigned resource deductions),
-        schedule_group may split further. max_depth caps that recursion.
-        Derived as ceil(log₂(n/sqrt(n))) + 1, floored at 2.
+        Each recursion level can at minimum halve the group, so
+        ceil(log₂(n/k)) levels are enough to reach single nodes.
+        +1 safety margin, floored at 2 so tiny graphs still split.
 
     Parameters
     ----------
@@ -306,7 +294,7 @@ def auto_alpha_beta(
     -------
     (alpha, beta, max_depth) — alpha/beta rounded to 2 decimal places
     """
-    def percentile(values: List[float], p: float) -> float:
+    def _percentile(values: List[float], p: float) -> float:
         """Return the p-th percentile (0–100) of a sorted list."""
         if not values:
             return 1.0
@@ -315,8 +303,8 @@ def auto_alpha_beta(
         lo, hi = int(idx), min(int(idx) + 1, len(sv) - 1)
         return sv[lo] + (sv[hi] - sv[lo]) * (idx - lo)
 
-    def median(values: List[float]) -> float:
-        return percentile(values, 50)
+    def _median(values: List[float]) -> float:
+        return _percentile(values, 50)
 
     # ── alpha: base and ceiling from edge weight distribution ─────────────────
     ''' base_alpha is normalised by max(edge_weights) so it lives in [0, 1].
@@ -328,46 +316,71 @@ def auto_alpha_beta(
     Without normalisation median(edge)=2 vs median(activity)=20 would make
     beta ~10x heavier than alpha regardless of actual signal strength.'''
     
+    edge_weights = [float(v) for v in edge_active_count.values()] or [1.0]
+    cv_edges     = _cv(edge_weights)
+    max_edge     = max(edge_weights)
+
     # ── alpha ────────────────────────────────────────────────────────────────────
     ''' base_alpha = median(edge_weights) / max(edge_weights)  ∈ (0, 1]
-    alpha_norm = min(base_alpha *(1 + cv_edges), 1.0)   CV boost, capped at 1
-    alpha      = max(1, alpha_norm *100)                scale to [1, 100]
+    alpha_norm = min(base_alpha *(1 + cv_edges), 1.0)   
+    alpha      = max(1, alpha_norm * 100)                scale to [1, 100]
     High cv_edges → links have different lifetimes → alpha near 100.
     Low cv_edges  → all links equally persistent  → alpha near 1.'''
     
     edge_weights = [float(v) for v in edge_active_count.values()] or [1.0]
-    cv_edges     = cv(edge_weights)
+    cv_edges     = _cv(edge_weights)
     max_edge     = max(edge_weights)
 
-    base_alpha = median(edge_weights) / max_edge          # ∈ (0, 1]
+    base_alpha = _median(edge_weights) / max_edge          # ∈ (0, 1]
     alpha_norm = min(base_alpha * (1.0 + cv_edges), 1.0)  # CV boost, capped at 1
     alpha      = round(max(1.0, alpha_norm * 100), 2)     # scale to [1, 100]
 
     # ── beta ─────────────────────────────────────────────────────────────────
     ''' base_beta = median(node_activity) / max(node_activity)  ∈ (0, 1]
     cv_joint = mean(cv_cpu, cv_mem, cv_activity)
-    beta = max(1, min(base_beta *(1 + cv_joint), 1.0) *100)  →  [1, 100]'''
-    default_cpu  = parse_cpu(common_cfg.get("cpu-request", "0"))
-    default_mem  = parse_mem(common_cfg.get("mem-request", "0"))
-    cpus         = [parse_cpu(cfg.get("cpu-request")) or default_cpu for cfg in all_nodes.values()]
-    mems         = [parse_mem(cfg.get("mem-request")) or default_mem for cfg in all_nodes.values()]
+    beta = max(1, min(base_beta * (1 + cv_joint), 1.0) * 100)  →  [1, 100]'''
+    
+    default_cpu = _parse_cpu(common_cfg.get("cpu-request", "0"))
+    default_mem = _parse_mem(common_cfg.get("mem-request", "0"))
+
+    cpus = [
+        _parse_cpu(cfg.get("cpu-request")) or default_cpu
+        for cfg in all_nodes.values()
+    ]
+    mems = [
+        _parse_mem(cfg.get("mem-request")) or default_mem
+        for cfg in all_nodes.values()
+    ]
     activities   = [float(v) for v in node_activity.values()] or [1.0]
     max_activity = max(activities)
 
-    cv_joint  = (cv(cpus) + cv(mems) + cv(activities)) / 3.0
-    base_beta = median(activities) / max_activity
-    beta_norm = min(base_beta * (1.0 + cv_joint), 1.0)
-    beta      = round(max(1.0, beta_norm * 100), 2)
+    cv_cpu       = _cv(cpus)
+    cv_mem       = _cv(mems)
+    cv_activity  = _cv(activities)
+    cv_joint     = (cv_cpu + cv_mem + cv_activity) / 3.0
+
+    base_beta = _median(activities) / max_activity         # ∈ (0, 1]
+    beta_norm = min(base_beta * (1.0 + cv_joint), 1.0)    # CV boost, capped at 1
+    beta      = round(max(1.0, beta_norm * 100), 2)       # scale to [1, 100]
 
     # ── max_depth: derived from graph size ────────────────────────────────────
-    # n_workers from pre-assigned nodes is often 0 or 1 and skews the estimate.
-    # Heuristic: sqrt(n_nodes) gives a reasonable partition count for most graphs.
-    # ceil(log2(avg_group)) + 1 levels suffice to halve groups down to singles.
+    ''' n_workers from pre-assigned nodes is often 0 or 1 and skews the estimate.
+     Heuristic: sqrt(n_nodes) gives a reasonable partition count for most graphs.
+     ceil(log2(avg_group)) + 1 levels suffice to halve groups down to singles. '''
+    
     n_nodes   = len(all_nodes)
     n_workers  = max(2, round(math.sqrt(n_nodes)))
     avg_group  = max(2, n_nodes / n_workers)
     max_depth  = max(2, math.ceil(math.log2(avg_group)) + 1)
 
+    log.info(
+        f"📊 Auto alpha/beta/max_depth:"
+        f"  cv_edges={cv_edges:.3f}  base_alpha={base_alpha:.3f}"
+        f"  alpha_norm={alpha_norm:.3f} → alpha={alpha}"
+        f"  |  cv_cpu={cv_cpu:.3f}  cv_mem={cv_mem:.3f}  cv_activity={cv_activity:.3f}"
+        f"  base_beta={base_beta:.3f}  beta_norm={beta_norm:.3f} → beta={beta}"
+        f"  |  n_nodes={n_nodes}  max_depth={max_depth}"
+    )
     return alpha, beta, max_depth
 
 
@@ -384,9 +397,10 @@ def analyse_requirements(
     alpha:             float,
     beta:              float,
 ) -> Tuple[
-    Dict[str, float],   # node_cpu    (effective — avg substituted for zero-resource)
-    Dict[str, float],   # node_mem    (effective — avg substituted for zero-resource)
-    Dict[str, int],     # node_weight (METIS integer)
+    Dict[str, float],   # node_cpu          (effective — avg substituted for zero-resource)
+    Dict[str, float],   # node_mem          (effective — avg substituted for zero-resource)
+    Dict[str, int],     # node_weight       (METIS integer)
+    Dict[str, int],     # worker_max_nodes
 ]:
     """
     Returns per-node effective CPU/MEM, METIS vertex weights, and per-worker
@@ -408,13 +422,13 @@ def analyse_requirements(
     METIS node weight formula
     ─────────────────────────
         w(n) = max(1,
-                   round(alpha * resourcescore(n))
-                 + round(beta  * activityscore(n))
+                   round(alpha * resource_score(n))
+                 + round(beta  * activity_score(n))
                )
 
     where
-        resourcescore(n) = cpu(n)/max_cpu + mem(n)/max_mem   ∈ [0, 2]
-        activityscore(n) = node_activity(n) / max_activity   ∈ [0, 1]
+        resource_score(n) = cpu(n)/max_cpu + mem(n)/max_mem   ∈ [0, 2]
+        activity_score(n) = node_activity(n) / max_activity   ∈ [0, 1]
 
     Uses RAW cpu/mem (zero stays zero) for the weight formula.
     Zero-resource nodes keep cpu=0/mem=0 here — their METIS weight strategy
@@ -424,15 +438,15 @@ def analyse_requirements(
     max_node_weight so METIS treats them as the heaviest node in the graph,
     maximising the pull of their edges toward their pinned worker.
     """
-    default_cpu = parse_cpu(common_cfg.get("cpu-request", "0"))
-    default_mem = parse_mem(common_cfg.get("mem-request", "0"))
+    default_cpu = _parse_cpu(common_cfg.get("cpu-request", "0"))
+    default_mem = _parse_mem(common_cfg.get("mem-request", "0"))
 
     # ── Raw resource values from config ──────────────────────────────────────
     node_cpu_raw: Dict[str, float] = {}
     node_mem_raw: Dict[str, float] = {}
     for name, cfg in all_nodes.items():
-        node_cpu_raw[name] = parse_cpu(cfg.get("cpu-request")) or default_cpu
-        node_mem_raw[name] = parse_mem(cfg.get("mem-request")) or default_mem
+        node_cpu_raw[name] = _parse_cpu(cfg.get("cpu-request")) or default_cpu
+        node_mem_raw[name] = _parse_mem(cfg.get("mem-request")) or default_mem
 
     # ── Identify zero-resource nodes ──────────────────────────────────────────
     zero_resource_nodes: Set[str] = {
@@ -462,7 +476,7 @@ def analyse_requirements(
 
     # ── Effective resource per node ───────────────────────────────────────────
     """ node_cpu / node_mem are the values used for worker capacity deduction
-     and the fits_group / best_worker checks in Phase 3.
+     and the _fits_group / _best_worker checks in Phase 3.
      Zero-resource nodes get avg substituted; all others keep their raw value."""
     node_cpu: Dict[str, float] = {}
     node_mem: Dict[str, float] = {}
@@ -477,12 +491,12 @@ def analyse_requirements(
     # ── Demand vs supply (uses effective values) ──────────────────────────────
     total_cpu_demand = sum(node_cpu.values())
     total_mem_demand = sum(node_mem.values())
-    total_cpu_supply = sum(parse_cpu(w.get("cpu", 0)) for w in workers.values())
-    total_mem_supply = sum(parse_mem(w.get("mem", 0)) for w in workers.values())
+    total_cpu_supply = sum(_parse_cpu(w.get("cpu", 0)) for w in workers.values())
+    total_mem_supply = sum(_parse_mem(w.get("mem", 0)) for w in workers.values())
 
     log.info("🔍 Resource Analysis:")
     log.info(f"   Nodes: {len(all_nodes)}  "
-             f"(zero-resource: {len(zero_resource_nodes)})")
+             f"(zero-resource: {len(zero_resource_nodes)}, using avg for capacity)")
     log.info(
         f"   CPU  demand={total_cpu_demand:.2f}  supply={total_cpu_supply:.2f}  "
         f"{'✅' if total_cpu_supply >= total_cpu_demand else '⚠️  OVERCOMMIT'}"
@@ -491,6 +505,30 @@ def analyse_requirements(
         f"   MEM  demand={total_mem_demand:.2f} GiB  supply={total_mem_supply:.2f} GiB  "
         f"{'✅' if total_mem_supply >= total_mem_demand else '⚠️  OVERCOMMIT'}"
     )
+
+    # ── per-worker max_nodes ──────────────────────────────────────────────────
+    # Use only nodes that are not pre-assigned to compute the "average" node size.
+    
+    schedulable = [n for n, c in all_nodes.items() if "worker" not in c] #n= node name, c= node config
+    N_sched = len(schedulable) or 1  # N = number of schedulable nodes; avoid div by zero
+    avg_cpu_slot = sum(node_cpu[n] for n in schedulable) / N_sched
+    avg_mem_slot = sum(node_mem[n] for n in schedulable) / N_sched
+
+    worker_max_nodes: Dict[str, int] = {}
+    log.info("   Workers:")
+    for wname, wcfg in workers.items():
+        wcpu = _parse_cpu(wcfg.get("cpu", 0))
+        wmem = _parse_mem(wcfg.get("mem", 0))
+
+        by_cpu = int(wcpu / avg_cpu_slot) if avg_cpu_slot > 0 else len(all_nodes)
+        by_mem = int(wmem / avg_mem_slot) if avg_mem_slot > 0 else len(all_nodes)
+
+        mn = max(1, min(by_cpu + by_mem // 2, len(all_nodes)))
+        worker_max_nodes[wname] = mn
+        log.info(
+            f"     {wname}: cpu={wcpu:.2f}  mem={wmem:.2f} GiB  "
+            f"max_nodes={mn}  (cpu_slots={by_cpu} mem_slots={by_mem})"
+        )
 
     # ── METIS integer node weights ────────────────────────────────────────────
     """ Uses RAW values (node_cpu_raw / node_mem_raw), not effective values,
@@ -523,7 +561,10 @@ def analyse_requirements(
             continue                          # patched in second pass
         res_score = node_cpu_raw[name] / max_cpu + node_mem_raw[name] / max_mem  # [0,2]
         act_score = node_activity.get(name, 0) / max_act                         # [0,1]
-        node_weight[name] = max(1, round(alpha * res_score) + round(beta * act_score))
+        node_weight[name] = max(
+            1,
+            round(alpha * res_score) + round(beta * act_score),
+        )
 
     # Second pass: assign max_node_weight to pinned-no-resource nodes.
     # Computed AFTER the first pass so we know the true ceiling of the graph.
@@ -536,14 +577,14 @@ def analyse_requirements(
             f"[capacity deducted as avg_cpu={avg_cpu:.4f} avg_mem={avg_mem:.4f} GiB]"
         )
 
-    return node_cpu, node_mem, node_weight
+    return node_cpu, node_mem, node_weight, worker_max_nodes
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # METIS CSR HELPERS
 # ──────────────────────────────────────────────────────────────────────────────
 
-def build_csr(
+def _build_csr(
     node_indices: List[int],
     edge_weight:  Dict[Tuple[int, int], int],
     node_weight:  Dict[int, int],
@@ -573,7 +614,7 @@ def build_csr(
     return xadj, adjncy, ew, vw
 
 
-def pymetis_partition(
+def _pymetis_partition(
     node_indices: List[int],
     edge_weight:  Dict[Tuple[int, int], int],
     node_weight:  Dict[int, int],
@@ -589,7 +630,7 @@ def pymetis_partition(
     if nparts <= 1 or len(node_indices) <= nparts:
         return [i % nparts for i in range(len(node_indices))]
 
-    xadj, adjncy, ew, vw = build_csr(node_indices, edge_weight, node_weight)
+    xadj, adjncy, ew, vw = _build_csr(node_indices, edge_weight, node_weight)
     if not adjncy:
         # Disconnected graph — fall back to round-robin
         return [i % nparts for i in range(len(node_indices))]
@@ -616,19 +657,10 @@ def hierarchical_metis_schedule(
     alpha:             float,
     beta:              float,
     max_depth:         int,
-    max_load:          float = 1.0,
 ) -> Dict[str, Any]:
     """
     Mutates config_data['nodes'] in place: adds / updates the 'worker' field
     for every node.  Returns config_data for convenience.
-
-    Parameters
-    ──────────
-    max_load : float  (default 1.0)
-        Fraction of each worker's capacity that may be used  ∈ (0, 1].
-        fits_group and best_worker enforce this ceiling so that
-        pre-assigned + zero-resource + schedulable nodes combined
-        never exceed  worker_cpu *max_load  (and same for MEM).
 
     Node categories
     ───────────────
@@ -644,9 +676,8 @@ def hierarchical_metis_schedule(
                    → After L1, placed on the partition's anchor-steered worker
                      if it has headroom (topology wins), else richest worker.
 
-    SCHEDULABLE    everything else  →  L1 incremental-k finds the minimum
-                   number of partitions that fit within max_load, then L2
-                   deploys each partition to its anchor-steered preferred worker.
+    SCHEDULABLE    everything else  →  L1 + L2 METIS placement, using the
+                   anchor-steered preferred worker for each L1 group.
     """
     all_nodes  = config_data.get("nodes", {})
     common_cfg = config_data.get("node-config-common", {})
@@ -659,21 +690,19 @@ def hierarchical_metis_schedule(
         sys.exit(1)
 
     # ── Phase 2: requirements ─────────────────────────────────────────────────
-    node_cpu, node_mem, node_weight_map = analyse_requirements(
+    node_cpu, node_mem, node_weight_map, worker_max_nodes = analyse_requirements(
         all_nodes, common_cfg, workers,
         edge_active_count, node_activity,
         alpha=alpha, beta=beta,
     )
 
     # ── Combined edge weight (epoch count scaled by alpha) ────────────────────
-    # METIS edge weights are integers ≥ 1, so we scale the epoch counts by alpha
     combined_ew: Dict[Tuple[int, int], int] = {
         edge_key: max(1, round(v * alpha))
         for edge_key, v in edge_active_count.items()
     }
 
     # ── Index helpers ─────────────────────────────────────────────────────────
-    # Forward and reverse maps between node names and global indices (for edge keys).
     node_map: Dict[str, int] = {n: i for i, n in enumerate(all_nodes)}
     inv_map:  Dict[int, str] = {i: n for n, i in node_map.items()}
     nw_idx:   Dict[int, int] = {
@@ -684,64 +713,72 @@ def hierarchical_metis_schedule(
     worker_list = sorted(workers.keys())
     k = len(worker_list)
 
-    worker_resource: Dict[str, Dict] = {}
+    worker_res: Dict[str, Dict] = {}
     for wn in worker_list:
-        w_conf  = workers[wn]
-        cpu = parse_cpu(w_conf.get("cpu", 0))
-        mem = parse_mem(w_conf.get("mem", 0))
-        worker_resource[wn] = {
-            "cpu":      cpu,
-            "mem":      mem,
-            "cpu-used": parse_cpu(w_conf.get("cpu-used", 0)),
-            "mem-used": parse_mem(w_conf.get("mem-used", 0)),
-            "data":     w_conf,
+        wc  = workers[wn]
+        cpu = _parse_cpu(wc.get("cpu", 0))
+        mem = _parse_mem(wc.get("mem", 0))
+        worker_res[wn] = {
+            "cpu":       cpu,
+            "mem":       mem,
+            "cpu-used":  _parse_cpu(wc.get("cpu-used", 0)),
+            "mem-used":  _parse_mem(wc.get("mem-used", 0)),
+            "max-nodes": worker_max_nodes[wn],
+            "assigned":  [],
+            "data":      wc,
         }
 
     # ── Helper closures ───────────────────────────────────────────────────────
-    def free_cpu(wn: str) -> float:
-        return worker_resource[wn]["cpu"] - worker_resource[wn]["cpu-used"]
+    def _free_cpu(wn: str) -> float:
+        return worker_res[wn]["cpu"] - worker_res[wn]["cpu-used"]
 
-    def free_mem(wn: str) -> float:
-        return worker_resource[wn]["mem"] - worker_resource[wn]["mem-used"]
+    def _free_mem(wn: str) -> float:
+        return worker_res[wn]["mem"] - worker_res[wn]["mem-used"]
 
-    def avail_cpu(wn: str) -> float:
-        '''Free CPU headroom respecting max_load ceiling.'''
-        return worker_resource[wn]["cpu"] * max_load - worker_resource[wn]["cpu-used"]
+    # slots — practical OS limit, not just resources
+    def _free_slots(wn: str) -> int:
+        return worker_res[wn]["max-nodes"] - len(worker_res[wn]["assigned"])
 
-    def avail_mem(wn: str) -> float:
-        '''Free MEM headroom respecting max_load ceiling.'''
-        return worker_resource[wn]["mem"] * max_load - worker_resource[wn]["mem-used"]
+    def _score(wn: str) -> float:
+        # Normalised score: sum of free-fraction for each resource axis.
+        wr = worker_res[wn]
+        cpu_frac = _free_cpu(wn) / max(wr["cpu"], 1e-9)
+        mem_frac = _free_mem(wn) / max(wr["mem"], 1e-9)
+        return cpu_frac + mem_frac
 
-    def score(wn: str) -> float:
-        wr = worker_resource[wn]
-        return (avail_cpu(wn) / max(wr["cpu"] * max_load, 1e-9)
-              + avail_mem(wn) / max(wr["mem"] * max_load, 1e-9))
-
-    def assign(name: str, wn: str) -> None:
+    def _assign(name: str, wn: str) -> None:
         all_nodes[name]["worker"] = wn
-        w = worker_resource[wn]
-        
-        w["cpu-used"] += node_cpu[name] 
-        w["mem-used"] += node_mem[name]  
+        w = worker_res[wn]
+        # node_cpu/node_mem already hold effective values (avg for zero-resource)
+        w["cpu-used"] += node_cpu[name] or 1e-9
+        w["mem-used"] += node_mem[name] or 1e-9
+        w["assigned"].append(name)
 
-    def fits_group(wn: str, group: List[str]) -> bool:
-        '''True if worker wn has enough headroom (≤ max_load) for the group.'''
+    def _fits_group(wn: str, group: List[str]) -> bool:
         return (
-            avail_cpu(wn) >= sum(node_cpu[n] for n in group)
-            and avail_mem(wn) >= sum(node_mem[n] for n in group)
+            _free_cpu(wn)   >= sum(node_cpu[n] for n in group)
+            and _free_mem(wn)   >= sum(node_mem[n] for n in group)
+            and _free_slots(wn) >= len(group)
         )
 
-    def best_worker(name: str) -> str:
-        '''Pick the worker with most headroom that can fit this node.'''
+    def _best_worker(name: str) -> Optional[str]:
+        # Tier 1: worker has free slots AND enough cpu/mem
         cands = [
             wn for wn in worker_list
-            if avail_cpu(wn) >= node_cpu[name]
-            and avail_mem(wn) >= node_mem[name]
+            if _free_slots(wn) > 0
+            and _free_cpu(wn) >= node_cpu[name]
+            and _free_mem(wn) >= node_mem[name]
         ]
         if cands:
-            return max(cands, key=score)
-        log.warning(f"  ⚠️  Resource-overcommitting {name}")
-        return max(worker_list, key=score)
+            return max(cands, key=_score)
+        # Tier 2: worker has free slots but resource overcommit
+        cands2 = [wn for wn in worker_list if _free_slots(wn) > 0]
+        if cands2:
+            log.warning(f"  ⚠️  Resource-overcommitting {name}")
+            return max(cands2, key=_score)
+        # Tier 3: all workers are at max-nodes — slot overcommit on richest
+        log.warning(f"  ⚠️  Slot-overcommitting {name} (all workers full)")
+        return max(worker_list, key=_score)
 
     # ── PRE-ASSIGNED nodes ────────────────────────────────────────────────────
     """ Deduct resources immediately. Node stays in the METIS graph as an anchor
@@ -758,8 +795,11 @@ def hierarchical_metis_schedule(
         if aw and aw in workers:
             pre_assigned.add(name)
             pre_assigned_worker[name] = aw
-            worker_resource[aw]["cpu-used"] += node_cpu[name]   # effective value
-            worker_resource[aw]["mem-used"] += node_mem[name]   # effective value
+            worker_res[aw]["cpu-used"] += node_cpu[name]   # effective value
+            worker_res[aw]["mem-used"] += node_mem[name]   # effective value
+            worker_res[aw]["assigned"].append(name)
+            log.info(f"  📌 Pre-assigned (anchor): {name} → {aw}  "
+                     "[edges visible to METIS]")
         elif aw:
             log.warning(
                 f"  ⚠️  Node {name} has worker='{aw}' not in workers list "
@@ -770,24 +810,27 @@ def hierarchical_metis_schedule(
     # ── ZERO-RESOURCE nodes ───────────────────────────────────────────────────
     """ cpu==0 AND mem==0, no pinned worker.
      Kept as anchors in the METIS graph so their topology edges influence
-     neighbour placement. After L1 we use the METIS partition result to
+     neighbour placement.  After L1 we use the METIS partition result to
      steer them toward their topologically correct worker, falling back to
-     the richest worker only when that worker lacks headroom."""
+     the richest worker only when that worker lacks headroom.
+     We identify them from the raw config to avoid false positives when
+     avg_cpu/avg_mem happen to equal a real node's declared resources."""
      
-    default_cpu = parse_cpu(common_cfg.get("cpu-request", "0"))
-    default_mem = parse_mem(common_cfg.get("mem-request", "0"))
+    default_cpu = _parse_cpu(common_cfg.get("cpu-request", "0"))
+    default_mem = _parse_mem(common_cfg.get("mem-request", "0"))
     zero_res_nodes: Set[str] = {
         n for n in all_nodes
         if n not in pre_assigned
-        and (parse_cpu(all_nodes[n].get("cpu-request")) or default_cpu) == 0.0
-        and (parse_mem(all_nodes[n].get("mem-request")) or default_mem) == 0.0
+        and (_parse_cpu(all_nodes[n].get("cpu-request")) or default_cpu) == 0.0
+        and (_parse_mem(all_nodes[n].get("mem-request")) or default_mem) == 0.0
     }
 
     if zero_res_nodes:
         log.info(
-            f"  Zero-resource nodes ({len(zero_res_nodes)}): "
+            f"   Zero-resource nodes ({len(zero_res_nodes)}): "
             "kept as anchors in METIS graph; "
-            "placement: topology-preferred worker if headroom available, else richest worker."
+            "placement: topology-preferred worker if headroom available, "
+            "else richest worker."
         )
 
     # ── Schedulable nodes ─────────────────────────────────────────────────────
@@ -796,140 +839,109 @@ def hierarchical_metis_schedule(
     ]
 
     if not needs_sched:
+        log.info("✅ All nodes pre-assigned or zero-resource; nothing left for METIS.")
         for name in zero_res_nodes:
-            assign(name, max(worker_list, key=score))
-        return config_data,worker_resource
+            wn = max(worker_list, key=_score)
+            _assign(name, wn)
+            log.info(f"    ➞ {name} → {wn}  (zero-resource, richest worker)")
+        return config_data
 
-    # ── L2: deploy each partition, with fallback split if needed ───────────────
-    # L1 already guarantees each partition fits its preferred worker under
-    # normal conditions. schedule_group handles the edge case where a
-    # partition no longer fits (due to pre-assigned resource deductions that
-    # occurred after the L1 fit check) by splitting further up to max_depth.
-    #
-    #   group → FIT on preferred?  → YES : deploy all to preferred
-    #                              → NO  : METIS split (up to max_depth)
-    #                                      each sub → best-fit worker → recurse
-    def schedule_group(group: List[str], preferred: str, depth: int) -> None:
+    # ── Recursive L2 scheduler ────────────────────────────────────────────────
+    def _schedule_group(group: List[str], preferred: str, depth: int) -> None:
         if not group:
             return
         pad = "    " * (depth + 1)
 
-        # ── FIT CHECK ────────────────────────────────────────────────────────
-        if fits_group(preferred, group):
+        if _fits_group(preferred, group):
             for n in group:
-                assign(n, preferred)
+                _assign(n, preferred)
             log.info(f"{pad}✅ {len(group)} nodes → {preferred}")
             return
 
-        # ── DEPTH GUARD ───────────────────────────────────────────────────────
         if depth >= max_depth:
-            log.warning(f"{pad}⚠️  max_depth={max_depth} reached; best-fit fallback")
+            log.warning(f"{pad}⚠️  max_depth reached; individual best-fit fallback")
             for n in group:
-                assign(n, best_worker(n))
+                wn = _best_worker(n)
+                if not wn:
+                    log.error(f"❌ Cannot schedule {n}")
+                    sys.exit(1)
+                _assign(n, wn)
             return
 
-        # ── METIS SPLIT ───────────────────────────────────────────────────────
-        # Split into at most k=len(workers) parts so each sub-group targets
-        # one worker. METIS uses topology+resource weights to minimise cut.
-        n_sub = min(len(group), k)
+        g_cpu  = sum(node_cpu[n] for n in group)
+        g_mem  = sum(node_mem[n] for n in group)
+        g_size = len(group)
+
+        # n_sub: use cluster-wide free capacity, not just the preferred worker.
+        # Using only preferred worker underestimates n_sub when it is nearly full.
+        # free_cluster_* = sum across ALL workers that still have open slots.
+        avail = [wn for wn in worker_list if _free_slots(wn) > 0]
+
+        free_cluster_cpu   = sum(_free_cpu(wn)   for wn in avail) or 1e-9
+        free_cluster_mem   = sum(_free_mem(wn)   for wn in avail) or 1e-9
+        free_cluster_slots = sum(_free_slots(wn) for wn in avail) or 1
+
+        n_sub = max(2, math.ceil(max(
+            g_cpu  / free_cluster_cpu,
+            g_mem  / free_cluster_mem,
+            g_size / free_cluster_slots,
+        )))
+        n_sub = min(n_sub, len(avail))
+
+        if n_sub < 2:
+            for n in group:
+                wn = _best_worker(n)
+                if not wn:
+                    log.error(f"❌ Cannot schedule {n}")
+                    sys.exit(1)
+                _assign(n, wn)
+            return
+
         log.info(f"{pad}🔀 depth={depth}: {len(group)} nodes → {n_sub} sub-groups")
 
         g_idx = [node_map[n] for n in group if n in node_map]
-        parts = pymetis_partition(g_idx, combined_ew, nw_idx, n_sub)
+        parts = _pymetis_partition(g_idx, combined_ew, nw_idx, n_sub)
 
         subs: Dict[int, List[str]] = defaultdict(list)
-        for li, part in enumerate(parts):                   # local index in group, part is sub-group id 
+        # Map partition result back to node names; parts are aligned to g_idx which is aligned to group.
+        for li, part in enumerate(parts):
             subs[part].append(inv_map[g_idx[li]])
 
-        # Sort sub-groups largest-first; assign each to the best-fit worker
-        # (most free resources), then recurse.
-        for sub_nodes in sorted(subs.values(), key=len, reverse=True):
-            wn = next(
-                (w for w in sorted(worker_list, key=score, reverse=True)
-                 if fits_group(w, sub_nodes)),
-                max(worker_list, key=score),   # fallback: richest
+        # Sort available workers by score and assign sub-groups in order of size,
+        # giving preference to the original preferred worker.
+        avail_sorted = sorted(avail, key=_score, reverse=True)
+        used_wn: Set[str] = {preferred}
+        for sub_id, sub_nodes in sorted(subs.items(), key=lambda x: -len(x[1])):
+            chosen = next(
+                (wn for wn in avail_sorted if wn not in used_wn),
+                preferred,
             )
-            log.info(f"{pad}  → {len(sub_nodes)} nodes → {wn}")
-            schedule_group(sub_nodes, wn, depth + 1)
+            used_wn.add(chosen)
+            log.info(f"{pad}  Sub-{sub_id}: {len(sub_nodes)} nodes → {chosen}")
+            _schedule_group(sub_nodes, chosen, depth + 1)
 
-    # ── L1: incremental METIS — find minimum k that fits ─────────────────────
-    # Start with k=1 (no split). If all nodes fit on one worker, done.
-    # Otherwise increment k until every partition fits its preferred worker,
-    # up to k=n_workers. This avoids unnecessary splits.
-    #
-    #   k=1 → one partition → FIT on best worker → done
-    #   k=2 → two partitions → each FIT         → done
-    #   ...
-    #   k=n_workers → full split
+    # ── LEVEL 1: full graph partition (anchors included) ──────────────────────
+    """ All nodes enter the partition so anchor edges bias the result.
+    After partitioning:
+       • pre-assigned anchors  → their partition-id is used to steer the
+                                 preferred worker for that L1 group toward
+                                 the pinned worker with the most anchors
+                                 (priority 1: pinning + topology locality).
+       • zero-resource anchors → placed on the anchor-steered preferred worker
+                                 if it has headroom (topology wins), else
+                                 richest worker (safety fallback).
+       • schedulable nodes     → extracted into l1_groups; L2 uses the same
+                                 anchor-steered preferred worker."""
+    log.info(
+        f"🔵 L1-METIS: {len(needs_sched)} schedulable + "
+        f"{len(pre_assigned) + len(zero_res_nodes)} anchor nodes → "
+        f"{k} spatial groups"
+    )
 
     all_metis_idx:   List[int] = [node_map[n] for n in all_nodes if n in node_map]
     all_metis_names: List[str] = [inv_map[i] for i in all_metis_idx]
 
-    chosen_k         = None
-    l1_parts_full    = None
-
-    for trial_k in range(1, k + 1):
-        log.info(
-            f"🔵 L1-METIS: trying k={trial_k}  "
-            f"({len(needs_sched)} schedulable + "
-            f"{len(pre_assigned) + len(zero_res_nodes)} anchors)"
-        )
-        trial_parts = pymetis_partition(all_metis_idx, combined_ew, nw_idx, trial_k)
-
-        # Group schedulable nodes by partition
-        trial_groups: Dict[int, List[str]] = defaultdict(list)
-        for name, part in zip(all_metis_names, trial_parts):
-            if name in needs_sched or name in zero_res_nodes:
-                trial_groups[part].append(name)
-
-        # For k=1 check the single best worker; for k>1 use scoring below.
-        # Quick fit check: sort workers by score, assign greedily.
-        # L1 fit check simulation
-        ''' temp_score is a snapshot of score(wn) that reflects the incremental assignment 
-        we use it becouse score(wn) changes as we tentatively assign groups to workers in 
-        this simulation. We want to always pick the worker with the highest current score 
-        for the next group, which is what the temp_score function allows us to do by using a 
-        snapshot of the worker resources that we update as we tentatively assign groups.'''
-        
-        def temp_score(wn):
-            wr = temp_worker_resource[wn]
-            avail_c = wr["cpu"] * max_load - wr["cpu-used"]
-            avail_m = wr["mem"] * max_load - wr["mem-used"]
-            return (avail_c / max(wr["cpu"] * max_load, 1e-9)
-                + avail_m / max(wr["mem"] * max_load, 1e-9))
-        
-        fits = True
-        temp_worker_resource = copy.deepcopy(worker_resource)  # snapshot
-        for gid, gnodes in sorted(trial_groups.items(), key=lambda x: -len(x[1])):
-            placed = False
-            for wn in sorted(worker_list, key=temp_score, reverse=True):
-                cpu_needed = sum(node_cpu[n] for n in gnodes)
-                mem_needed = sum(node_mem[n] for n in gnodes)
-                avail_c = temp_worker_resource[wn]["cpu"] * max_load - temp_worker_resource[wn]["cpu-used"]
-                avail_m = temp_worker_resource[wn]["mem"] * max_load - temp_worker_resource[wn]["mem-used"]
-                if avail_c >= cpu_needed and avail_m >= mem_needed:
-                    temp_worker_resource[wn]["cpu-used"] += cpu_needed
-                    temp_worker_resource[wn]["mem-used"] += mem_needed
-                    
-                    placed = True
-                    break
-            if not placed:
-                fits = False
-                break   
-        if fits:
-            chosen_k = trial_k
-            l1_parts_full = trial_parts
-            log.info(f"✅ L1 fit successful with k={trial_k}")
-            break
-        else:
-            log.info(f"⚠️  L1 fit failed with k={trial_k}")
-
-
-    if chosen_k is None:
-        # Cluster is overcommitted — use full k and let L2 handle overcommit.
-        log.warning("⚠️  No k fits without overcommit — using k=n_workers, L2 will overcommit")
-        chosen_k      = k
-        l1_parts_full = pymetis_partition(all_metis_idx, combined_ew, nw_idx, k)
+    l1_parts_full = _pymetis_partition(all_metis_idx, combined_ew, nw_idx, k)
 
     # Build name → partition-id lookup used by both anchor-steering and
     # zero-resource topology placement below.
@@ -940,9 +952,9 @@ def hierarchical_metis_schedule(
     # ── Dual-objective preferred worker per L1 partition ─────────────────────
     """ For each partition we pick the worker that maximises:
     
-       partitionscore(worker, partition) =
+       partition_score(worker, partition) =
            w1 * anchor_affinity(worker, partition)   ← topology signal
-         + w2 * norm_freescore(worker)              ← resource signal
+         + w2 * norm_free_score(worker)              ← resource signal
     
      Weights w1 / w2 are derived from the CV of the input data so that
      whichever signal has higher variance (= more discriminating power)
@@ -955,8 +967,8 @@ def hierarchical_metis_schedule(
      anchor_affinity(worker, partition) =
        votes(worker, partition) / max(total_anchors_in_partition, 1)  ∈ [0,1]
     
-     norm_freescore(worker) = score(worker) / 2.0  ∈ [0,1]
-       (score returns cpu_frac + mem_frac, each ∈ [0,1], so max = 2)
+     norm_free_score(worker) = _score(worker) / 2.0  ∈ [0,1]
+       (_score returns cpu_frac + mem_frac, each ∈ [0,1], so max = 2)
     
      This means:
       • A partition with many anchors on one worker → topology wins → that worker
@@ -964,35 +976,57 @@ def hierarchical_metis_schedule(
       • Mixed cases → continuous blend decided by CV ratio from data
 
     # ── Compute w1 / w2 from CV of edges and resources ────────────────────────
-    # Re-use the same CV values that auto_alpha_beta computed for consistency."""
+     Re-use the same CV values that auto_alpha_beta computed; we recalculate
+     locally so this function stays self-contained."""
     
-    default_cpu = parse_cpu(common_cfg.get("cpu-request", "0"))
-    default_mem = parse_mem(common_cfg.get("mem-request", "0"))
-    cpus = [parse_cpu(cfg.get("cpu-request")) or default_cpu
+    _default_cpu = _parse_cpu(common_cfg.get("cpu-request", "0"))
+    _default_mem = _parse_mem(common_cfg.get("mem-request", "0"))
+    _cpus = [_parse_cpu(cfg.get("cpu-request")) or _default_cpu
              for cfg in all_nodes.values()]
-    mems = [parse_mem(cfg.get("mem-request")) or default_mem
+    _mems = [_parse_mem(cfg.get("mem-request")) or _default_mem
              for cfg in all_nodes.values()]
 
-    cv_edges_local     = cv([float(v) for v in edge_active_count.values()] or [0.0])
-    cv_resources_local = (cv(cpus) + cv(mems)) / 2.0
-    denom = cv_edges_local + cv_resources_local
-    if denom == 0.0:
+    def _cv_local(vals: List[float]) -> float:
+        if len(vals) < 2:
+            return 0.0
+        mean = sum(vals) / len(vals)
+        if mean == 0.0:
+            return 0.0
+        var = sum((x - mean) ** 2 for x in vals) / len(vals)
+        return math.sqrt(var) / mean
+
+    cv_edges_local     = _cv_local([float(v) for v in edge_active_count.values()] or [0.0])
+    cv_resources_local = (_cv_local(_cpus) + _cv_local(_mems)) / 2.0
+    _denom = cv_edges_local + cv_resources_local
+    if _denom == 0.0:
+        # No signal in either dimension — equal weights
         w1, w2 = 0.5, 0.5
     else:
-        w1 = cv_edges_local     / denom   # topology weight
-        w2 = cv_resources_local / denom   # resource weight
+        w1 = cv_edges_local     / _denom   # topology weight
+        w2 = cv_resources_local / _denom   # resource weight
 
     # ── Cluster-relative capacity score for partition selection ─────────────
-    ''' score(wn) = free_cpu/own_cpu + free_mem/own_mem  is *relative* to each
-     worker's own capacity so that large workers naturally attract more partitions than small ones.
-   
-      capacity_score (wn) = free_cpu(wn)/cluster_cpu + free_mem(wn)/cluster_mem '''
-    
-    cluster_cpu = sum(worker_resource[wn]["cpu"] for wn in worker_list) or 1e-9
-    cluster_mem = sum(worker_resource[wn]["mem"] for wn in worker_list) or 1e-9
+    # _score(wn) = free_cpu/own_cpu + free_mem/own_mem  is *relative* to each
+    # worker's own capacity — a tiny worker and a large worker both score 2.0
+    # when fully empty.  For deciding which worker should *host* a partition we
+    # need an *absolute* signal: how much of the cluster's total resources does
+    # this worker hold?
+    #
+    #   cap_score(wn) = free_cpu(wn)/cluster_cpu + free_mem(wn)/cluster_mem
+    #
+    # A worker with 12 CPU out of 12.1 cluster CPU scores ~0.99 while a worker
+    # with 0.1 CPU scores ~0.008 — correctly reflecting their actual capacity.
+    cluster_cpu = sum(worker_res[wn]["cpu"] for wn in worker_list) or 1e-9
+    cluster_mem = sum(worker_res[wn]["mem"] for wn in worker_list) or 1e-9
 
-    def capacity_score(wn: str) -> float:
-        return free_cpu(wn) / cluster_cpu + free_mem(wn) / cluster_mem
+    def _cap_score(wn: str) -> float:
+        return _free_cpu(wn) / cluster_cpu + _free_mem(wn) / cluster_mem
+
+    log.info(
+        f"   Partition scoring weights: "
+        f"w1(topology)={w1:.3f}  w2(resource)={w2:.3f}  "
+        f"(cv_edges={cv_edges_local:.3f}  cv_resources={cv_resources_local:.3f})"
+    )
 
     # ── Count anchor votes per (partition, worker) ────────────────────────────
     partition_anchor_votes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -1002,18 +1036,15 @@ def hierarchical_metis_schedule(
         partition_anchor_votes[part][wn] += 1
 
     # ── Score every (worker, partition) pair and pick the best worker ─────────
-    ''' Process partitions in descending anchor-count order so that anchor-heavy
-     partitions claim their preferred worker first.
-     After each claim we reduce that worker's virtual capacity so that the resource
-     correctly steers subsequent anchor-free partitions toward less-loaded workers. 
-     virtual_cap uses cluster-relative units so large workers naturally attract more
-     partitions than tiny ones.'''
-     
+    # Process partitions in descending anchor-count order so that anchor-heavy
+    # partitions claim their preferred worker first.  After each claim we
+    # reduce that worker's virtual capacity so that the resource 
+    # correctly steers subsequent anchor-free partitions toward less-loaded
+    # workers.  virtual_cap uses cluster-relative units so large workers
+
     partition_preferred: Dict[int, str] = {}
-
-    virtual_cap: Dict[str, float] = {wn: capacity_score(wn) for wn in worker_list}
-
-    gids_by_anchors = sorted(range(chosen_k), key=lambda g: -sum(partition_anchor_votes[g].values()))
+    virtual_cap: Dict[str, float] = {wn: _cap_score(wn) for wn in worker_list}
+    gids_by_anchors = sorted(range(k), key=lambda g: -sum(partition_anchor_votes[g].values()))
 
     for gid in gids_by_anchors:
         votes      = partition_anchor_votes[gid]
@@ -1021,21 +1052,26 @@ def hierarchical_metis_schedule(
         max_vcap   = max(virtual_cap.values()) or 1.0
 
         best_wn    = worker_list[0]
-        bestscore = -1.0
-        for wn in worker_list:                                # worker name in worker_list
-            affinity   = votes.get(wn, 0) / total_anch           # ∈ [0, 1] 
+        best_score = -1.0
+        for wn in worker_list:
+            affinity   = votes.get(wn, 0) / total_anch           # ∈ [0, 1]
             norm_cap   = virtual_cap[wn] / max(max_vcap, 1e-9)   # ∈ [0, 1]
-            pscore    = w1 * affinity + w2 * norm_cap   # partition score = weighted blend of topology affinity and capacity score
-            if pscore > bestscore:
-                bestscore = pscore
+            p_score    = w1 * affinity + w2 * norm_cap
+            if p_score > best_score:
+                best_score = p_score
                 best_wn    = wn
 
         partition_preferred[gid] = best_wn
 
         # Decrease virtual_cap for the chosen worker so the next partition
-        # sees it as proportionally less available. max => for safety if formula < 0:
-        virtual_cap[best_wn] =max(0.0, virtual_cap[best_wn] - max_vcap / chosen_k)
-        log.info( f"   Partition {gid}: preferred → {best_wn}" )
+        # sees it as proportionally less available.
+        virtual_cap[best_wn] = max(0.0, virtual_cap[best_wn] - max_vcap / k)
+
+        log.info(
+            f"   Partition {gid}: preferred → {best_wn}  "
+            f"(score={best_score:.3f}  w1={w1:.3f}  w2={w2:.3f}  "
+            f"cap={_cap_score(best_wn):.3f}  anchors={dict(votes) or 'none'})"
+        )
 
     # ── Extract schedulable nodes into L1 groups ──────────────────────────────
     # Anchors are excluded; their placement is handled separately below.
@@ -1052,16 +1088,16 @@ def hierarchical_metis_schedule(
     #   If the preferred worker is full, use the globally richest worker.
     for name in zero_res_nodes:
         part    = node_to_part[name]
-        topo_wn = partition_preferred.get(part, worker_list[part % k]) 
-        if score(topo_wn) > 0:
-            assign(name, topo_wn)
+        topo_wn = partition_preferred.get(part, worker_list[part % k])
+        if _score(topo_wn) > 0:
+            _assign(name, topo_wn)
             log.info(
                 f"    ➞ {name} → {topo_wn}  "
                 f"(zero-resource, topology-preferred)"
             )
         else:
-            fallback = max(worker_list, key=score)
-            assign(name, fallback)
+            fallback = max(worker_list, key=_score)
+            _assign(name, fallback)
             log.info(
                 f"    ➞ {name} → {fallback}  "
                 f"(zero-resource, richest-worker fallback — {topo_wn} full)"
@@ -1073,49 +1109,52 @@ def hierarchical_metis_schedule(
         preferred = partition_preferred[gid]
         gnodes    = l1_groups[gid]
         log.info(f"  Group {gid:02d}: {len(gnodes)} nodes → preferred={preferred}")
-        schedule_group(gnodes, preferred, depth=0)
+        _schedule_group(gnodes, preferred, depth=0)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     log.info("📋 Final worker assignment summary:")
     for wn in worker_list:
-        wr = worker_resource[wn]
+        wr = worker_res[wn]
         log.info(
-            f"   {wn}: cpu_used={wr['cpu-used']:.3f}  mem_used={wr['mem-used']:.4f} GiB"
+            f"   {wn}: assigned={len(wr['assigned'])}  "
+            f"cpu_used={wr['cpu-used']:.3f}  mem_used={wr['mem-used']:.4f} GiB"
         )
 
     log.info("✅ Hierarchical METIS Scheduling Completed.")
-    return config_data , worker_resource
+    return config_data
 
 
 def schedule_workers(
     config_data:  Dict[str, Any],
     etcd_client:  Any,
-    epoch_dir:    str   = "",
-    file_pattern: str   = "",
-    alpha:        float = None,
-    beta:         float = None,
-    max_depth:    int   = None,
-    max_load:     float = 1.0,
+    epoch_dir:    str = "",
+    file_pattern: str = "",
 ) -> Dict[str, Any]:
- 
-    workers = get_prefix_data(etcd_client, "/config/workers/")
+    """
+    Parameters
+    ----------
+    config_data  : sat-config dict
+    etcd_client  : live etcd3 client
+    epoch_dir    : override epoch directory (optional; falls back to config)
+    file_pattern : override glob pattern   (optional; falls back to config)
+    """
+    workers = _get_prefix_data(etcd_client, "/config/workers/")
     if not workers:
         log.error("❌ No workers found in Etcd under /config/workers/")
         sys.exit(1)
 
-    edge_active_count, node_activity = build_epoch_weights( config_data, epoch_dir, file_pattern)
+    edge_active_count, node_activity = build_epoch_weights(
+        config_data, epoch_dir, file_pattern
+    )
 
-    alpha_auto, beta_auto, max_depth_auto = auto_alpha_beta(
+    alpha, beta, max_depth = auto_alpha_beta(
         edge_active_count = edge_active_count,
         all_nodes         = config_data.get("nodes", {}),
         common_cfg        = config_data.get("node-config-common", {}),
         node_activity     = node_activity,
     )
-    if alpha     is None: alpha     = alpha_auto
-    if beta      is None: beta      = beta_auto
-    if max_depth is None: max_depth = max_depth_auto
-    
-    scheduled_cfg, worker_resource = hierarchical_metis_schedule(
+
+    return hierarchical_metis_schedule(
         config_data       = config_data,
         edge_active_count = edge_active_count,
         node_activity     = node_activity,
@@ -1123,29 +1162,14 @@ def schedule_workers(
         alpha             = alpha,
         beta              = beta,
         max_depth         = max_depth,
-        max_load          = max_load,
     )
-    # After scheduling, update ETCD with the new worker resource usage.
-    # round them to 3 decimal places for CPU and 4 in GiB
-    for wn, wr in worker_resource.items():
-        worker_cfg = wr["data"]
-        worker_cfg["cpu-used"] = round(wr["cpu-used"], 3)
-        used_gib = round(wr['mem-used'], 4) # Convert mem-used back to GiB string 
-        worker_cfg['mem-used'] = f"{used_gib}GiB"
-        
-        
-        key = f"/config/workers/{wn}"
-        etcd_client.put(key, json.dumps(worker_cfg))
-        log.info(f"  Saved resources to ETCD for {wn} -> CPU: {worker_cfg['cpu-used']} | MEM: {worker_cfg['mem-used']}")
-
-    return scheduled_cfg
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CLI ENTRY POINT
 # ──────────────────────────────────────────────────────────────────────────────
 
-def build_arg_parser() -> argparse.ArgumentParser:
+def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Test the METIS scheduler.\n"
@@ -1188,25 +1212,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "If omitted, derived automatically from log2(n_nodes/n_workers)."
         ),
     )
-    parser.add_argument(
-        "--max-load", type=float, default=1.0,
-        help=(
-            "Maximum fraction of each worker capacity to use  (0.0–1.0, default 1.0). "
-            "E.g. 0.8 reserves 20%% headroom on every worker for load balancing."
-        ),
-    )
     return parser
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
+    logging.basicConfig(
+        level=logging.INFO,
         format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
     )
 
-    args = build_arg_parser().parse_args()
+    args = _build_arg_parser().parse_args()
 
     try:
-        with open(args.sat_config, "r", encoding="utf-8") as fh: # open the sat-config.json file for reading (file handle is fh)
+        with open(args.sat_config, "r", encoding="utf-8") as fh:
             sat_config = json.load(fh)
     except Exception as exc:
         log.error(f"❌ Failed to load sat-config: {exc}")
@@ -1234,6 +1252,8 @@ if __name__ == "__main__":
         sat_config, args.epoch_dir, args.file_pattern
     )
 
+    # Derive alpha / beta / max_depth from data, then override with any
+    # values explicitly supplied on the command line.
     alpha_auto, beta_auto, max_depth_auto = auto_alpha_beta(
         edge_active_count = edge_active_count,
         all_nodes         = all_nodes,
@@ -1241,15 +1261,21 @@ if __name__ == "__main__":
         node_activity     = node_activity,
     )
 
-    alpha = args.alpha     if args.alpha     is not None else alpha_auto
-    beta  = args.beta      if args.beta      is not None else beta_auto
+    alpha     = args.alpha     if args.alpha     is not None else alpha_auto
+    beta      = args.beta      if args.beta      is not None else beta_auto
     max_depth = args.max_depth if args.max_depth is not None else max_depth_auto
-    max_load  = args.max_load
-    
-    log.info(f" Parameters  alpha={alpha}  beta={beta}  max_depth={max_depth}  max_load={max_load:.0%}")
+
+    if args.alpha is not None:
+        log.info(f"🔧 alpha overridden by CLI: {alpha}  (auto was {alpha_auto})")
+    if args.beta is not None:
+        log.info(f"🔧 beta overridden by CLI:  {beta}  (auto was {beta_auto})")
+    if args.max_depth is not None:
+        log.info(f"🔧 max_depth overridden by CLI: {max_depth}  (auto was {max_depth_auto})")
+
+    log.info(f"Parameters  alpha={alpha}  beta={beta}  max_depth={max_depth}")
 
     # Phase 2 + 3 — schedule
-    scheduled_cfg, worker_resource  = hierarchical_metis_schedule(
+    scheduled_cfg = hierarchical_metis_schedule(
         config_data       = sat_config,
         edge_active_count = edge_active_count,
         node_activity     = node_activity,
@@ -1257,9 +1283,8 @@ if __name__ == "__main__":
         alpha             = alpha,
         beta              = beta,
         max_depth         = max_depth,
-        max_load          = max_load,
     )
-        
+
     try:
         with open(args.output, "w", encoding="utf-8") as fh:
             json.dump(scheduled_cfg, fh, indent=2)
