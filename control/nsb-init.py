@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import importlib
 import etcd3
 import json
 import os
@@ -10,7 +11,6 @@ import copy
 from itertools import islice
 from typing import Any, Mapping
 from pyparsing import Mapping
-from scheduler import schedule_workers
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger("nsb-init")
@@ -244,6 +244,37 @@ def main() -> int:
         default="INFO",
         help="Logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--scheduler",
+    default="scheduler",
+    help="Scheduler script to use for worker assignment (default: scheduler.py)",
+    )
+    parser.add_argument(
+        "--epoch-dir",
+        default="",
+        help="Directory containing epoch files (for METIS)",
+    )
+    parser.add_argument(
+        "--max-load", type=float, default=1.0,
+    help="Max fraction of each worker capacity to use (range [0-1]  default: 1.0).",
+    )
+    parser.add_argument(
+        "--alpha", type=float, default=None,
+        help=(
+            "Edge topology weight multiplier. "
+            "If omitted, derived automatically from CV of edge persistence. "
+            "Higher → topology locality matters more in METIS node weights."
+        ),
+    )
+    parser.add_argument(
+        "--beta", type=float, default=None,
+        help=(
+            "Node activity weight multiplier. "
+            "If omitted, derived automatically from CV of node activity. "
+            "Higher → busy nodes attract their neighbours more strongly."
+        ),
+    )
+
     args = parser.parse_args()
     log.setLevel(args.log_level.upper())
 
@@ -285,9 +316,33 @@ def main() -> int:
     except Exception as e:
         log.error(f"❌ Failed to load file: {e}")
         return 1
-    
+
+    # schedular import and execution
+    sched_mod_name = args.scheduler.replace(".py", "")
+    try:
+        sched_mod = importlib.import_module(sched_mod_name)
+    except ImportError as e:
+        log.error(f"❌ Cannot import scheduler module '{sched_mod_name}': {e}")
+        sys.exit(1)
+
+    schedule_workers = sched_mod.schedule_workers
+
     config_data = merge_node_common_config(config_data)
-    scheduled_config = schedule_workers(config_data, etcd)
+    # if arg schedulare was scheduler_metis, pass additional args for METIS scheduling
+    
+    if args.scheduler == "scheduler_metis":
+        log.info(" Using METIS Scheduler...")
+        scheduled_config = schedule_workers(
+            config_data  = config_data,
+            etcd_client  = etcd,
+            epoch_dir    = args.epoch_dir,
+            max_load     = args.max_load,
+            alpha        = args.alpha,
+            beta         = args.beta,
+        )
+    else:
+        log.info(" Using Standard Best-Fit Scheduler without clustering...")
+        scheduled_config = schedule_workers(config_data, etcd)
     apply_config_to_etcd(etcd, scheduled_config)
     return 0
 
