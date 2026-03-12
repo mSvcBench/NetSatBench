@@ -348,6 +348,20 @@ def main() -> int:
 
     etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
 
+    try:
+        existing_nodes = etcd_client.get_prefix("/config/nodes/")
+        for node in existing_nodes:
+            node_config = json.loads(node[0].decode('utf-8')) if node[0] else None
+            if "eth0_ip" in node_config:
+                log.warning("⚠️  Nodes already found in Etcd under /config/nodes/ with eth0_ip configured. This may indicate nsb-deploy has been already run.")
+                cont = input("Do you want to continue with nsb-deploy? (y/n): ")
+                if cont.lower() != 'y':
+                    log.info("Exiting as per user request.")
+                    sys.exit(0)
+    except Exception as e:
+        log.error(f"❌ Error checking existing nodes in Etcd: {e}")
+        sys.exit(1)
+
     # 1) LOAD CONFIGURATION
     workers = get_prefix_data(etcd_client, '/config/workers/')
     all_nodes = get_prefix_data(etcd_client, '/config/nodes/')

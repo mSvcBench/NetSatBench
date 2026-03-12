@@ -33,6 +33,12 @@
 
 set -euo pipefail
 
+# Avoid re-applying shaping namespace setup if it already exists.
+if ip link show veth0_rt >/dev/null 2>&1; then
+  echo "Warning: interface veth0_rt already exists, skipping shaping namespace setup."
+  exit 0
+fi
+
 # ---------- veth pairs ----------
 echo "Creating veth pairs..."
 ip link add veth0_rt type veth peer name veth0_ns
@@ -63,18 +69,15 @@ ip netns exec shape ip route add default via 169.254.0.3
 
 # ---------- mangle rules (IPv4) ----------
 echo "Configuring mangle rules and policy routing..."
-# do not redirect UDP/4789 (VXLAN) packets
-iptables -t mangle -A PREROUTING -p udp --dport 4789 -j ACCEPT
-iptables -t mangle -A OUTPUT -p udp --dport 4789 -j ACCEPT
 
 # do not redirect packets returning from shape
 iptables -t mangle -A PREROUTING -i veth1_rt -j ACCEPT
 
-# mark all local-originated IPv4 packets (except UDP/4789 already accepted)
-iptables -t mangle -A OUTPUT -j MARK --set-mark 0x01/0xFF
+# mark only local IPv4 traffic routed to VXLAN interfaces (overlay inner traffic)
+iptables -t mangle -A OUTPUT -o vl+ -j MARK --set-mark 0x01/0xFF
 
-# mark all incoming IPv4 packets except those already accepted (e.g., from shape or UDP/4789)
-iptables -t mangle -A PREROUTING -j MARK --set-mark 0x01/0xFF
+# mark only incoming IPv4 traffic from VXLAN interfaces (overlay inner traffic)
+iptables -t mangle -A PREROUTING -i vl+ -j MARK --set-mark 0x01/0xFF
 
 ip rule add fwmark 0x01/0xFF table 100
 ip route add default via 169.254.0.1 table 100

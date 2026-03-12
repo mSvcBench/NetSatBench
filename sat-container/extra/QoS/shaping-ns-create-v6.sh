@@ -33,6 +33,12 @@
 
 set -euo pipefail
 
+# Avoid re-applying shaping namespace setup if it already exists.
+if ip link show veth0_rt >/dev/null 2>&1; then
+  echo "Warning: interface veth0_rt already exists, skipping shaping namespace setup."
+  exit 0
+fi
+
 # ---------- veth pairs ----------
 echo "Creating veth pairs..."
 ip link add veth0_rt type veth peer name veth0_ns
@@ -68,18 +74,14 @@ ip netns exec shape sysctl -w net.ipv6.conf.all.forwarding=1 > /dev/null
 ip netns exec shape ip -6 route add default via fd00:0:0:2::1 dev veth1_ns > /dev/null 
 # ---------- mangle rules (IPv6) ----------
 echo "Configuring mangle rules and policy routing..."
-# do not redirect VXLAN processing (still UDP/4789)
-ip6tables -t mangle -A PREROUTING -p udp --dport 4789 -j ACCEPT
-ip6tables -t mangle -A OUTPUT     -p udp --dport 4789 -j ACCEPT
-
 # do not redirect packets returning from shape
 ip6tables -t mangle -A PREROUTING -i veth1_rt -j ACCEPT
 
-# mark all local-originated IPv6 packets those not already accepted (e.g., UDP/4789)
-ip6tables -t mangle -A OUTPUT -j MARK --set-mark 0x01/0xFF
+# mark only local IPv6 traffic routed to VXLAN interfaces (overlay inner traffic)
+ip6tables -t mangle -A OUTPUT -o vl+ -j MARK --set-mark 0x01/0xFF
 
-# mark all incoming IPv6 packets except those previusly accepted (e.g., from shape or UDP/4789)
-ip6tables -t mangle -A PREROUTING -j MARK --set-mark 0x01/0xFF
+# mark only incoming IPv6 traffic from VXLAN interfaces (overlay inner traffic)
+ip6tables -t mangle -A PREROUTING -i vl+ -j MARK --set-mark 0x01/0xFF
 
 # ---------- policy routing ----------
 ip -6 rule add fwmark 0x01/0xFF table 100
@@ -93,4 +95,3 @@ sysctl -w net.ipv6.conf.veth1_rt.accept_ra=0 > /dev/null
 sysctl -w net.ipv6.conf.all.accept_ra=0 > /dev/null 
 
 echo "Shaping namespace created and configured successfully."
-

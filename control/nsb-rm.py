@@ -194,6 +194,11 @@ def main():
         return 2
 
 
+    confirm = input(f"⚠️  You are about to remove ALL nodes of type(s) '{args.type}'. This action cannot be undone. Type 'yes' to confirm: ")
+    if confirm.lower() != "yes":
+        log.info("Aborting cleanup.")
+        return 0
+
     # ==========================================
     # LOAD CONFIGURATION
     # ==========================================
