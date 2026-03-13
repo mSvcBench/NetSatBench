@@ -105,6 +105,23 @@ def join_route_commands_with_sleep(
             output_cmds.append(f"sleep {sleep_seconds}")
     return "; ".join(output_cmds)
 
+def parse_delay(value) -> int:
+    if not value: return 0.0
+    val = str(value).strip()
+    units = {
+        's': 1,  'ms': 0.001, 'us': 0.000001, 'ns': 0.000000001}
+    match = re.match(r"([0-9\.]+)([a-zA-Z]+)?", val)
+    if not match: return 0.0
+    try:
+        num = float(match.group(1))
+        unit = match.group(2)
+        if unit and unit in units:
+            return num * units[unit]
+        #return num and delete unit
+        return num
+    except ValueError:
+        return 0.0
+
 # ==========================================
 # ROUTE COMPUTATION LOGIC
 # ==========================================
@@ -175,7 +192,7 @@ def compute_routes_single_epoch(
             return w
         elif routing_metric == "delay":
             # Simulated delay-based weight (in practice, this would be derived from actual delay data)
-            delay = link.get("delay", 0)
+            delay = parse_delay(link.get("delay", 0))
             return max(w + delay,255)
         
     no_links_added = 0

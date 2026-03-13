@@ -8,18 +8,6 @@ import logging
 
 log = logging.getLogger("nsb-logger")
 
-# ==========================================
-# ETCD CONNECTION
-# ==========================================
-def connect_etcd(etcd_host: str, etcd_port: int, etcd_user=None, etcd_password=None, etcd_ca_cert=None):
-    try:
-        if etcd_user and etcd_password:
-            return etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
-        else:
-            return etcd3.client(host=etcd_host, port=etcd_port)
-    except Exception as e:
-        log.error(f"❌ Failed to initialize Etcd client: {e}")
-        sys.exit(1)
 
 # ==========================================
 # 🧮 UNIT CONVERSION HELPERS
@@ -58,25 +46,16 @@ def parse_mem(value) -> float:
         return 0.0
 
 
-def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
-    data: Dict[str, Any] = {}
-    for value, metadata in etcd.get_prefix(prefix):
-        key = metadata.key.decode('utf-8').split('/')[-1]
-        try:
-            data[key] = json.loads(value.decode('utf-8'))
-        except json.JSONDecodeError:
-            log.warning(f"⚠️ Warning: Could not parse JSON for key {key} under {prefix}")
-    return data
-
 # ==========================================
 #  SCHEDULING LOGIC
 # ==========================================
-def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str, Any]:
+def schedule_workers(sat_config_data: Dict[str, Any], workers_data: Dict[str, Any]) -> Dict[str, Any]:
 
     log.info("⚙️  Starting scheduling logic...")
-    all_nodes = config_data.get('nodes', {})
-    workers = get_prefix_data(etcd_client, '/config/workers/')
-    
+    nodes_data_new = sat_config_data.copy()
+    workers_data_new = workers_data.copy()
+
+    all_nodes = nodes_data_new.get('nodes', {})
 
     nodes_to_schedule = []
     for name, cfg in all_nodes.items():
@@ -95,14 +74,14 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
         #--- Check if already assigned ---
         assigned_worker = cfg.get('worker', None)  
         if assigned_worker:
-            if assigned_worker in workers:
+            if assigned_worker in workers_data_new:
                 # Deduct resources from assigned worker
-                if workers[assigned_worker]['cpu-used'] + cpu_req > parse_cpu(workers[assigned_worker].get('cpu')):
+                if workers_data_new[assigned_worker]['cpu-used'] + cpu_req > parse_cpu(workers_data_new[assigned_worker].get('cpu')):
                     log.warning(f"    ⚠️ Warning: Worker {assigned_worker} overcommitted on CPU for node {name}!")
-                if workers[assigned_worker]['mem-used'] + mem_req > parse_mem(workers[assigned_worker].get('mem')):
+                if workers_data_new[assigned_worker]['mem-used'] + mem_req > parse_mem(workers_data_new[assigned_worker].get('mem')):
                     log.warning(f"    ⚠️ Warning: Worker {assigned_worker} overcommitted on MEM for node {name}!")
-                workers[assigned_worker]['cpu-used'] += cpu_req
-                workers[assigned_worker]['mem-used'] += mem_req
+                workers_data_new[assigned_worker]['cpu-used'] += cpu_req
+                workers_data_new[assigned_worker]['mem-used'] += mem_req
             else:
                 log.warning(f"    ⚠️ Warning: Assigned worker {assigned_worker} for node {name} not found in workers list! Auto-assigning...")
                 nodes_to_schedule.append((name, cfg, cpu_req, mem_req))
@@ -110,7 +89,7 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
             nodes_to_schedule.append((name, cfg, cpu_req, mem_req))
 
     workers_resources = []
-    for name, cfg in workers.items():
+    for name, cfg in workers_data_new.items():
         sat_vnet_cidr = cfg.get('sat-vnet-cidr', None)
         if not sat_vnet_cidr:
             log.error(f"❌ Worker {name} missing 'sat-vnet-cidr' configuration. Cannot proceed with scheduling.")
@@ -185,20 +164,14 @@ def schedule_workers(config_data: Dict[str, Any], etcd_client: Any) -> Dict[str,
             else:
                 log.error(f"❌ Unable to schedule Node: {node['name']}. No available workers with available underlay IP address, extend sat-vnet-cidr.")
                 sys.exit(1)
-    # update worker config in etcd with usage stats
-    for worker in workers_resources:
-        worker_cfg = worker['data'].copy()
-        worker_cfg['cpu'] = worker['cpu']
-        # Update usage fields
-        worker_cfg['cpu-used'] = round(worker['cpu-used'], 2) 
-        used_gib = round(worker['mem-used'], 4) # Convert mem-used back to GiB string 
-        worker_cfg['mem-used'] = f"{used_gib}GiB"
         
-        # Write to Etcd under /config/workers/{worker_name}
-        key = f"/config/workers/{worker['name']}"
-        etcd_client.put(key, json.dumps(worker_cfg))
-
-
-
+        for worker in workers_resources:
+            worker_name = worker['name']
+            workers_data_new[worker_name] = worker['data'].copy()
+            # Update usage fields
+            workers_data_new[worker_name]['cpu-used'] = round(worker['cpu-used'], 2) 
+            used_gib = round(worker['mem-used'], 4) # Convert mem-used back to GiB string 
+            workers_data_new[worker_name]['mem-used'] = f"{used_gib}GiB"
+    
     log.info("✅ Scheduling Completed.")
-    return config_data
+    return nodes_data_new, workers_data_new
