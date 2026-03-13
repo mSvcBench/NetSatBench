@@ -579,7 +579,7 @@ def traffic_pause(ho_delay_ms: float) -> None:
                     "dev", "veth0_rt",
                 ])
                 backlog_match = re.search(r"backlog\s+(\d+)b", class_stats)
-                logging.info(f"⧴ Handover delay in progress, current backlog: {backlog_match.group(1) if backlog_match else 'N/A'} bytes")
+                # logging.info(f"⧴ Handover delay in progress, current backlog: {backlog_match.group(1) if backlog_match else 'N/A'} bytes")
                 if backlog_match and int(backlog_match.group(1)) >= target_backlog_bytes:
                     break
             except Exception:
@@ -612,11 +612,13 @@ def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None
     new_sat_ipv6 = upstream_sids.split(",")[0]          # first SID is the new satellite to reach the grd.
     new_dev = derive_egress_dev(new_sat_ipv6)  # derive the egress dev to reach the grd via the new satellite
     
-    # add new route to grd if necessary
-    # pause traffic while switching current_dev to emulate handover execution delay 
-    traffic_pause(ho_delay_ms)
-    
     if new_dev != current_dev:
+        threading.Thread(
+            target=traffic_pause,
+            args=(ho_delay_ms,),
+            daemon=True,
+            name="handover-traffic-pause",
+        ).start()
         current_dev = new_dev
         if not wait_for_link_local_via_route(new_sat_ipv6, timeout_s=link_setup_delay_s):
             logging.warning(

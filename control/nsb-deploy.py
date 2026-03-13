@@ -3,12 +3,14 @@ import argparse
 import concurrent.futures
 import logging
 import time
+from astropy.units import MiB
 import etcd3
 import subprocess
 import json
 import os
 import sys
 from typing import Dict, Any, Tuple
+from scheduler import parse_cpu, parse_mem
 
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
@@ -249,10 +251,10 @@ def create_one_node(
     ssh_key = worker_info.get('ssh-key', '~/.ssh/id_rsa')
     worker_bridge = worker_info.get('sat-vnet', 'sat-vnet')
     image = node.get('image', 'msvcbench/sat-container:latest')
-    cpu_requested = float(node.get('cpu-request', 0.0))
-    mem_requested = node.get('mem-request', "0MiB")
-    cpu_limit = float(node.get('cpu-limit', 0.0))
-    mem_limit = node.get('mem-limit', "0MiB")
+    cpu_requested = float(parse_cpu(node.get('cpu-request', 0.0)))
+    mem_requested = f"{parse_mem(node.get('mem-request', '0MiB'))*1024}MiB"
+    cpu_limit = float(parse_cpu(node.get('cpu-limit', 0.0)))
+    mem_limit = f"{parse_mem(node.get('mem-limit', '0MiB'))*1024}MiB"
 
     try:
         cmd = recreate_and_run_container(

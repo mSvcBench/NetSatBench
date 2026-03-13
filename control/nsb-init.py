@@ -8,12 +8,12 @@ import ipaddress
 import logging
 import copy
 from itertools import islice
-from typing import Any, Mapping
+from typing import Any, Dict, Mapping
 from pyparsing import Mapping
-from scheduler import schedule_workers
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger("nsb-init")
+scheduler_impl = None
 
 # ==========================================
 # ETCD CONNECTION
@@ -34,8 +34,19 @@ def connect_etcd(etcd_host: str, etcd_port: int, etcd_user=None, etcd_password=N
         sys.exit(1)
 
 # ==========================================
- #Helper 
+# Helper 
 # ==========================================
+
+def get_prefix_data(etcd, prefix: str) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    for value, metadata in etcd.get_prefix(prefix):
+        key = metadata.key.decode('utf-8').split('/')[-1]
+        try:
+            data[key] = json.loads(value.decode('utf-8'))
+        except json.JSONDecodeError:
+            log.warning(f"⚠️ Warning: Could not parse JSON for key {key} under {prefix}")
+    return data
+
 def generate_ipv4_subnet(global_index: int, base_cidr: str, new_prefix: int = 30) -> str:
     """
     Generates sequential ipv4 /30 subnets from a parent network using the standard library.
@@ -115,19 +126,44 @@ def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any], to_skip_key
 
 
 # ==========================================
-# PUSH CONFIG TO ETCD AND IP ASSIGNMENT
+# PUSH CONFIG TO ETCD
 # ==========================================
-def apply_config_to_etcd(etcd, config_data: dict):
+def apply_config_to_etcd(etcd, sat_config_data: dict, worker_config_data: dict) -> None:
    
-    allowed_keys = [
-        "nodes","node-config-common", "epoch-config"
-    ]
+    try:
+        allowed_keys = {"epoch-config", "nodes", "node-config-common"}
+        for key, cfg in sat_config_data.items():
+            if key not in allowed_keys:
+                log.warning(f"⚠️ Unexpected key '{key}', allowed keys are {allowed_keys}, skipping...")
+                continue
+            elif key in ["epoch-config"]:
+                etcd.put(f"/config/{key}", json.dumps(cfg))
+            elif key == "nodes":
+                for node_name, node_cfg in cfg.items():
+                    # Write to Etcd under /config/nodes/{node_name}
+                    key = f"/config/nodes/{node_name}"
+                    etcd.put(key, json.dumps(node_cfg))
+        # update worker info on etcd
+        for worker_name, worker_cfg in worker_config_data.items():
+            # Write to Etcd under /config/workers/{worker_name}
+            key = f"/config/workers/{worker_name}"
+            etcd.put(key, json.dumps(worker_cfg))
+        log.info("👍 Successfully injected satellite system config to Etcd.")
+        log.info("▶️ Proceed with nsb.py deploy to deploy node containers on workers.")
+    except Exception as e:
+        log.error(f"❌ Error in apply_config_to_etcd: {e}")
+        sys.exit(1)
 
+# ==========================================
+#  IP ADDRESSING LOGIC
+# ==========================================
+def auto_ip_addressing(sat_config_data: dict) -> None:
+    sat_config_data_new = sat_config_data.copy()
     try:
         # init for auto-assign-ips (v4 + v6)
         super_cidr_vector_v4: dict[str, tuple[int, str]] = {}
         super_cidr_vector_v6: dict[str, tuple[int, str]] = {}
-        node_common_cfg = config_data.get("node-config-common", {})
+        node_common_cfg = sat_config_data_new.get("node-config-common", {})
         auto_assign_ip = False
         if "L3-config" in node_common_cfg:
             l3_common_cfg = node_common_cfg["L3-config"]
@@ -143,13 +179,8 @@ def apply_config_to_etcd(etcd, config_data: dict):
                         super_cidr_vector_v6[match_type] = (0, super_cidr6)
         
         # upload config to etcd and auto-assign IPs if enabled
-        for key, value in config_data.items():
-            if key not in allowed_keys:
-                log.warning(f"⚠️ Unexpected key '{key}', allowed keys are {allowed_keys}, skipping...")
-                continue
-            elif key in ["epoch-config"]:
-                etcd.put(f"/config/{key}", json.dumps(value))
-            elif key == "nodes":
+        for key, value in sat_config_data_new.items():
+            if key == "nodes":
                 log.info(f"⚙️ Starting IP assignment process...")
                 for name, node_cfg in value.items():
                     l3_cfg = node_cfg.get("L3-config", {})
@@ -187,23 +218,19 @@ def apply_config_to_etcd(etcd, config_data: dict):
                         f"v6={l3_cfg.get('cidr-v6', None)} to node {name} of type {node_cfg.get('type')}"
                     )
 
-                    
-                    etcd.put(
-                        f"/config/{key}/{name}",
-                        json.dumps(node_cfg),
-                    )
                 log.info(f"✅ IP assignment process completed.")
-        log.info("👍 Successfully injected satellite system config to Etcd.")
-        log.info("▶️ Proceed with nsb.py deploy to deploy node containers on workers.")
-
+                return sat_config_data_new
     except Exception as e:
-        log.error(f"❌ Error in apply_config_to_etcd: {e}")
+        log.error(f"❌ Error in auto_ip_addressing: {e}")
         sys.exit(1)
+
+
 
 # ==========================================
 # MAIN
 # ==========================================
 def main() -> int:
+    global scheduler_impl
     parser = argparse.ArgumentParser(
         description="Inject satellite system configuration into Etcd"
     )
@@ -213,6 +240,7 @@ def main() -> int:
         required=False,
         help="Path to the JSON emulation configuration file (e.g., sat-config.json)",
     )
+    parser.add_argument("-s","--sched",type=str,default="base", help="Scheduling algorithm to use (default: base)")
     parser.add_argument(
         "--etcd-host",
         default=os.getenv("ETCD_HOST", "127.0.0.1"),
@@ -247,7 +275,7 @@ def main() -> int:
     args = parser.parse_args()
     log.setLevel(args.log_level.upper())
 
-    # if ETCG host is localhost, suggest to set env variable and ask to continue
+    # if ETCD host is localhost, suggest to set env variable and ask to continue
     if args.etcd_host in ["127.0.0.1", "localhost"]:
         log.warning("⚠️ Etcd host is set to localhost. Set ETCD_HOST to the actual Etcd server IP if remote workers are used.")
         cont = input("Do you want to continue? (y/n): ")
@@ -259,36 +287,56 @@ def main() -> int:
     
     # check that workers exist in etcd otherwise ask to proceed with system-init-docker.py first
     try:
-            existing_workers = etcd.get_prefix("/config/workers/")
-            if not existing_workers:
-                log.warning("⚠️  Workers do not found in Etcd under /config/workers/. This may indicate system init-docker.py has not been run.")
-                cont = input("Do you want to continue with nsb-init? (y/n): ")
-                if cont.lower() != 'y':
-                    log.info("Exiting as per user request.")
-                    sys.exit(0)
+        existing_workers = etcd.get_prefix("/config/workers/")
+        if not existing_workers:
+            log.warning("⚠️  Workers do not found in Etcd under /config/workers/. This may indicate system init-docker.py has not been run.")
+            cont = input("Do you want to continue with nsb-init? (y/n): ")
+            if cont.lower() != 'y':
+                log.info("Exiting as per user request.")
+                sys.exit(0)
     except Exception as e:
         log.error(f"❌ Error checking existing nodes in Etcd: {e}")
         sys.exit(1)
 
+    # check nodes exists in etcd, if yes, ask to proceed with nsb-init or exit
+    try:        
+        existing_nodes = etcd.get_prefix("/config/nodes/")
+        if len(list(existing_nodes))>0:
+            log.warning("⚠️  Nodes already exist in Etcd under /config/nodes/. This may indicate nsb-init has been run before.")
+            cont = input("Do you want to continue and overwrite existing nodes? (y/n): ")
+            if cont.lower() != 'y':
+                log.info("Exiting as per user request.")
+                sys.exit(0)
+    except Exception as e:
+        log.error(f"❌ Error checking existing nodes in Etcd: {e}")
+        sys.exit(1) 
 
     config_file = args.config
 
     # check that "/config/workers" exists in etcd and it is not void
-    workers = list(etcd.get_prefix("/config/workers/"))
-    if not workers:
+    worker_confing_data = get_prefix_data(etcd, "/config/workers/")
+    if not worker_confing_data:
         log.error("❌ '/config/workers' is missing or empty in Etcd, use system-init-docker.py first.")
         sys.exit(1)
 
     try:
         with open(config_file, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
+            sat_config_data = json.load(f)
     except Exception as e:
         log.error(f"❌ Failed to load file: {e}")
         return 1
     
-    config_data = merge_node_common_config(config_data)
-    scheduled_config = schedule_workers(config_data, etcd)
-    apply_config_to_etcd(etcd, scheduled_config)
+    if args.sched == "base":
+        import scheduler as scheduler_impl
+    elif args.sched == "metis":
+        import scheduler_metis as scheduler_impl
+    else:
+        log.error(f"❌ Invalid scheduler specified: {args.sched}. Use 'base' or 'metis'.")
+        sys.exit(1)
+    sat_config_data = merge_node_common_config(sat_config_data)
+    sat_config_data, worker_confing_data = scheduler_impl.schedule_workers(sat_config_data, worker_confing_data)
+    sat_config_data = auto_ip_addressing(sat_config_data)
+    apply_config_to_etcd(etcd, sat_config_data, worker_confing_data)
     return 0
 
 if __name__ == "__main__":

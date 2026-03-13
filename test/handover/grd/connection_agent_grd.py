@@ -42,6 +42,7 @@ is_grd_handover_needed = None  # assign the handover strategy function to use fo
 process_connection_handover = None  # assign the function to process the set of links/devs to be used for connecting to the satellite network
 handover_metadata = {}  # metadata dict to pass to the handover strategy function (can include threshold values, weights, or other parameters needed for the strategy logic)
 handover_periodic_check_s = 3.3  # periodic check interval for handover decision (can be tuned based on expected link dynamics and handover time requirements)
+handover_delay_ms = 0.0
 hosts_ipv6_cache: Dict[str, str] = {}
 grd_ipv6 = ""
 user_callback_port = 5006
@@ -417,7 +418,17 @@ def processing_handover_loop() -> None:
                     logging.info(f"🔀 Handover type '{strategy_type}' for user {user_id}: selected newest grd satellite {new_grd_sat_name} and user satellite {new_user_sat_name}")
                 else:
                     logging.info(f"🔀 Handover type '{strategy_type}' for {user_id}: selected newest default satellite {new_grd_sat_name}")
-                process_user_handover(user_id, new_grd_dev, new_user_dev)
+                
+                process_user_handover(user_id, new_grd_dev, new_user_dev)  
+
+                if user_needed and handover_delay_ms > 0: 
+                    threading.Thread(
+                            target=traffic_pause,
+                            args=(user_id, handover_delay_ms),
+                            daemon=True,
+                            name=f"traffic-pause-{user_id}",
+                        ).start()
+        
         time.sleep(handover_periodic_check_s)  # periodic check interval for handover decision 
 
 def send_user_hello_udp(user_id: str, user_ipv6: str) -> None:
@@ -646,12 +657,12 @@ def handle_user_registration_request(
 def traffic_pause(user_id, ho_delay_ms: float) -> None:
     # Apply handover delay pause if configured (e.g., to allow user to switch satellite link or send back handover complete) as rate reduction to delay the packet scheduling on the new route
         if ho_delay_ms > 0:
-            mtu = 1500  # Assuming MTU for shaping rules
+            mtu = 1508  # Assuming MTU for shaping rules
             logging.info("⧴ Applying handover delay of %dms", ho_delay_ms)
             
             rate_kbit = max(1, int(mtu * 8 / ho_delay_ms))  # kbit/s (since ms in denominator)
-            burst_bytes = mtu * 2
-            cburst_bytes = mtu * 2
+            burst_bytes = mtu
+            cburst_bytes = mtu
             idx = get_user_index(user_id)
 
             run_cmd([
@@ -662,8 +673,23 @@ def traffic_pause(user_id, ho_delay_ms: float) -> None:
             "burst",f"{burst_bytes}b","cburst",f"{cburst_bytes}b",
             ])
 
-            deadline = time.monotonic_ns() + int(ho_delay_ms * 1_000_000)
-            sleep_until(deadline)
+            deadline = time.monotonic() + (ho_delay_ms / 1000.0)
+            target_backlog_bytes = mtu
+            while time.monotonic() < deadline:
+                try:
+                    class_stats = run_cmd_capture([
+                        "tc", "-s", "class", "show",
+                        "parent", "1:",
+                        "classid", f"1:{idx+10}",
+                        "dev", "veth0_rt",
+                    ])
+                    backlog_match = re.search(r"backlog\s+(\d+)b", class_stats)
+                    # logging.info(f"⧴ Handover delay in progress, current backlog: {backlog_match.group(1) if backlog_match else 'N/A'} bytes")
+                    if backlog_match and int(backlog_match.group(1)) >= target_backlog_bytes:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.001)
             
             # Restore original qdisc after delay
             run_cmd([
@@ -840,7 +866,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
 #   ENTRYPOINT
 # ----------------------------
 def main() -> None:
-    global is_user_handover_needed, is_grd_handover_needed, process_connection_handover, grd_ipv6, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links
+    global is_user_handover_needed, is_grd_handover_needed, process_connection_handover, grd_ipv6, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links, handover_delay_ms
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="::", help="Address to bind the UDP server for handover (default: :: for all interfaces)")
     ap.add_argument("--port", type=int, default=5005, help="UDP port where grd listens for handover_request (default: 5005)")
@@ -878,6 +904,7 @@ def main() -> None:
         logging.error(f"Unsupported handover strategy: {args.handover_strategy}")
         sys.exit(1)
     handover_metadata = args.handover_strategy_metadata
+    handover_delay_ms = args.handover_delay
     
     # Start watching link actions in a separate thread
     etcd_client = get_etcd_client()
