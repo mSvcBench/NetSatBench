@@ -43,6 +43,7 @@ heartbeat_interval_s = 1.0
 heartbeat_max_failures = 3
 heartbeat_failures = 0
 heartbeat_lock = threading.Lock()
+MAX_UDP_RECV_BYTES = 65535
 
 # Status not_registered, registration_in_progress, registered, handover_in_progress
 status = "not_registered" # initial status before registration
@@ -305,6 +306,22 @@ def parse_delay(delay) -> float:
             raise ValueError(f"Unknown delay format: {delay}")
     else:
         raise ValueError(f"Invalid delay type: {type(delay)}")
+
+
+def parse_expected_duration(expected_duration: Any) -> float:
+    if expected_duration is None:
+        return float(link_duration_initial_value_s)
+    if isinstance(expected_duration, (int, float)):
+        return float(expected_duration)
+    if isinstance(expected_duration, str):
+        value = expected_duration.strip().lower()
+        if value == "null" or value == "":
+            return float(link_duration_initial_value_s)
+        if value.endswith(("ms", "us", "s")):
+            delay_ms = parse_delay(value)
+            return delay_ms / 1000.0
+        return float(value)
+    raise ValueError(f"Invalid expected_duration type: {type(expected_duration)}")
 
 def refresh_hosts_ipv6_cache() -> None:
     global hosts_ipv6_cache
@@ -736,6 +753,10 @@ def watch_link_actions_loop () -> None:
                     elif links_db[link_dev].get("status") == "unavailable":
                             logging.info(f"🔁 Detected re-appearance of previous satellite {remote_endpoint}")
                             update_links_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available")
+                    if "expected_duration" in l:
+                        # expected_duration is expressed in seconds by the epoch annotation tool; null falls back to the default initial duration.
+                        expected_duration = parse_expected_duration(l["expected_duration"])
+                        update_links_db(link_dev=link_dev, last_duration=expected_duration)
                     if status == "not_registered":
                         handle_registration_request()
 
@@ -779,7 +800,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
         init_qdisc()
 
     while True:
-        data, peer = sock.recvfrom(4096)
+        data, peer = sock.recvfrom(MAX_UDP_RECV_BYTES)
         try:
             msg = json.loads(data.decode("utf-8"))
             grd_id = msg.get("grd_id", "unknown")

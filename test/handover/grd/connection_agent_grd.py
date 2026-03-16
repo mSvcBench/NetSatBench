@@ -51,6 +51,7 @@ heartbeat_max_failures = 3
 heartbeat_failures: Dict[str, int] = {}
 heartbeat_lock = threading.Lock()
 _UNSET = object() # sentinel value to distinguish between "no update" and "update with None/empty" in db update functions
+MAX_UDP_RECV_BYTES = 65535
 
 # ----------------------------
 #   HELPERS
@@ -216,6 +217,37 @@ def wait_for_link_local_via_route(dst_ipv6: str, timeout_s: float = 2.0, poll_s:
         time.sleep(poll_s)
     return has_link_local_via_route(dst_ipv6)
 
+
+def parse_delay(delay) -> float:
+    if isinstance(delay, (int, float)):
+        return float(delay)
+    if isinstance(delay, str):
+        delay = delay.strip().lower()
+        if delay.endswith("ms"):
+            return float(delay[:-2])
+        if delay.endswith("us"):
+            return float(delay[:-2]) / 1000
+        if delay.endswith("s"):
+            return float(delay[:-1]) * 1000
+        raise ValueError(f"Unknown delay format: {delay}")
+    raise ValueError(f"Invalid delay type: {type(delay)}")
+
+
+def parse_expected_duration(expected_duration: Any) -> float:
+    if expected_duration is None:
+        return float(link_duration_initial_value_s)
+    if isinstance(expected_duration, (int, float)):
+        return float(expected_duration)
+    if isinstance(expected_duration, str):
+        value = expected_duration.strip().lower()
+        if value == "null" or value == "":
+            return float(link_duration_initial_value_s)
+        if value.endswith(("ms", "us", "s")):
+            delay_ms = parse_delay(value)
+            return delay_ms / 1000.0
+        return float(value)
+    raise ValueError(f"Invalid expected_duration type: {type(expected_duration)}")
+
 # ----------------------------
 #   MAIN LOGIC FOR LINK MANAGEMENT LOCAL SIDE
 # ----------------------------
@@ -267,6 +299,10 @@ def handle_link_put_action(event):
             remote_endpoint_ipv6 = resolve_ipv6_from_hosts(remote_endpoint) if remote_endpoint else None
             logging.info(f"➕ Ground station detected satellite {remote_endpoint} in range") 
             update_link_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", last_duration=link_duration_initial_value_s, remote_endpoint_ipv6=remote_endpoint_ipv6)
+        if "expected_duration" in l:
+            # expected_duration is expressed in seconds by the epoch annotation tool; null falls back to the default initial duration.
+            expected_duration = parse_expected_duration(l["expected_duration"])
+            update_link_db(link_dev=link_dev, last_duration=expected_duration)
         return
     except Exception as ex:
         logging.error("❌ Failed to process link action event %s", ex)
@@ -854,7 +890,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
     logging.info("⚙️ Ground connection agent listening on [%s]:%d", bind_addr, port)
 
     while True:
-        data, peer = sock.recvfrom(4096)
+        data, peer = sock.recvfrom(MAX_UDP_RECV_BYTES)
         try:            
             msg = json.loads(data.decode())
             handle_user_request(sock=sock, payload=msg, peer=peer, ho_delay_ms=ho_delay)
