@@ -127,10 +127,15 @@ def get_node_info(etcd_client, worker_dict, verbose=False):
                 elif node_cfg["worker"] not in worker_dict:
                     status = "worker not found"
                 # if worker is found, we can check if the container for the node is running on
-                elif node_cfg["name"] in running_nodes[node_cfg["worker"]]:                    
+                elif node_cfg["name"] in running_nodes[node_cfg["worker"]] and node_cfg.get("eth0_ip",None) is not None:                    
                         status = "running"
                 else:
                     status = "not running"
+            else:
+                if node_cfg.get("eth0_ip",None) is None:
+                    status = "not running"
+                else:                    
+                    status = "likely running" # not sure if the container is still running, but at least the node has an IP, so it likely started at some point
             node_cfg["status"] = status
             node_dict[node_cfg["name"]] = node_cfg
         except Exception as e:
@@ -263,28 +268,22 @@ def main():
     n_satellites = sum(1 for node in node_dict.values() if node.get("type") == "satellite")
     n_users = sum(1 for node in node_dict.values() if node.get("type") == "user")
     n_gateways = sum(1 for node in node_dict.values() if node.get("type") == "gateway")
-    n_satellites_running = sum(1 for node in node_dict.values() if node.get("type") == "satellite" and node.get("status") == "running")
-    n_users_running = sum(1 for node in node_dict.values() if node.get("type") == "user" and node.get("status") == "running")
-    n_gateways_running = sum(1 for node in node_dict.values() if node.get("type") == "gateway" and node.get("status") == "running")
-    n_others_running = sum(1 for node in node_dict.values() if node.get("type") not in ["satellite", "user", "gateway"] and node.get("status") == "running")
+    running_states = ["running", "likely running"]
+    n_satellites_running = sum(1 for node in node_dict.values() if node.get("type") == "satellite" and node.get("status") in running_states)
+    n_users_running = sum(1 for node in node_dict.values() if node.get("type") == "user" and node.get("status") in running_states)
+    n_gateways_running = sum(1 for node in node_dict.values() if node.get("type") == "gateway" and node.get("status") in running_states)
+    n_others_running = sum(1 for node in node_dict.values() if node.get("type") not in ["satellite", "user", "gateway"] and node.get("status") in running_states)
     others = sum(1 for node in node_dict.values() if node.get("type") not in ["satellite", "user", "gateway"])
-    if args.verbose:
-        print(f"    🛰️ Satellites: {n_satellites} ({n_satellites_running} running)")
-        print(f"    👤 Users: {n_users} ({n_users_running} running)")
-        print(f"    📡 Gateways: {n_gateways} ({n_gateways_running} running)") 
-        print(f"    📦 Others: {others} ({n_others_running} running)")
+    run_string = "running" if args.verbose else "likely running (verbose mode off)"
+    print(f"    🛰️ Satellites: {n_satellites_running}/{n_satellites} {run_string}")
+    print(f"    👤 Users: {n_users_running}/{n_users} {run_string}")
+    print(f"    📡 Gateways: {n_gateways_running}/{n_gateways} {run_string}") 
+    print(f"    📦 Others: {n_others_running}/{others} {run_string}\n")
 
-        for node_key, node in node_dict.items():
-            if node.get("status")!="running":
-                print(f"    ⚠️ Node {node_key} has status '{node.get('status')}'")
+    for node_key, node in node_dict.items():
+        if node.get("status") not in running_states:
+            print(f"    ⚠️ Node {node_key} has status '{node.get('status')}'")
 
-    else:
-        print(f"    🛰️ Satellites: {n_satellites}")
-        print(f"    👤 Users: {n_users}")
-        print(f"    📡 Gateways: {n_gateways}") 
-        print(f"    📦 Others: {others}")
-    
-    
     print(f"===========================")
     print(f" Links: {len(link_list)}")
     

@@ -335,6 +335,7 @@ def main() -> int:
         default=os.getenv("ETCD_CA_CERT", None ),
         help="Path to Etcd CA certificate (default: env ETCD_CA_CERT or None)",
     )
+    parser.add_argument("--fix", action="store_true", help="Fix mode: check existing nodes and redeploy those with no eth0_ip configured.")
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -356,7 +357,7 @@ def main() -> int:
         for node in existing_nodes:
             no_nodes=False
             node_config = json.loads(node[0].decode('utf-8')) if node[0] else None
-            if "eth0_ip" in node_config:
+            if "eth0_ip" in node_config and not args.fix:
                 log.warning("⚠️  Nodes already found in Etcd under /config/nodes/ with eth0_ip configured. This may indicate nsb-deploy has been already run.")
                 cont = input("Do you want to continue with nsb-deploy? (y/n): ")
                 if cont.lower() != 'y':
@@ -381,10 +382,14 @@ def main() -> int:
         for node_type in node_types:
             all_nodes_filtered = {name:node for name,node in all_nodes.items() if node.get("type","undefined") == node_type}
 
+    if args.fix:
+         log.info("🔧 Fix mode enabled: will check existing nodes and redeploy those with no eth0_ip configured.")
+         all_nodes_filtered = {name:node for name,node in all_nodes_filtered.items() if node.get("eth0_ip", None) is None}
+    
     log.info(f"🔎 Found {len(all_nodes_filtered)} nodes, to deploy.")
     
     if not all_nodes_filtered:
-        log.warning("⚠️ Warning: No nodes found. Run 'init.py' to populate Etcd first.")
+        log.warning("⚠️ Warning: No nodes found to deploy")
         return 1
 
     if not workers:
