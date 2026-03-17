@@ -22,7 +22,7 @@ import threading
 import time
 import zlib
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 
 import etcd3
 from watchdog.events import FileSystemEventHandler

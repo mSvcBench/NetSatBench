@@ -51,7 +51,8 @@ heartbeat_max_failures = 3
 heartbeat_failures: Dict[str, int] = {}
 heartbeat_lock = threading.Lock()
 _UNSET = object() # sentinel value to distinguish between "no update" and "update with None/empty" in db update functions
-MAX_UDP_RECV_BYTES = 65535
+MAX_UDP_RECV_BYTES = 65535 # max size of UDP payload to receive for user callbacks, can be tuned based on expected message size and memory constraints
+report_file = None  # file handle for detailed report output, if enabled by args
 
 # ----------------------------
 #   HELPERS
@@ -455,7 +456,10 @@ def processing_handover_loop() -> None:
                 else:
                     logging.info(f"🔀 Handover type '{strategy_type}' for {user_id}: selected newest default satellite {new_grd_sat_name}")
                 
-                process_user_handover(user_id, new_grd_dev, new_user_dev)  
+                process_user_handover(user_id, new_grd_dev, new_user_dev)
+                if report_file:
+                    report_file.write(f"{time.time()},handover,{user_id},{strategy_type},{new_grd_sat_name},{new_user_sat_name}\n")
+                    report_file.flush()
 
                 if user_needed and handover_delay_ms > 0: 
                     threading.Thread(
@@ -650,6 +654,9 @@ def handle_user_registration_request(
         user_sat_name = user_links_db.get(user_dev_new, {}).get("remote_endpoint_name", "unknown")
         logging.info(f"✅ Registration for user {user_id} accepted: grd satellite {grd_sat_name} and user satellite {user_sat_name}")
 
+        if report_file:
+            report_file.write(f"{time.time()},registration,{user_id},_,{grd_sat_name},{user_sat_name}\n")
+            report_file.flush()
         # build sids
         downstream_sids, upstream_sids = create_sids(grd_sat_ipv6, user_sat_ipv6_new)
 
@@ -902,7 +909,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
 #   ENTRYPOINT
 # ----------------------------
 def main() -> None:
-    global is_user_handover_needed, is_grd_handover_needed, process_connection_handover, grd_ipv6, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links, handover_delay_ms
+    global is_user_handover_needed, is_grd_handover_needed, process_connection_handover, grd_ipv6, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links, handover_delay_ms, report_file
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="::", help="Address to bind the UDP server for handover (default: :: for all interfaces)")
     ap.add_argument("--port", type=int, default=5005, help="UDP port where grd listens for handover_request (default: 5005)")
@@ -915,6 +922,7 @@ def main() -> None:
     ap.add_argument("--link-setup-delay", type=float, default=5, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
     ap.add_argument("--link-duration-initial-value", type=float, default=4*60, help="Initial value in seconds for the duration of new links, default: 4min)")
     ap.add_argument("--max-links", type=int, default=16, help="Max number of simultaneous links")
+    ap.add_argument("--report", action="store_true", help="Enable detailed reporting of internal state for debugging")
     ap.add_argument("--log-level", default=os.getenv("LOG_LEVEL", "INFO"), help="Logging level (default: INFO or value of LOG_LEVEL env var)")
     args = ap.parse_args()
     
@@ -942,6 +950,11 @@ def main() -> None:
     handover_metadata = args.handover_strategy_metadata
     handover_delay_ms = args.handover_delay
     
+    if args.report:
+        report_file_name = f"report_{os.environ['NODE_NAME']}_conn_manager_grd.log"
+        report_file = open(report_file_name, "w")
+        logging.info(f"📊 Detailed reporting enabled, writing to {report_file_name}")
+
     # Start watching link actions in a separate thread
     etcd_client = get_etcd_client()
     link_setup_delay_s = args.link_setup_delay
