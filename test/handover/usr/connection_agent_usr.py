@@ -823,7 +823,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="::")
     ap.add_argument("--port", type=int, default=5006, help="UDP port where usr1 listens for handover_command")
-    ap.add_argument("--ho-delay", type=float, help="Handover delay in mseconds (requires veth0_rt, use app/shaping-ns-create-v6.sh)", default=0)
+    ap.add_argument("--handover-delay", type=float, help="Handover delay in mseconds (requires veth0_rt, use app/shaping-ns-create-v6.sh)", default=0)
     ap.add_argument("--grd", type=str, default=None, help="Name of ground station (e.g., grd1)")
     ap.add_argument("--grd-port", type=int, default=5005, help="UDP port on serving ground station (default: 5005)")
     ap.add_argument("--registration-timeout", type=float, default=3.0, help="seconds to wait for registration_accept before retrying registration")
@@ -888,7 +888,7 @@ def main() -> None:
         name="heartbeat-loop",
         ).start()
     
-    serve(bind_addr=args.bind, port=args.port, ho_delay=args.ho_delay)
+    serve(bind_addr=args.bind, port=args.port, ho_delay=args.handover_delay)
 
 if __name__ == "__main__":
     main()
