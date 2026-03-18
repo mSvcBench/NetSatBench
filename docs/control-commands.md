@@ -11,6 +11,8 @@
 - [Worker Cleaning](#worker-cleaning)
 - [Initialization of a satellite system emulation](#initialization-of-a-satellite-system-emulation)
 - [Deployment of the nodes](#deployment-of-the-nodes)
+- [Reset links and run configurations](#reset-links-and-run-configurations)
+- [Restart one or more nodes](#restart-one-or-more-nodes)
 - [Execution of the events](#execution-of-the-events)
 - [Removal of the emulated satellite system](#removal-of-the-emulated-satellite-system)
 
@@ -150,6 +152,45 @@ python3 nsb.py deploy
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options.
 
+## Reset links and run configurations
+`control/nsb-reset.py` or `nsb.py reset`
+
+This Python script removes all dynamic link state and run configuration stored in **Etcd** under `/config/links/` and `/config/run/`.
+
+It is useful to bring the emulation back to a clean runtime state before starting a new `nsb.py run`, without redeploying containers or reinitializing the full system.
+
+### Usage <!-- omit in toc -->
+```bash
+python3 nsb.py reset
+```
+Run with `--help` to see the full list of available options.
+
+## Restart one or more nodes
+`control/nsb-node-restart.py` or `nsb.py node-restart`
+
+This Python script recreates and restarts one or more deployed node containers using the node configuration already stored in **Etcd**.
+
+It is intended to be executed from the control host when a node container must be replaced without tearing down the whole emulation. The script:
+
+- reads the node definition from `/config/nodes/<node>`
+- resolves the assigned worker from `/config/workers/<worker>`
+- connects to the worker via SSH
+- removes the existing container if present
+- starts a fresh container with the same image, network, and resource settings
+
+The `--node` option accepts a comma-separated list, so multiple nodes can be restarted in one invocation.
+
+### Usage <!-- omit in toc -->
+```bash
+python3 nsb.py node-restart --node sat1
+```
+
+```bash
+python3 nsb.py node-restart --node sat1,sat2,usr1
+```
+
+Run with `--help` to see the full list of available options.
+
 ## Execution of the events 
 `control/nsb-run.py` or `nsb.py run`
 
@@ -193,4 +234,3 @@ Example invocation:
 python3 nsb.py rm
 ```
 All parameters are optional since necessary information are retrieved from the data stored in **Etcd**. Run with `--help` to see the full list of available options. 
-

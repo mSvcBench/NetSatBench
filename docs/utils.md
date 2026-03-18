@@ -10,7 +10,6 @@
 - [Command execution by type](#command-execution-by-type)
 - [File Copy](#file-copy)
 - [File Copy by Type](#file-copy-by-type)
-- [Remove all links](#remove-all-links)
 - [Dump System Status](#dump-system-status)
 - [Inspect Node Status](#inspect-node-status)
 - [Statistics](#statistics)
@@ -150,16 +149,6 @@ python3 nsb.py cptype ./config.json satellite:/app/config.json
 Full command-line help is available via:
 ```bash
 python3 nsb.py cptype --help
-```
----
-
-## ✂️ Reset Links and Run Configurations
-`utils/nsb-reset.py` or `nsb.py reset`
-Remove all links and run configurations of the satellite system.Can be useful to reset the satellite system to a clean state before starting a new emulation run (nsb-run), without the need to redeploy containers or restart the control script.
-
-### Usage
-```bash
-python3 nsb.py reset
 ```
 ---
 
