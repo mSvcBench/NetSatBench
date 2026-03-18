@@ -213,7 +213,6 @@ def allocate_user_qdisc_minor() -> int | None:
             return minor
     return None
 
-
 def has_link_local_via_route(dst_ipv6: str) -> bool:
     dst = dst_ipv6.split("/")[0]
     try:
@@ -785,6 +784,9 @@ def traffic_pause(user_id, ho_delay_ms: float) -> None:
 def handle_user_measurement_report(payload: Dict[str, Any]) -> None:
     try:
         user_id = payload["user_id"]
+        if user_db.get(user_id, {}).get("status") != "registered":
+            logging.debug("Ignoring measurement report for user %s not in registered state", user_id)
+            return
         user_sat_ipv6 = payload.get("user_sat_ipv6", payload.get("current_sat_ipv6", ""))
         user_dev = payload.get("user_dev", payload.get("current_sat_dev", ""))
         user_links_db = payload.get("user_links_db", payload.get("user_links_db", ""))
@@ -805,7 +807,11 @@ def handle_user_hello(payload: Dict[str, Any]) -> None:
             heartbeat_failures[user_id] = 0
 
 def handle_user_handover_complete(payload: Dict[str, Any]) -> None:
-    logging.info(f"👤 Received handover complete from user {payload.get('user_id', '')}")
+    user_id = payload.get("user_id", "")
+    if user_db.get(user_id, {}).get("status") != "registered":
+        logging.debug("Ignoring handover complete for user %s not in registered state", user_id)
+        return
+    logging.info(f"👤 Received handover complete from user {user_id}")
     upstream_sids = payload.get("upstream_sids", "")
     upstream_sid_list = [sid for sid in upstream_sids.split(",") if sid]
     downstream_sid_list = list(reversed(upstream_sid_list[:-1])) if len(upstream_sid_list) > 1 else []
@@ -820,7 +826,6 @@ def handle_user_handover_complete(payload: Dict[str, Any]) -> None:
         logging.error(f"❌ Failed to derive GRD dev from IPv6 {new_grd_ipv6} in handover complete of user {payload.get('user_id', '')}, cannot complete handover")
         return
     new_user_dev = payload.get("user_dev", "")
-    user_id = payload.get("user_id", "")
     user_ipv6 = payload.get("user_ipv6", "")
 
     ip_cmd = build_srv6_route_replace(dst_prefix=user_ipv6, sids=new_downstream_sids, dev=new_grd_dev, metric=20)
