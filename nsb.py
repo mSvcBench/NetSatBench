@@ -13,13 +13,14 @@ COMMANDS = {
     "init": "control/nsb-init.py",
     "deploy": "control/nsb-deploy.py",
     "run": "control/nsb-run.py",
+    "node-restart": "control/nsb-node-restart.py",
     "rm": "control/nsb-rm.py",
     "stats": "utils/nsb-stats.py",
     "exec": "utils/nsb-exec.py",
     "exectype": "utils/nsb-exectype.py",
     "cp": "utils/nsb-cp.py",
     "cptype": "utils/nsb-cptype.py",
-    "reset": "utils/nsb-reset.py",
+    "reset": "control/nsb-reset.py",
     "inspect": "utils/nsb-inspect.py",
     "status": "utils/nsb-status.py",
     "run-inject": "utils/nsb-run-inject.py",
@@ -68,4 +69,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

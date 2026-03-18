@@ -795,9 +795,8 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
     sock.bind((bind_addr, port))
     logging.info("⚙️ usr_agent listening on [%s]:%d", bind_addr, port)
 
-    # prepare qdisk for users (if ho_delay is set)
-    if ho_delay > 0:
-        init_qdisc()
+    # prepare qdisk for grd
+    init_qdisc()
 
     while True:
         data, peer = sock.recvfrom(MAX_UDP_RECV_BYTES)
@@ -807,8 +806,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
             if grd_id not in grd_list:
                 # add new grd to grd list and prepare qdisc for them
                 grd_list.append(grd_id)
-                if ho_delay > 0:
-                    prepare_qdisc_for_grd(grd_ipv6=msg.get("grd_ipv6"), grd_id=grd_id)
+                prepare_qdisc_for_grd(grd_ipv6=msg.get("grd_ipv6"), grd_id=grd_id)
             handle_command(msg, ho_delay_ms=ho_delay)
         except Exception as e:
             logging.warning("❌ Failed command from [%s]:%d: %s", peer[0], peer[1], e)
@@ -859,15 +857,14 @@ def main() -> None:
         logging.error(f"❌ Failed to resolve IPV6 address for ground station {grd_id}: {e}")
         sys.exit(1)
     
-    if args.handover_delay > 0:
-        logging.info(f"⧴ Handover delay enabled with {args.handover_delay}ms delay, will apply traffic shaping during handover")
-        if subprocess.run(
-            ["ip", "link", "show", "veth0_rt"],
-            text=True,
-            capture_output=True,
-        ).returncode != 0:
-            logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
-            run_cmd(["/app/extra/QoS/shaping-ns-create-v6.sh"])
+    
+    if subprocess.run(
+        ["ip", "link", "show", "veth0_rt"],
+        text=True,
+        capture_output=True,
+    ).returncode != 0:
+        logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
+        run_cmd(["/app/extra/QoS/shaping-ns-create-v6.sh"])
 
     grd_port = args.grd_port
     user_callback_port = args.port

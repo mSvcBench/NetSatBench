@@ -328,57 +328,93 @@ def main() -> int:
         default="INFO",
         help="Logging level (default: INFO)",
     )
-    parser.add_argument("node", help="Name of the node to restart (must be defined in /config/nodes/ in Etcd)")
+    parser.add_argument(
+        "--node",
+        required=True,
+        help="Comma-separated list of node names to restart (must be defined in /config/nodes/ in Etcd)",
+    )
     args = parser.parse_args()
 
     log.setLevel(args.log_level.upper())
 
 
     etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
+    node_names = [node_name.strip() for node_name in args.node.split(",") if node_name.strip()]
+    if not node_names:
+        log.error("❌ No valid node names provided in --node.")
+        return 1
+
+    node_cfgs: Dict[str, Dict[str, Any]] = {}
+    worker_cfgs: Dict[str, Dict[str, Any]] = {}
+    exit_code = 0
 
     try:
-        # chacke node existence in etcd
-        node_val, _ = etcd_client.get(f"/config/nodes/{args.node}")
-        if not node_val:
-            log.error(f"❌ Node '{args.node}' not found in Etcd under /config/nodes/. Cannot restart.")
-            return 1
+        for node_name in node_names:
+            node_val, _ = etcd_client.get(f"/config/nodes/{node_name}")
+            if not node_val:
+                log.error(f"❌ Node '{node_name}' not found in Etcd under /config/nodes/. Cannot restart.")
+                exit_code = 1
+                continue
+
+            node_cfg = json.loads(node_val.decode('utf-8'))
+            node_cfgs[node_name] = node_cfg
+
+            worker_name = node_cfg.get("worker", None)
+            if not worker_name:
+                log.error(f"❌ Node '{node_name}' does not have a 'worker' field in its Etcd config. Cannot restart.")
+                exit_code = 1
+                continue
+
+            if worker_name not in worker_cfgs:
+                worker_val, _ = etcd_client.get(f"/config/workers/{worker_name}")
+                if not worker_val:
+                    log.error(f"❌ Worker '{worker_name}' assigned to node '{node_name}' not found in Etcd under /config/workers/. Cannot restart.")
+                    exit_code = 1
+                    continue
+                worker_cfgs[worker_name] = json.loads(worker_val.decode('utf-8'))
     except Exception as e:
         log.error(f"❌ Error checking existing nodes in Etcd: {e}")
         sys.exit(1)
-    # extract the worker assigned to the node    node_cfg = json.loads(node_val.decode('utf-8'))
-    node_cfg = json.loads(node_val.decode('utf-8'))
-    worker_name = node_cfg.get("worker", None)
-    if not worker_name:
-        log.error(f"❌ Node '{args.node}' does not have a 'worker' field in its Etcd config. Cannot restart.")
-        return 1
-    worker_val, _ = etcd_client.get(f"/config/workers/{worker_name}")
-    if not worker_val:
-        log.error(f"❌ Worker '{worker_name}' assigned to node '{args.node}' not found in Etcd under /config/workers/. Cannot restart.")
-        return 1
-    worker_cfg = json.loads(worker_val.decode('utf-8'))
-    
-    _, res, msg = create_one_node(
-        name=args.node,
-        node=node_cfg,
-        workers={worker_name: worker_cfg},
-        etcd_host=args.node_etcd_host,
-        etcd_port=args.node_etcd_port,
-        etcd_user=args.etcd_user,
-        etcd_password=args.etcd_password,
-        etcd_ca_cert=args.etcd_ca_cert,
-    )
+    valid_node_names = [
+        node_name
+        for node_name in node_names
+        if node_name in node_cfgs and node_cfgs[node_name].get("worker", None) in worker_cfgs
+    ]
+    if not valid_node_names:
+        return exit_code or 1
 
-    # Print per-node result
-    if node_cfg.get("type", "satellite") == "satellite":
-        prefix = "🛰️"
-    elif node_cfg.get("type", "satellite") == "user":
-        prefix = "👤"
-    elif node_cfg.get("type", "satellite") == "gateway":
-        prefix = "📡"
-    else:
-        prefix = "🛰️"
-    
-    log.info(f"{prefix} {args.node}: {msg}")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(valid_node_names)) as executor:
+        future_to_node = {
+            executor.submit(
+                create_one_node,
+                name=node_name,
+                node=node_cfgs[node_name],
+                workers=worker_cfgs,
+                etcd_host=args.node_etcd_host,
+                etcd_port=args.node_etcd_port,
+                etcd_user=args.etcd_user,
+                etcd_password=args.etcd_password,
+                etcd_ca_cert=args.etcd_ca_cert,
+            ): node_name
+            for node_name in valid_node_names
+        }
+
+        for future in concurrent.futures.as_completed(future_to_node):
+            node_name, res, msg = future.result()
+            node_cfg = node_cfgs[node_name]
+            if node_cfg.get("type", "satellite") == "satellite":
+                prefix = "🛰️"
+            elif node_cfg.get("type", "satellite") == "user":
+                prefix = "👤"
+            elif node_cfg.get("type", "satellite") == "gateway":
+                prefix = "📡"
+            else:
+                prefix = "🛰️"
+            log.info(f"{prefix} {node_name}: {msg}")
+            if not res:
+                exit_code = 1
+
+    return exit_code
 
 if __name__ == "__main__":
     raise SystemExit(main())
