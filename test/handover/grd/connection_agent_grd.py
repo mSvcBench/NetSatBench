@@ -157,7 +157,7 @@ def send_udp_json(sock: socket.socket, msg: Dict[str, Any], peer: Tuple[str, int
     sock.sendto(data, peer)
 
 
-def update_user_db(user_id: str, user_ipv6: Any = _UNSET, upstream_sids: Any = _UNSET, downstream_sids: Any = _UNSET, grd_dev: Any = _UNSET, status: Any = _UNSET, user_links_db: Any = _UNSET, txid: Any = _UNSET, user_dev: Any = _UNSET) -> None:
+def update_user_db(user_id: str, user_ipv6: Any = _UNSET, upstream_sids: Any = _UNSET, downstream_sids: Any = _UNSET, grd_dev: Any = _UNSET, status: Any = _UNSET, user_links_db: Any = _UNSET, txid: Any = _UNSET, user_dev: Any = _UNSET, qdisc_minor: Any = _UNSET) -> None:
     global user_db
     user_db[user_id] = {
         "user_ipv6": user_ipv6 if user_ipv6 is not _UNSET else user_db.get(user_id, {}).get("user_ipv6", None),
@@ -168,6 +168,7 @@ def update_user_db(user_id: str, user_ipv6: Any = _UNSET, upstream_sids: Any = _
         "status": status if status is not _UNSET else user_db.get(user_id, {}).get("status", None),
         "user_links_db": user_links_db if user_links_db is not _UNSET else user_db.get(user_id, {}).get("user_links_db", None),
         "txid": txid if txid is not _UNSET else user_db.get(user_id, {}).get("txid", None),
+        "qdisc_minor": qdisc_minor if qdisc_minor is not _UNSET else user_db.get(user_id, {}).get("qdisc_minor", None),
     }
     if user_id == node_name:
         user_db[user_id]["status"] = "registered"  # self user is always considered registered once we have its info in the db
@@ -192,6 +193,25 @@ def get_user_index(user_id: str) -> int:
         return list(user_db.keys()).index(user_id)
     except ValueError as e:
         raise RuntimeError(f"User '{user_id}' not tracked in user_db") from e
+
+
+def get_user_qdisc_minor(user_id: str) -> int:
+    minor = user_db.get(user_id, {}).get("qdisc_minor")
+    if minor is None:
+        raise RuntimeError(f"User '{user_id}' has no qdisc minor assigned")
+    return minor
+
+
+def allocate_user_qdisc_minor() -> int | None:
+    used_minors = {
+        user_info.get("qdisc_minor")
+        for user_info in user_db.values()
+        if user_info.get("qdisc_minor") is not None
+    }
+    for minor in range(10, 65536):
+        if minor not in used_minors:
+            return minor
+    return None
 
 
 def has_link_local_via_route(dst_ipv6: str) -> bool:
@@ -507,6 +527,10 @@ def heartbeat_monitor_loop() -> None:
                         run_cmd(ip_cmd)
                     except Exception as e:
                         logging.error("❌ Failed to remove route for user %s with IPv6 %s after missed heartbeats: %s", user_id, user_ipv6, e)
+                try:
+                    remove_qdisc_for_user(user_ipv6=user_info.get("user_ipv6", ""), user_id=user_id)
+                except Exception as e:
+                    logging.error("❌ Failed to remove qdisc state for user %s after missed heartbeats: %s", user_id, e)
                 user_db.pop(user_id, None)
                 with heartbeat_lock:
                     heartbeat_failures.pop(user_id, None)
@@ -622,9 +646,12 @@ def handle_user_registration_request(
     user = user_db.get(user_id, None)
     if user is None:
         logging.info(f"👤 New user {user_id} registering for the first time")
-        update_user_db(user_id=user_id, user_ipv6=user_ipv6, status="not-registered")  # initialize user_db entry for the new user
-        if ho_delay_ms > 0:
-            prepare_qdisc_for_new_user(user_ipv6=user_ipv6, user_id=user_id)
+        qdisc_minor = allocate_user_qdisc_minor()
+        if qdisc_minor is None:
+            logging.warning(f"⚠️ No qdisc classid available for user {user_id}, registration refused")
+            return
+        update_user_db(user_id=user_id, user_ipv6=user_ipv6, status="not-registered", qdisc_minor=qdisc_minor)  # initialize user_db entry for the new user
+        prepare_qdisc_for_new_user(user_ipv6=user_ipv6, user_id=user_id)
         user = user_db.get(user_id)
     try:
         if user.get("status") == "registration_in_progress":
@@ -706,11 +733,11 @@ def traffic_pause(user_id, ho_delay_ms: float) -> None:
             rate_kbit = max(1, int(mtu * 8 / ho_delay_ms))  # kbit/s (since ms in denominator)
             burst_bytes = mtu
             cburst_bytes = mtu
-            idx = get_user_index(user_id)
+            minor = get_user_qdisc_minor(user_id)
 
             run_cmd([
             "tc","class","change","dev","veth0_rt",
-            "parent","1:","classid",f"1:{idx+10}",
+            "parent","1:","classid",f"1:{minor}",
             "htb",
             "rate",f"{rate_kbit}kbit","ceil",f"{rate_kbit}kbit",
             "burst",f"{burst_bytes}b","cburst",f"{cburst_bytes}b",
@@ -723,7 +750,7 @@ def traffic_pause(user_id, ho_delay_ms: float) -> None:
                     class_stats = run_cmd_capture([
                         "tc", "-s", "class", "show",
                         "parent", "1:",
-                        "classid", f"1:{idx+10}",
+                        "classid", f"1:{minor}",
                         "dev", "veth0_rt",
                     ])
                     backlog_match = re.search(r"backlog\s+(\d+)b", class_stats)
@@ -737,7 +764,7 @@ def traffic_pause(user_id, ho_delay_ms: float) -> None:
             # Restore original qdisc after delay
             run_cmd([
             "tc","class","change","dev","veth0_rt",
-            "parent","1:","classid",f"1:{idx+10}",
+            "parent","1:","classid",f"1:{minor}",
             "htb",
             "rate","10gbit","ceil","10gbit",
             "burst","15kb","cburst","15kb",   # example “normal” values
@@ -869,13 +896,27 @@ def watch_link_actions_loop (etcd_client) -> None:
 # ----------------------------
 #   SERVER
 # ----------------------------
+def remove_qdisc_for_user(user_ipv6: str, user_id: str) -> None:
+    dev = "veth0_rt"
+    dst = user_ipv6.split("/")[0] if user_ipv6 else ""
+    minor = get_user_qdisc_minor(user_id)
+    if dst:
+        try:
+            run_cmd(["tc", "filter", "del", "dev", dev, "parent", "1:", "protocol", "ipv6", "prio", "10", "flower", "dst_ip", dst])
+        except Exception:
+            pass
+    try:
+        run_cmd(["tc", "class", "del", "dev", dev, "parent", "1:", "classid", f"1:{minor}"])
+    except Exception:
+        pass
+
+
 def prepare_qdisc_for_new_user(user_ipv6: str, user_id: str) -> None:
     dev = "veth0_rt" # Assuming this is the shaping interface
     dst = user_ipv6.split("/")[0]  # Extract IP from possible prefix
-    # derive user index from insertion order in user_srv6_route_state
-    idx = get_user_index(user_id)
-    run_cmd(["tc", "class", "add", "dev", dev, "parent", "1:", "classid", f"1:{idx+10}", "htb", "rate", "10gbit", "ceil", "10gbit"])
-    run_cmd(["tc", "filter", "add", "dev", dev, "parent", "1:", "protocol", "ipv6", "prio", "10", "flower","dst_ip" ,dst, "action","pass","flowid" ,f"1:{idx+10}"])
+    minor = get_user_qdisc_minor(user_id)
+    run_cmd(["tc", "class", "add", "dev", dev, "parent", "1:", "classid", f"1:{minor}", "htb", "rate", "10gbit", "ceil", "10gbit"])
+    run_cmd(["tc", "filter", "add", "dev", dev, "parent", "1:", "protocol", "ipv6", "prio", "10", "flower","dst_ip" ,dst, "action","pass","flowid" ,f"1:{minor}"])
     logging.info(f"🎛️ Applied created shaping qdisc and filter for {user_id}, prefix {user_ipv6}, on dev {dev}")
 
 def init_qdisc() -> None:
@@ -890,8 +931,7 @@ def init_qdisc() -> None:
 
 def serve(bind_addr: str, port: int, ho_delay: float) -> None:
     # prepare qdisk for users (if ho_delay is set)
-    if ho_delay > 0:
-        init_qdisc()
+    init_qdisc()
     sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
     sock.bind((bind_addr, port))
     logging.info("⚙️ Ground connection agent listening on [%s]:%d", bind_addr, port)
@@ -955,15 +995,13 @@ def main() -> None:
         report_file = open(report_file_name, "w")
         logging.info(f"📊 Detailed reporting enabled, writing to {report_file_name}")
 
-    if args.handover_delay > 0:
-        logging.info(f"⧴ Handover delay enabled with {args.handover_delay}ms delay, will apply traffic shaping during handover")
-        if subprocess.run(
-            ["ip", "link", "show", "veth0_rt"],
-            text=True,
-            capture_output=True,
-        ).returncode != 0:
-            logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
-            run_cmd(["/app/shaping-ns-create-v6.sh"])
+    if subprocess.run(
+        ["ip", "link", "show", "veth0_rt"],
+        text=True,
+        capture_output=True,
+    ).returncode != 0:
+        logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
+        run_cmd(["/app/shaping-ns-create-v6.sh"])
         
     
     # Start watching link actions in a separate thread
@@ -979,6 +1017,7 @@ def main() -> None:
         "downstream_sids": "",
         "grd_dev": "",
         "status": "registered",
+        "qdisc_minor": None,
     }
     
     preload_links_db_from_etcd(etcd_client)
