@@ -354,7 +354,7 @@ def handle_link_delete_action(event):
             new_grd_dev, needed = is_grd_handover_needed(user_id, handover_metadata)
             if needed:
                 sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
-                process_user_handover(user_id, new_grd_dev)
+                start_process_user_handover_thread(user_id, new_grd_dev)
             else:
                 logging.warning(f"⚠️ No available link found for {user_id} after deletion of {sat_name}, {user_id} is now without a grd link")
 
@@ -476,7 +476,7 @@ def processing_handover_loop() -> None:
                 else:
                     logging.info(f"🔀 Handover type '{strategy_type}' for {user_id}: selected newest default satellite {new_grd_sat_name}")
                 
-                process_user_handover(user_id, new_grd_dev, new_user_dev)
+                start_process_user_handover_thread(user_id, new_grd_dev, new_user_dev)
                 if report_file:
                     report_file.write(f"{time.time()},handover,{user_id},{strategy_type},{new_grd_sat_name},{new_user_sat_name}\n")
                     report_file.flush()
@@ -617,6 +617,15 @@ def process_user_handover(user_id ,new_grd_dev = None, new_user_dev=None) -> Non
     except Exception as e:
         logging.error(f"❌ Local handover failed for user {user_id} : {e}")
     return
+
+
+def start_process_user_handover_thread(user_id: str, new_grd_dev=None, new_user_dev=None) -> None:
+    threading.Thread(
+        target=process_user_handover,
+        args=(user_id, new_grd_dev, new_user_dev),
+        daemon=True,
+        name=f"user-handover-{user_id}",
+    ).start()
 
 
 # ----------------------------
@@ -878,7 +887,12 @@ def watch_link_actions_loop (etcd_client) -> None:
             events_iterator, cancel = etcd_client.watch_prefix(KEY_LINKS_PREFIX)
             for event in events_iterator:
                 if isinstance(event, etcd3.events.PutEvent):
-                    handle_link_put_action(event)
+                    threading.Thread(
+                        target=handle_link_put_action,
+                        args=(event,),
+                        daemon=True,
+                        name="link-put-handler",
+                    ).start()
                 elif isinstance(event, etcd3.events.DeleteEvent):
                     handle_link_delete_action(event)
         except Exception as ex:
@@ -1027,7 +1041,7 @@ def main() -> None:
     if needed:
         new_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
         logging.info(f"🔀 Initial decision for {node_name} default route {args.sat_ipv6_prefix} via satellite {new_sat_name}")
-        process_user_handover(os.environ["NODE_NAME"], new_grd_dev)
+        start_process_user_handover_thread(os.environ["NODE_NAME"], new_grd_dev)
     
     # Start background thread to watch for link actions and update links_db accordingly
     threading.Thread(
