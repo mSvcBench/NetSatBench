@@ -14,6 +14,7 @@
 - [Dump System Status](#dump-system-status)
 - [Inspect Node Status](#inspect-node-status)
 - [Statistics](#statistics)
+- [Inject Run Commands](#inject-run-commands)
 - [Oracle Routing](#oracle-routing-module)
 
 ## Overview
@@ -197,6 +198,57 @@ It retrieves data from Etcd and epoch files and can generate reports on various 
 
 ```bash
 python3 nsb.py stats [options]
+```
+---
+
+## 📌 Inject Run Commands
+`utils/nsb-run-inject.py`
+
+This utility injects runtime shell commands into the `run` section of the epoch file selected by time. It can target either a single node or an entire node type, using the same `run` structure consumed later by `control/nsb-run.py`.
+
+The selected epoch is the first epoch file whose `time` is greater than or equal to the requested target time. The target time can be provided explicitly with `--target-time`, or derived from the first epoch time plus `--offset-seconds`.
+
+### Usage
+
+```bash
+python3 utils/nsb-run-inject.py -c <sat-config.json> [--target-time <iso-time> | --offset-seconds <seconds>] [--node <node-name> | --node-type <type>] --command-list <commands>
+```
+
+### Examples
+
+Inject a command into the first epoch at or after `2024-06-01T12:00:35Z` for a specific node:
+
+```bash
+python3 utils/nsb-run-inject.py \
+  -c examples/10nodes/sat-config.json \
+  --target-time 2024-06-01T12:00:35Z \
+  --node grd1 \
+  --command-list "screen -dmS iperf iperf3 -s"
+```
+
+Inject commands for all nodes of type `user` after 120 seconds from the first epoch:
+
+```bash
+python3 utils/nsb-run-inject.py \
+  -c examples/10nodes/sat-config.json \
+  --offset-seconds 120 \
+  --node-type user \
+  --command-list "echo starting,sleep 5"
+```
+
+### Notes
+
+- The script writes commands into the epoch JSON file and creates a one-time backup next to it as `<epoch-file>.bak` before overwriting the original.
+- `--command-list` uses CSV-style parsing. If a single command contains commas, wrap that command in double quotes, and escape inner double quotes by doubling them.
+
+Example:
+
+```bash
+python3 utils/nsb-run-inject.py \
+  -c examples/10nodes/sat-config.json \
+  --target-time 2024-06-01T12:00:35Z \
+  --node sat1 \
+  --command-list "\"python3 -c \"\"print('a,b')\"\"\",echo done"
 ```
 ---
 

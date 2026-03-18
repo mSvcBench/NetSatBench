@@ -49,6 +49,16 @@ def find_epoch_file_for_time(epoch_files: List[str], target_time: datetime) -> O
             return epoch_file
     return None
 
+
+def parse_command_list(command_list: str) -> List[str]:
+    try:
+        parsed_rows = list(csv.reader([command_list], skipinitialspace=True))
+    except csv.Error as exc:
+        raise ValueError(f"Invalid command list: {exc}") from exc
+    if not parsed_rows:
+        return []
+    return [cmd.strip() for cmd in parsed_rows[0] if cmd.strip()]
+
 #--------------------------------
 # MAIN FUNCTION
 #--------------------------------
@@ -98,12 +108,19 @@ def main() -> int:
     if not args.target_time and args.offset_seconds < 0:
         log.error("Either target time or offset seconds must be specified.")
         return 1
+    
+    # ensure target time or offset seconds are not both specified
+    if args.target_time and args.offset_seconds >= 0:
+        log.error("Cannot specify both target time and offset seconds. Please choose one.")
+        return 1
     if args.target_time:
         try:
             target_time = datetime.fromisoformat(args.target_time.replace("Z", "+00:00"))
         except ValueError:
             log.error("Invalid target time format. Use ISO format (e.g., 2024-01-01T12:00:00Z).")
             return 1
+        if target_time.tzinfo is None:
+            target_time = target_time.replace(tzinfo=timezone.utc)
     else:
         if args.offset_seconds < 0:
             log.error("Offset seconds must be non-negative when target time is not specified.")
@@ -131,7 +148,11 @@ def main() -> int:
     
     with open(target_epoch_file, "r") as f:
         epoch_data = json.load(f)
-    commands_to_inject = [cmd.strip() for cmd in args.command_list.split(",") if cmd.strip()]
+    try:
+        commands_to_inject = parse_command_list(args.command_list)
+    except ValueError as exc:
+        log.error(str(exc))
+        return 1
     if not commands_to_inject:
         log.error("No valid commands to inject.")
         return 1
