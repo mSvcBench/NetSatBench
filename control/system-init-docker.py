@@ -155,6 +155,10 @@ def main():
         default="INFO",
         help="Logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--reconfigure",
+        help="Reconfigure only the specified worker from the config file",
+    )
 
     args = parser.parse_args()
     log.setLevel(args.log_level.upper())
@@ -199,6 +203,10 @@ def main():
     # merge config common into each worker, worker overrides common
     merged_config = merge_worker_common_config(config)
     workers = merged_config.get("workers", {})
+    if args.reconfigure:
+        if args.reconfigure not in workers:
+            log.error(f"❌ Error: Worker '{args.reconfigure}' not found in {args.config}.")
+            sys.exit(1)
     # override sat-vnet-super-cidr back to common value
     sat_vnet_super_cidr_common = config["workers-common"]["sat-vnet-super-cidr"]
     for worker_name, worker in workers.items():
@@ -219,14 +227,15 @@ def main():
     # ==========================================
 
     workers = merged_config.get("workers", {})
+    workers_to_configure = workers if not args.reconfigure else {args.reconfigure: workers[args.reconfigure]}
     mandatory_keys = ["ssh-user","ssh-key","ip", "cpu","mem","sat-vnet-cidr","sat-vnet","sat-vnet-super-cidr"]
-    for worker_name, worker in workers.items():
+    for worker_name, worker in workers_to_configure.items():
         for key in mandatory_keys:
             if key not in worker:
                 log.error(f"❌ Error: Mandatory key '{key}' missing in worker '{worker_name}'.")
                 sys.exit(1)
 
-    for worker_name, worker in workers.items():
+    for worker_name, worker in workers_to_configure.items():
         ssh_user = worker.get('ssh-user', 'ubuntu')
         ssh_ip = worker.get('ip', worker_name)
         ssh_key = worker.get('ssh-key', '~/.ssh/id_rsa')
@@ -373,7 +382,10 @@ def main():
                     f"\t\tSTDERR:\n{routed.stderr}")
             else:
                 log.info(f"    ✅ IP route to containers in {other_worker_name} added successfully")
-    log.info("👍 All workers configured successfully.")
+    if args.reconfigure:
+        log.info(f"👍 Worker {args.reconfigure} configured successfully.")
+    else:
+        log.info("👍 All workers configured successfully.")
     log.info("▶️ Proceed with nsb.py init to upload the configuration of an emulated satellite systemto Etcd.")
         
 
