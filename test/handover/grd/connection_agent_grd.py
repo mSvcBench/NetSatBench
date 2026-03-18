@@ -995,27 +995,14 @@ def main() -> None:
         report_file = open(report_file_name, "w")
         logging.info(f"📊 Detailed reporting enabled, writing to {report_file_name}")
 
-<<<<<<< HEAD
     if subprocess.run(
         ["ip", "link", "show", "veth0_rt"],
         text=True,
         capture_output=True,
     ).returncode != 0:
         logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
-        run_cmd(["/app/shaping-ns-create-v6.sh"])
-=======
-    if args.handover_delay > 0:
-        logging.info(f"⧴ Handover delay enabled with {args.handover_delay}ms delay, will apply traffic shaping during handover")
-        if subprocess.run(
-            ["ip", "link", "show", "veth0_rt"],
-            text=True,
-            capture_output=True,
-        ).returncode != 0:
-            logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
-            run_cmd(["/app/extra/QoS/shaping-ns-create-v6.sh"])
->>>>>>> 0b65221b06b3118d5d9ea11241d1fa20c7dc684a
-        
-    
+        run_cmd(["/app/extra/QoS/shaping-ns-create-v6.sh"])
+
     # Start watching link actions in a separate thread
     etcd_client = get_etcd_client()
     link_setup_delay_s = args.link_setup_delay
