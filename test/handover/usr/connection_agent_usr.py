@@ -867,7 +867,7 @@ def main() -> None:
             capture_output=True,
         ).returncode != 0:
             logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
-            run_cmd(["/app/shaping-ns-create-v6.sh"])
+            run_cmd(["/app/extra/QoS/shaping-ns-create-v6.sh"])
 
     grd_port = args.grd_port
     user_callback_port = args.port
