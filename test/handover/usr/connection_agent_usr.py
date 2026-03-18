@@ -857,7 +857,14 @@ def main() -> None:
         logging.error(f"❌ Failed to resolve IPV6 address for ground station {grd_id}: {e}")
         sys.exit(1)
     
-    
+    # write grd_id and grd_ipv6 to a the "grd_config" file to be used by other components (e.g., for testing and validation purposes)
+    try:
+        with open("/app/grd_config", "w") as f:
+            f.write(f"{grd_ipv6} {grd_id}\n")
+    except Exception as e:
+        logging.error(f"❌ Failed to write grd_config file: {e}")
+        sys.exit(1) 
+
     if subprocess.run(
         ["ip", "link", "show", "veth0_rt"],
         text=True,
