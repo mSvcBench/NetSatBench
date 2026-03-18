@@ -157,7 +157,8 @@ Each worker must allow passwordless `sudo` access for the SSH user used by the c
 
 Required software:
 
-* **Docker** — for running containerized nodes. The SSH user must belong to the `docker` group
+* **Docker** — for running containerized nodes. 
+* **Docker User** - The SSH user must belong to the `docker` group (e.g.,  `sudo usermod -aG docker <ssh-user-name`)
 * **SSH server** — to allow remote access from the control host without password and with sudo privileges
 
 ---
