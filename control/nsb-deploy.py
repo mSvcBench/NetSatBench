@@ -363,6 +363,8 @@ def main() -> int:
                 if cont.lower() != 'y':
                     log.info("Exiting as per user request.")
                     sys.exit(0)
+                else:                    
+                    break
     except Exception as e:
         log.error(f"❌ Error checking existing nodes in Etcd: {e}")
         sys.exit(1)
