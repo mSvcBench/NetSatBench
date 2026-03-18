@@ -858,6 +858,16 @@ def main() -> None:
     except Exception as e:
         logging.error(f"❌ Failed to resolve IPV6 address for ground station {grd_id}: {e}")
         sys.exit(1)
+    
+    if args.handover_delay > 0:
+        logging.info(f"⧴ Handover delay enabled with {args.handover_delay}ms delay, will apply traffic shaping during handover")
+        if subprocess.run(
+            ["ip", "link", "show", "veth0_rt"],
+            text=True,
+            capture_output=True,
+        ).returncode != 0:
+            logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
+            run_cmd(["/app/shaping-ns-create-v6.sh"])
 
     grd_port = args.grd_port
     user_callback_port = args.port
