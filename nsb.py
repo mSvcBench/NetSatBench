@@ -22,6 +22,7 @@ COMMANDS = {
     "reset": "utils/nsb-reset.py",
     "inspect": "utils/nsb-inspect.py",
     "status": "utils/nsb-status.py",
+    "run-inject": "utils/nsb-run-inject.py",
 }
 
 
