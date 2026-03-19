@@ -191,6 +191,8 @@ python3 nsb.py node-restart --node sat1,sat2,usr1
 
 Run with `--help` to see the full list of available options.
 
+> Note: Restarting a node abruptly deletes its VXLAN overlay links. This can cause issues in the worker's kernel. It is recommended to remove all VXLAN links before restarting a node.
+
 ## Execution of the events 
 `control/nsb-run.py` or `nsb.py run`
 

@@ -193,19 +193,19 @@ python3 nsb.py stats [options]
 ## 📌 Inject Run Commands
 `utils/nsb-run-inject.py`
 
-This utility injects runtime shell commands into the `run` section of the epoch file selected by time. It can target either a single node or an entire node type, using the same `run` structure consumed later by `control/nsb-run.py`.
+This utility injects runtime shell commands into the `run` section of the epoch file selected by time. It can target either a single node or node types, using the same `run` structure consumed later by `control/nsb-run.py`.
 
 The selected epoch is the first epoch file whose `time` is greater than or equal to the requested target time. The target time can be provided explicitly with `--target-time`, or derived from the first epoch time plus `--offset-seconds`.
 
 ### Usage
 
 ```bash
-python3 utils/nsb-run-inject.py -c <sat-config.json> [--target-time <iso-time> | --offset-seconds <seconds>] [--node <node-name> | --node-type <type>] --command-list <commands>
+python3 utils/nsb-run-inject.py -c <sat-config.json> [--target-time <iso-time> | --offset-seconds <seconds>] [--node <node-name> | --node-type-list <type1,type2,...>] --command-list <command1,command2>
 ```
 
 ### Examples
 
-Inject a command into the first epoch at or after `2024-06-01T12:00:35Z` for a specific node:
+Inject a command after `2024-06-01T12:00:35Z` for a specific node:
 
 ```bash
 python3 utils/nsb-run-inject.py \
@@ -215,13 +215,13 @@ python3 utils/nsb-run-inject.py \
   --command-list "screen -dmS iperf iperf3 -s"
 ```
 
-Inject commands for all nodes of type `user` after 120 seconds from the first epoch:
+Inject commands after 120 seconds from the first epoch, mapping each command to a node type:
 
 ```bash
 python3 utils/nsb-run-inject.py \
   -c examples/10nodes/sat-config.json \
   --offset-seconds 120 \
-  --node-type user \
+  --node-type-list "usr1,grd1" \
   --command-list "echo starting,sleep 5"
 ```
 
@@ -229,6 +229,7 @@ python3 utils/nsb-run-inject.py \
 
 - The script writes commands into the epoch JSON file and creates a one-time backup next to it as `<epoch-file>.bak` before overwriting the original.
 - `--command-list` uses CSV-style parsing. If a single command contains commas, wrap that command in double quotes, and escape inner double quotes by doubling them.
+- `--node-type-list` uses CSV-style parsing too, and must contain exactly one entry per command in `--command-list`.
 
 Example:
 

@@ -74,7 +74,7 @@ def main() -> int:
     parser.add_argument("--offset-seconds", type=int, default=-1, help="Offset in seconds from the target time to inject the command")
     parser.add_argument("--target-time", type=str, default="", help="Target time in ISO format (e.g., 2024-01-01T12:00:00Z)")
     parser.add_argument("--node", type=str,default="", help="Node name to target (e.g., node1)")
-    parser.add_argument("--node-type", type=str, default="", help="Node type to target (e.g.,satellite, gateway, users)")
+    parser.add_argument("--node-type-list", type=str, default="", help="Comma-separated list of node types, one per command in --command-list")
     parser.add_argument("--command-list", type=str, required=True, help="Comma-separated list of commands to inject (e.g., 'echo Hello World')")
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level (e.g., DEBUG, INFO, WARNING, ERROR)")
     
@@ -96,12 +96,12 @@ def main() -> int:
         log.error("No epoch files found in the specified directory with the given pattern.")
         return 1
     
-    # ensure node or node type is specified
-    if not args.node and not args.node_type:
+    # ensure node or node type list is specified
+    if not args.node and not args.node_type_list:
         log.error("Either node or node type must be specified.")
         return 1
-    if args.node and args.node_type:
-        log.error("Cannot specify both node and node type. Please choose one.")
+    if args.node and args.node_type_list:
+        log.error("Cannot specify both node and node type list. Please choose one.")
         return 1
     
     # ensure target time or offset seconds are specified
@@ -156,13 +156,34 @@ def main() -> int:
     if not commands_to_inject:
         log.error("No valid commands to inject.")
         return 1
-    inject_mode = "node" if args.node else "type"
-    target_key = args.node if args.node else f"type:{args.node_type}"
+
+    node_types = None
+    if args.node_type_list:
+        try:
+            node_types = parse_command_list(args.node_type_list)
+        except ValueError as exc:
+            log.error(f"Invalid node type list: {exc}")
+            return 1
+        if not node_types:
+            log.error("No valid node types provided in --node-type-list.")
+            return 1
+        if len(node_types) != len(commands_to_inject):
+            log.error("--node-type-list must have the same number of entries as --command-list.")
+            return 1
+
     if "run" not in epoch_data:
         epoch_data["run"] = {}
-    if target_key not in epoch_data["run"]:
-        epoch_data["run"][target_key] = []
-    epoch_data["run"][target_key].extend(commands_to_inject)
+    if args.node:
+        target_key = args.node
+        if target_key not in epoch_data["run"]:
+            epoch_data["run"][target_key] = []
+        epoch_data["run"][target_key].extend(commands_to_inject)
+    else:
+        for cmd, node_type in zip(commands_to_inject, node_types):
+            target_key = f"type:{node_type}"
+            if target_key not in epoch_data["run"]:
+                epoch_data["run"][target_key] = []
+            epoch_data["run"][target_key].append(cmd)
     
     # copy the original epoch file to a backup before overwriting
     backup_epoch_file = target_epoch_file + ".bak"
@@ -171,7 +192,10 @@ def main() -> int:
         log.info(f"Created backup of original epoch file at: {backup_epoch_file}")
     with open(target_epoch_file, "w") as f:
         json.dump(epoch_data, f, indent=2)
-    log.info(f"Successfully injected {len(commands_to_inject)} commands into epoch file '{target_epoch_file}' for target '{target_key}'")
+    if args.node:
+        log.info(f"Successfully injected {len(commands_to_inject)} commands into epoch file '{target_epoch_file}' for target '{args.node}'")
+    else:
+        log.info(f"Successfully injected {len(commands_to_inject)} commands into epoch file '{target_epoch_file}' using per-command node types")
     return 0
 
 
