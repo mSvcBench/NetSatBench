@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "epochs_dir",
+        "--epochs-dir",
         help="Directory containing NetSatBench epoch JSON files",
     )
     parser.add_argument(
