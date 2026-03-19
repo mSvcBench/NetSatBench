@@ -189,13 +189,15 @@ def main() -> int:
     backup_epoch_file = target_epoch_file + ".bak"
     if not os.path.exists(backup_epoch_file):
         os.rename(target_epoch_file, backup_epoch_file)
-        log.info(f"Created backup of original epoch file at: {backup_epoch_file}")
+        log.info(f"💾 Created backup of original epoch file at: {backup_epoch_file}")
+    else:
+        log.warning(f"⚠️ Backup epoch file already exists at: {backup_epoch_file}. Original file not backed up again.")
     with open(target_epoch_file, "w") as f:
         json.dump(epoch_data, f, indent=2)
     if args.node:
-        log.info(f"Successfully injected {len(commands_to_inject)} commands into epoch file '{target_epoch_file}' for target '{args.node}'")
+        log.info(f"✅ Successfully injected {len(commands_to_inject)} commands into epoch file '{target_epoch_file}' for target '{args.node}'")
     else:
-        log.info(f"Successfully injected {len(commands_to_inject)} commands into epoch file '{target_epoch_file}' using per-command node types")
+        log.info(f" Successfully injected {len(commands_to_inject)} commands into epoch file '{target_epoch_file}' using per-command node types")
     return 0
 
 
