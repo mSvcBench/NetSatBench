@@ -106,7 +106,7 @@ def join_route_commands_with_sleep(
             output_cmds.append(f"sleep {sleep_seconds}")
     return "; ".join(output_cmds)
 
-def parse_delay(value) -> int:
+def parse_delay(value) -> float:
     if not value: return 0.0
     val = str(value).strip()
     units = {
@@ -146,7 +146,7 @@ def pick_primary_secondary_next_hops(A_csr: csr_matrix, dist, src_idx: int, targ
         d_nt = dist[n, target_idx]
         if d_nt == float("inf"):
             continue
-        cands.append((1 + d_nt, n))  # cost constrained to start with src->n
+        cands.append((A_csr[src_idx, n] + d_nt, n))  # weighted cost constrained to start with src->n
 
     if not cands:
         return []
@@ -182,19 +182,18 @@ def compute_routes_single_epoch(
     sleep_seconds: int,
 ) -> dict:
     
-    def compute_link_weight(src: str, dst: str, link: dict) -> int:
-        # apply cross-type penalty
-        w = 0
-        if node_type.get(src) != node_type.get(dst):
-            w = cross_type_penalty
-        else:
-            w = 1
+    def compute_link_weight(src: str, dst: str, link: dict) -> float:
+        # Metric cost.
         if routing_metric == "hops":
-            return w
+            metric_cost = 1.0
         elif routing_metric == "delay":
-            # Simulated delay-based weight (in practice, this would be derived from actual delay data)
-            delay = parse_delay(link.get("delay", 0))
-            return max(w + delay,255)
+            metric_cost = parse_delay(link.get("delay", 0))
+        else:
+            raise ValueError(f"Unsupported routing metric: {routing_metric}")
+
+        # Cross-type bias (kept additive to metric cost).
+        type_penalty = float(cross_type_penalty) if node_type.get(src) != node_type.get(dst) else 0.0
+        return metric_cost + type_penalty
         
     no_links_added = 0
     no_links_updated = 0
