@@ -748,7 +748,7 @@ def watch_link_actions_loop () -> None:
                         logging.info(f"➕ Detected new satellite {remote_endpoint}")
                         update_links_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", remote_endpoint_ipv6=remote_endpoint_ipv6)
                     elif links_db[link_dev].get("status") == "available":
-                            logging.info(f"🔄 Detected update for existing link of satellite {remote_endpoint}")
+                            logging.debug(f"🔄 Detected update for existing link of satellite {remote_endpoint}")
                             update_links_db(link_dev=link_dev, etcd_link_data=l, last_updated=time.time(), status="available")
                     elif links_db[link_dev].get("status") == "unavailable":
                             logging.info(f"🔁 Detected re-appearance of previous satellite {remote_endpoint}")
@@ -757,6 +757,7 @@ def watch_link_actions_loop () -> None:
                         # expected_duration is expressed in seconds by the epoch annotation tool; null falls back to the default initial duration.
                         expected_duration = parse_expected_duration(l["expected_duration"])
                         update_links_db(link_dev=link_dev, last_duration=expected_duration)
+                        logging.info(f"⏱️ Updated expected duration for satellite {remote_endpoint} to {expected_duration} seconds based on link metadata")
                     if status == "not_registered":
                         handle_registration_request()
 

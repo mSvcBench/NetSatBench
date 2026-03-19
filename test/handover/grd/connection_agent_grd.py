@@ -311,7 +311,7 @@ def handle_link_put_action(event):
         # Check if this is an update of available links
         if link_dev in links_db and (links_db[link_dev].get("status") == "available" or links_db[link_dev].get("status") == "connected"):
             remote_endpoint = links_db[link_dev].get("remote_endpoint_name", "unknown")
-            logging.info(f"🔄 Ground station detected update for link with satellite {remote_endpoint}")
+            logging.debug(f"🔄 Ground station detected update for link with satellite {remote_endpoint}")
             update_link_db(link_dev=link_dev, etcd_link_data=l, last_updated=time.time())
         else:
             ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -568,11 +568,9 @@ def process_user_handover(user_id ,new_grd_dev = None, new_user_dev=None) -> Non
 
     if not grd_sat_ipv6:
         logging.error(f"❌ No remote endpoint IPv6 found for new GRD dev {new_grd_dev} during handover of user {user_id}, aborting handover")
-        #update_user_db(user_id=user_id, status="registered")  # revert user status to registered since handover cannot proceed
         return
     if new_user_dev and not user_sat_ipv6:
         logging.error(f"❌ No remote endpoint IPv6 found for new USER dev {new_user_dev} during handover of user {user_id}, aborting handover")
-        #update_user_db(user_id=user_id, status="registered")  # revert user status to registered since handover cannot proceed
         return
 
     # compute sids
