@@ -40,6 +40,7 @@ from scipy.sparse.csgraph import dijkstra
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 cross_type_penalty = 255  # used to prefer next hop of the same type
+link_delay_tolerance_ms = 10 # used to limit routing update in delay mode 
 
 # ==========================================
 # HELPERS
@@ -217,7 +218,7 @@ def compute_routes_single_epoch(
                 A_lil[j, i] = w
                 no_links_added += 1
         
-        # Apply link update
+        # Apply link updatey
         if routing_metric != 'hops': 
             # no need to consider link updates if using hop count as metric, since weight is always 1 or cross_type_penalty
             for link_update in epoch_data.get("links-update", []):
@@ -230,9 +231,10 @@ def compute_routes_single_epoch(
                 if i == j:
                     continue
                 w = compute_link_weight(src, dst, link_update)
-                A_lil[i, j] = w
-                A_lil[j, i] = w
-                no_links_updated += 1
+                if A_lil[i, j] != w and abs(A_lil[i, j] - w) >= link_delay_tolerance_ms*1e-3: # only update if weight changed and the change is above the delay tolerance threshold (to avoid flapping due to minor delay changes)
+                    A_lil[i, j] = w
+                    A_lil[j, i] = w
+                    no_links_updated += 1
 
     # Apply link-del
     for link_del in epoch_data.get("links-del", []):
@@ -430,7 +432,7 @@ def compute_routes(
         raise ValueError("⚠️ Configuration has 0 nodes to route/install.")
 
     log.info("🛣️ Computing routes ...")
-    A_lil = lil_matrix((num_nodes, num_nodes), dtype="uint8")
+    A_lil = lil_matrix((num_nodes, num_nodes), dtype="float64")  # adjacency matrix for Dijkstra (weights will be 1 or cross_type_penalty for hop-based, or delay-based weights for delay-based)
     unnumbered_file_pattern = file_pattern.replace("*", "??????")
     epoch_files = list_epoch_files(epoch_dir, file_pattern)
 
@@ -557,6 +559,7 @@ def compute_routes(
 # MAIN
 # ==========================================
 def main() -> int:
+    global link_delay_tolerance_ms
     parser = argparse.ArgumentParser(description="Compute routes from epoch files and emit route-injected epoch JSONs (IPv4/IPv6).")
 
     parser.add_argument("--etcd-host", default=os.getenv("ETCD_HOST", "127.0.0.1"), help="Etcd host (default: env ETCD_HOST or 127.0.0.1)")
@@ -580,6 +583,7 @@ def main() -> int:
     parser.add_argument("--routing-metrics", choices=["hops","delay"], default="hops", help="Whether to use hop count or delay as routing metric (default: hops)")
     parser.add_argument("--max-routes-per-epoch", type=int, default=50, help="Maximum number of route commands before inserting a sleep in the combined command string. If <=0, no sleeps are inserted. Default: 50.")
     parser.add_argument("--route-batch-sleep-seconds", type=int, default=1, help="Seconds to sleep between route batches inside a single command string. Default: 1.")
+    parser.add_argument("--link-delay-tolerance-ms", type=int, default=10, help="Minimum delay change (in ms) to trigger a routing update when using delay-based routing metric. Default: 10ms.")
     
     parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
 
