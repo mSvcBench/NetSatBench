@@ -157,12 +157,22 @@ def apply_config_to_etcd(etcd, sat_config_data: dict, worker_config_data: dict) 
 # ==========================================
 #  IP ADDRESSING LOGIC
 # ==========================================
-def auto_ip_addressing(sat_config_data: dict) -> None:
+def auto_ip_addressing(sat_config_data: dict) -> dict:
     sat_config_data_new = sat_config_data.copy()
     try:
+        def get_nested_value(data: dict[str, Any], dotted_key: str) -> Any:
+            value: Any = data
+            for key in dotted_key.split("."):
+                if not isinstance(value, dict):
+                    return None
+                value = value.get(key)
+                if value is None:
+                    return None
+            return value
+
         # init for auto-assign-ips (v4 + v6)
-        super_cidr_vector_v4: dict[str, tuple[int, str]] = {}
-        super_cidr_vector_v6: dict[str, tuple[int, str]] = {}
+        super_cidr_rules_v4: list[dict[str, Any]] = []
+        super_cidr_rules_v6: list[dict[str, Any]] = []
         node_common_cfg = sat_config_data_new.get("node-config-common", {})
         auto_assign_ip = False
         if "L3-config" in node_common_cfg:
@@ -170,13 +180,24 @@ def auto_ip_addressing(sat_config_data: dict) -> None:
             if "auto-assign-super-cidr" in l3_common_cfg:
                 auto_assign_ip = True
                 for supercidr_entry in l3_common_cfg["auto-assign-super-cidr"]:
-                    match_type = supercidr_entry.get("matchType", "")
+                    match_key = supercidr_entry.get("match-key", "")
+                    match_value = supercidr_entry.get("match-value", None)
                     super_cidr = supercidr_entry.get("super-cidr", "")
                     super_cidr6 = supercidr_entry.get("super-cidr6", "")
-                    if match_type and super_cidr:
-                        super_cidr_vector_v4[match_type] = (0, super_cidr)
-                    if match_type and super_cidr6:
-                        super_cidr_vector_v6[match_type] = (0, super_cidr6)
+                    if match_key and match_value is not None and super_cidr:
+                        super_cidr_rules_v4.append({
+                            "match-key": match_key,
+                            "match-value": match_value,
+                            "next-index": 0,
+                            "super-cidr": super_cidr,
+                        })
+                    if match_key and match_value is not None and super_cidr6:
+                        super_cidr_rules_v6.append({
+                            "match-key": match_key,
+                            "match-value": match_value,
+                            "next-index": 0,
+                            "super-cidr6": super_cidr6,
+                        })
         
         # upload config to etcd and auto-assign IPs if enabled
         for key, value in sat_config_data_new.items():
@@ -187,31 +208,36 @@ def auto_ip_addressing(sat_config_data: dict) -> None:
 
                     # auto-assign IPs if enabled
                     if auto_assign_ip:
-                        node_type = node_cfg.get("type", "any")
+                        matched_rule_v4 = None
+                        matched_rule_v6 = None
+
+                        for rule in super_cidr_rules_v4:
+                            if get_nested_value(node_cfg, rule["match-key"]) == rule["match-value"]:
+                                matched_rule_v4 = rule
+                                break
+
+                        for rule in super_cidr_rules_v6:
+                            if get_nested_value(node_cfg, rule["match-key"]) == rule["match-value"]:
+                                matched_rule_v6 = rule
+                                break
 
                         # ---- IPv4 ----
-                        if "cidr" not in l3_cfg and node_type in super_cidr_vector_v4:
+                        if "cidr" not in l3_cfg and matched_rule_v4:
                             l3_cfg["cidr"] = generate_ipv4_subnet(
-                                super_cidr_vector_v4[node_type][0],
-                                super_cidr_vector_v4[node_type][1],
+                                matched_rule_v4["next-index"],
+                                matched_rule_v4["super-cidr"],
                                 new_prefix=30  # /30 for point-to-point links, adjust as needed
                             )
-                            super_cidr_vector_v4[node_type] = (
-                                super_cidr_vector_v4[node_type][0] + 1,
-                                super_cidr_vector_v4[node_type][1]
-                            )
+                            matched_rule_v4["next-index"] += 1
 
                         # ---- IPv6 ----
-                        if "cidr-v6" not in l3_cfg and node_type in super_cidr_vector_v6:
+                        if "cidr-v6" not in l3_cfg and matched_rule_v6:
                             l3_cfg["cidr-v6"] = generate_ipv6_subnet(
-                                super_cidr_vector_v6[node_type][0],
-                                super_cidr_vector_v6[node_type][1],
+                                matched_rule_v6["next-index"],
+                                matched_rule_v6["super-cidr6"],
                                 new_prefix=126  # /126 for point-to-point links, adjust as needed
                             )
-                            super_cidr_vector_v6[node_type] = (
-                                super_cidr_vector_v6[node_type][0] + 1,
-                                super_cidr_vector_v6[node_type][1]
-                            )
+                            matched_rule_v6["next-index"] += 1
 
                     log.info(
                         f"    ➞ Assigned CIDR v4={l3_cfg.get('cidr', None)} "
@@ -220,6 +246,7 @@ def auto_ip_addressing(sat_config_data: dict) -> None:
 
                 log.info(f"✅ IP assignment process completed.")
                 return sat_config_data_new
+        return sat_config_data_new
     except Exception as e:
         log.error(f"❌ Error in auto_ip_addressing: {e}")
         sys.exit(1)

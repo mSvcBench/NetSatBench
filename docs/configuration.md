@@ -207,9 +207,9 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
       },
       "auto-assign-ips": true,
       "auto-assign-super-cidr": [
-          {"matchType":"satellite","super-cidr":"172.100.0.0/16"},
-          {"matchType":"gateway","super-cidr":"172.101.0.0/16"},
-          {"matchType":"user","super-cidr":"172.102.0.0/16"},
+          {"match-key":"type","match-value":"satellite","super-cidr":"172.100.0.0/16"},
+          {"match-key":"type","match-value":"gateway","super-cidr":"172.101.0.0/16"},
+          {"match-key":"type","match-value":"user","super-cidr":"172.102.0.0/16"},
       ]
     }
   },
@@ -301,9 +301,9 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
       },
       "auto-assign-ips": true,
       "auto-assign-super-cidr": [
-          {"matchType":"satellite","super-cidr6":"2001:db8:100::/48"},
-          {"matchType":"gateway","super-cidr6":"2001:db8:101::/48"},
-          {"matchType":"user","super-cidr6":"2001:db8:102::/48"}
+          {"match-key":"type","match-value":"satellite","super-cidr6":"2001:db8:100::/48"},
+          {"match-key":"type","match-value":"gateway","super-cidr6":"2001:db8:101::/48"},
+          {"match-key":"type","match-value":"user","super-cidr6":"2001:db8:102::/48"}
       ]
     }
   },
@@ -423,26 +423,38 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 
 * **Type**: boolean
 * **Requirement**: optional
-* **Description**: Enables automatic assignment of overlay IP subnets to nodes. Each node is allocated a /30 subnet routed on overlay (satellite) links from the matching `auto-assign-super-cidr` rule based on its `type`. If disabled, nodes must specify their own `cidr` in the per-node configuration, or they will have no overlay IP addresses.
+* **Description**: Enables automatic assignment of overlay IP subnets to nodes. Each node is allocated a /30 subnet (IPv4) and/or /126 subnet (IPv6) from the first matching `auto-assign-super-cidr` rule. Matching is evaluated against node properties using `match-key` + `match-value`. If disabled, nodes must specify their own `cidr` and/or `cidr-v6` in per-node configuration, or they will have no overlay IP addresses for the corresponding IP family.
 
 ###### `auto-assign-super-cidr`
 
 * **Type**: array of objects
 * **Requirement**: mandatory if `auto-assign-ips` is `true`, not needed otherwise
-* **Description**: Rules mapping node types to CIDR blocks from which /30 overlay subnets of nodes are sequentially allocated.
+* **Description**: Ordered rules mapping node properties to CIDR blocks from which overlay subnets are sequentially allocated.
 
 Each rule object:
 
-* `matchType`
+* `match-key`
 
   * **Type**: string
   * **Requirement**: mandatory if `auto-assign-super-cidr` is present
-  * **Description**: Node type to match (e.g., `satellite`, `gateway`, `user`, or `any` for a default fallback).
+  * **Description**: Dot-separated path to the node property used for matching (e.g., `type`, `metadata.labels.name`).
+* `match-value`
+
+  * **Type**: any JSON scalar (`string`, `number`, `boolean`, or `null`)
+  * **Requirement**: mandatory if `auto-assign-super-cidr` is present
+  * **Description**: Value compared against the resolved node property. A rule matches when the node value at `match-key` is equal to `match-value`.
 * `super-cidr`, `super-cidr6`
 
   * **Type**: string (CIDR notation)
   * **Requirement**: super-cidr and/or super-cidr6 must be present depending on the IP version used in the emulated system; at least one of them must be present if `auto-assign-ips` is `true`
-  * **Description**: Base CIDR block used to allocate sequential /30 (IPv4) or /126 (IPv6) overlay subnets for nodes of the matched type. The v4  `super-cidr` block must not overlap with underlay address space (e.g., worker `sat-vnet-super-cidr`) or host physical networks. Either `super-cidr` or `super-cidr6` can be omitted for single-stack operation, or both for dual-stack operation.
+  * **Description**: Base CIDR block used to allocate sequential /30 (IPv4) or /126 (IPv6) overlay subnets for nodes matching the rule.
+
+Rule evaluation notes:
+* Rules are evaluated in list order; the first matching rule is used for each IP family.
+* IPv4 allocation uses the first matching rule with `super-cidr`.
+* IPv6 allocation uses the first matching rule with `super-cidr6`.
+* If no rule matches a node for a given IP family, no automatic CIDR is assigned for that family.
+* The v4 `super-cidr` block must not overlap with underlay address space (e.g., worker `sat-vnet-super-cidr`) or host physical networks. Either `super-cidr` or `super-cidr6` can be omitted for single-stack operation, or both for dual-stack operation.
 
 ---
 

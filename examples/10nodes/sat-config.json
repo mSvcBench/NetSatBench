@@ -19,9 +19,9 @@
       },
       "auto-assign-ips": true,
       "auto-assign-super-cidr": [
-          {"matchType":"satellite","super-cidr":"172.100.0.0/16"},
-          {"matchType":"gateway","super-cidr":"172.101.0.0/16"},
-          {"matchType":"user","super-cidr":"172.102.0.0/16"}
+          {"match-key":"type","match-value":"satellite","super-cidr":"172.100.0.0/16"},
+          {"match-key":"type","match-value":"gateway","super-cidr":"172.101.0.0/16"},
+          {"match-key":"type","match-value":"user","super-cidr":"172.102.0.0/16"}
       ]
     }
   },

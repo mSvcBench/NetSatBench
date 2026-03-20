@@ -12,9 +12,9 @@
       "enable-routing" : false,
       "auto-assign-ips": true,
       "auto-assign-super-cidr": [
-          {"matchType":"satellite","super-cidr6":"2001:db8:100::/48"},
-          {"matchType":"gateway","super-cidr6":"2001:db8:101::/48"},
-          {"matchType":"user","super-cidr6":"2001:db8:102::/48"}
+          {"match-key":"type","match-value":"satellite","super-cidr6":"2001:db8:100::/48"},
+          {"match-key":"type","match-value":"gateway","super-cidr6":"2001:db8:101::/48"},
+          {"match-key":"type","match-value":"user","super-cidr6":"2001:db8:102::/48"}
       ]
     }
   },
