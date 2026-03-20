@@ -589,7 +589,7 @@ def main() -> int:
     parser.add_argument("--epoch-dir", help="Epoch directory, takes precedence over Etcd.")
     parser.add_argument("--file-pattern", help="Epoch filename pattern, takes precedence over Etcd.")
     parser.add_argument("--out-epoch-dir", help="Output dir for processed epochs with route injection.")
-    parser.add_argument("--report", default="", help="Output JSON file for per-original-epoch routing update statistics. If empty, default is <out-epoch-dir>/report.json")
+    parser.add_argument("--report", help="Output JSON file for per-original-epoch routing update statistics. If omitted, no report file is created.")
 
     parser.add_argument("--node-type-to-route", default="", help="Comma-separated node types to route to (default: --node-type). Matches against node 'type' in config. Use 'any' to route to all nodes.")
     parser.add_argument("--node-type-to-install", default="", help="Comma-separated node types to install routes on (default: --node-type). Matches against node 'type' in config. Use 'any' to install on all nodes.")
@@ -664,9 +664,6 @@ def main() -> int:
     # Ensure output directory exists / is empty
     if not os.path.exists(args.out_epoch_dir):
         os.makedirs(args.out_epoch_dir)
-
-    if not args.report:
-        args.report = os.path.join(args.out_epoch_dir, "report.json")
 
     if os.listdir(args.out_epoch_dir):
         response = input(f"⚠️ Output directory '{args.out_epoch_dir}' is not empty. Clear it before proceeding? (y/n) [y]: ")
