@@ -21,6 +21,7 @@ Assumptions (same as original):
 """
 
 import calendar
+import math
 import time
 from typing import Any, Dict, List, Tuple
 import os
@@ -40,7 +41,7 @@ from scipy.sparse.csgraph import dijkstra
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 cross_type_penalty = 4096  # used to prefer next hop of the same type
-link_delay_tolerance_ms = 10 # used to limit routing update in delay mode 
+link_delay_quantum_ms = 10 # used to limit routing flapping in delay mode 
 
 # ==========================================
 # HELPERS
@@ -187,7 +188,7 @@ def compute_routes_single_epoch(
         if routing_metric == "hops":
             metric_cost = 1.0
         elif routing_metric == "delay":
-            metric_cost = parse_delay(link.get("delay", 0))
+            metric_cost = math.ceil(parse_delay(link.get("delay", 0)) / link_delay_quantum_ms)+1
         else:
             raise ValueError(f"Unsupported routing metric: {routing_metric}")
 
@@ -230,7 +231,7 @@ def compute_routes_single_epoch(
                 if i == j:
                     continue
                 w = compute_link_weight(src, dst, link_update)
-                if A_lil[i, j] != w and abs(A_lil[i, j] - w) >= link_delay_tolerance_ms: # only update if weight changed and the change is above the delay tolerance threshold (to avoid flapping due to minor delay changes)
+                if A_lil[i, j] != w: # only update if weight changed and the change is above the delay tolerance threshold (to avoid flapping due to minor delay changes)
                     A_lil[i, j] = w
                     A_lil[j, i] = w
                     no_links_updated += 1
@@ -558,7 +559,7 @@ def compute_routes(
 # MAIN
 # ==========================================
 def main() -> int:
-    global link_delay_tolerance_ms
+    global link_delay_quantum_ms
     parser = argparse.ArgumentParser(description="Compute routes from epoch files and emit route-injected epoch JSONs (IPv4/IPv6).")
 
     parser.add_argument("--etcd-host", default=os.getenv("ETCD_HOST", "127.0.0.1"), help="Etcd host (default: env ETCD_HOST or 127.0.0.1)")
@@ -582,8 +583,8 @@ def main() -> int:
     parser.add_argument("--routing-metrics", choices=["hops","delay"], default="hops", help="Whether to use hop count or delay as routing metric (default: hops)")
     parser.add_argument("--max-routes-per-epoch", type=int, default=50, help="Maximum number of route commands before inserting a sleep in the combined command string. If <=0, no sleeps are inserted. Default: 50.")
     parser.add_argument("--route-batch-sleep-seconds", type=int, default=1, help="Seconds to sleep between route batches inside a single command string. Default: 1.")
-    parser.add_argument("--link-delay-tolerance-ms", type=int, default=10, help="Minimum delay change (in ms) to trigger a routing update when using delay-based routing metric. Default: 10ms.")
-    
+    parser.add_argument("--link-delay-quantum-ms", type=int, default=5, help="Delay quantum for delay-based routing metric. Costs are rounded up to the nearest multiple of this value. Default: 5ms.")
+
     parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
 
     args = parser.parse_args()
@@ -627,6 +628,12 @@ def main() -> int:
     if args.route_batch_sleep_seconds < 0:
         log.error("❌ --route-batch-sleep-seconds must be >= 0.")
         return 7
+
+    if args.link_delay_quantum_ms <= 0:
+        log.error("❌ --link-delay-quantum-ms must be a positive integer.")
+        return 8
+    link_delay_quantum_ms = args.link_delay_quantum_ms
+
 
     epoch_dir = args.epoch_dir
     file_pattern = args.file_pattern
