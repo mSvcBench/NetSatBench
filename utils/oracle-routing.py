@@ -111,7 +111,8 @@ def parse_delay(value) -> float:
     if not value: return 0.0
     val = str(value).strip()
     units = {
-        's': 1000,  'ms': 1, 'us': 0.001, 'ns': 0.000001}
+        # Normalize all delays to milliseconds.
+        's': 1000.0, 'ms': 1.0, 'us': 0.001, 'ns': 0.000001}
     match = re.match(r"([0-9\.]+)([a-zA-Z]+)?", val)
     if not match: return 0.0
     try:
@@ -181,6 +182,7 @@ def compute_routes_single_epoch(
     routing_metric: str,
     max_routes_per_epoch: int,
     sleep_seconds: int,
+    route_change_count_by_node: Dict[str, int] | None = None,
 ) -> dict:
     
     def compute_link_weight(src: str, dst: str, link: dict) -> float:
@@ -265,6 +267,8 @@ def compute_routes_single_epoch(
     def append_route_cmd(src_idx: int, cmd: str) -> None:
         src_name = inv_node_map[src_idx]
         route_commands.setdefault(src_name, []).append(cmd)
+        if route_change_count_by_node is not None:
+            route_change_count_by_node[src_name] = route_change_count_by_node.get(src_name, 0) + 1
     
     for target_node in node_to_route:
         if target_node not in node_map:
@@ -383,6 +387,7 @@ def compute_routes(
     routing_metric: str,
     max_routes_per_epoch: int,
     route_batch_sleep_seconds: int,
+    report_path: str | None = None,
 ) -> None:
     # Load config and build node map (same as original)
     log.info("📁 Loading configuration from etcd...")
@@ -442,6 +447,7 @@ def compute_routes(
 
     num_epochs = 0
     previous_next_hops: Dict[int, Dict[int, list]] = {}
+    report_data: Dict[str, List[Dict[str, Any]]] = {}
     file_counter = 1
     last_inserted_epoc_time: datetime | None = None
 
@@ -494,6 +500,7 @@ def compute_routes(
         last_inserted_epoc_time = original_epoch_time
 
         # 3) Add routes to original epoch (shifted earlier by link_creation_offset)
+        epoch_route_changes: Dict[str, int] = {}
         new_epoch_data = compute_routes_single_epoch(
             epoch_data=epoch_data,
             node_map=node_map,
@@ -512,7 +519,13 @@ def compute_routes(
             routing_metric=routing_metric,
             max_routes_per_epoch=max_routes_per_epoch,
             sleep_seconds=route_batch_sleep_seconds,
+            route_change_count_by_node=epoch_route_changes,
         )
+        epoch_name = os.path.basename(path)
+        report_data[epoch_name] = [
+            {"name": node_name, "updates": updates}
+            for node_name, updates in sorted(epoch_route_changes.items())
+        ]
         if new_epoch_data.get("run", {}) != {}:
             file_path = unnumbered_file_pattern.replace("??????", f"{file_counter}")
             file_counter += 1
@@ -555,6 +568,11 @@ def compute_routes(
             with open(out_epoch_path0, "w", encoding="utf-8") as f_out:
                 json.dump(dbb_epoch_data0, f_out, indent=2)
 
+    if report_path:
+        with open(report_path, "w", encoding="utf-8") as f_report:
+            json.dump(report_data, f_report, indent=2)
+        log.info(f"📝 Wrote routing update report to: {report_path}")
+
 # ==========================================
 # MAIN
 # ==========================================
@@ -571,6 +589,7 @@ def main() -> int:
     parser.add_argument("--epoch-dir", help="Epoch directory, takes precedence over Etcd.")
     parser.add_argument("--file-pattern", help="Epoch filename pattern, takes precedence over Etcd.")
     parser.add_argument("--out-epoch-dir", help="Output dir for processed epochs with route injection.")
+    parser.add_argument("--report", default=None, help="Output JSON file for per-original-epoch routing update statistics. Default: <out-epoch-dir>/report.json")
 
     parser.add_argument("--node-type-to-route", default="", help="Comma-separated node types to route to (default: --node-type). Matches against node 'type' in config. Use 'any' to route to all nodes.")
     parser.add_argument("--node-type-to-install", default="", help="Comma-separated node types to install routes on (default: --node-type). Matches against node 'type' in config. Use 'any' to install on all nodes.")
@@ -646,6 +665,9 @@ def main() -> int:
     if not os.path.exists(args.out_epoch_dir):
         os.makedirs(args.out_epoch_dir)
 
+    if args.report is None:
+        args.report = os.path.join(args.out_epoch_dir, "report.json")
+
     if os.listdir(args.out_epoch_dir):
         response = input(f"⚠️ Output directory '{args.out_epoch_dir}' is not empty. Clear it before proceeding? (y/n) [y]: ")
         if response.lower() in ["", "y", "yes"]:
@@ -679,6 +701,7 @@ def main() -> int:
             routing_metric=args.routing_metrics if args.routing_metrics else "hops",
             max_routes_per_epoch=args.max_routes_per_epoch,
             route_batch_sleep_seconds=args.route_batch_sleep_seconds,
+            report_path=args.report,
         )
     except Exception as e:
         log.error(f"❌ Error during route computation: {e}")
