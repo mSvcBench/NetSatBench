@@ -39,7 +39,7 @@ from scipy.sparse.csgraph import dijkstra
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
-cross_type_penalty = 255  # used to prefer next hop of the same type
+cross_type_penalty = 4096  # used to prefer next hop of the same type
 link_delay_tolerance_ms = 10 # used to limit routing update in delay mode 
 
 # ==========================================
@@ -110,7 +110,7 @@ def parse_delay(value) -> float:
     if not value: return 0.0
     val = str(value).strip()
     units = {
-        's': 1,  'ms': 0.001, 'us': 0.000001, 'ns': 0.000000001}
+        's': 1000,  'ms': 1, 'us': 0.001, 'ns': 0.000001}
     match = re.match(r"([0-9\.]+)([a-zA-Z]+)?", val)
     if not match: return 0.0
     try:
@@ -230,7 +230,7 @@ def compute_routes_single_epoch(
                 if i == j:
                     continue
                 w = compute_link_weight(src, dst, link_update)
-                if A_lil[i, j] != w and abs(A_lil[i, j] - w) >= link_delay_tolerance_ms*1e-3: # only update if weight changed and the change is above the delay tolerance threshold (to avoid flapping due to minor delay changes)
+                if A_lil[i, j] != w and abs(A_lil[i, j] - w) >= link_delay_tolerance_ms: # only update if weight changed and the change is above the delay tolerance threshold (to avoid flapping due to minor delay changes)
                     A_lil[i, j] = w
                     A_lil[j, i] = w
                     no_links_updated += 1
