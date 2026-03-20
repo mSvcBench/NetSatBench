@@ -32,46 +32,147 @@
   "nodes": {
     "sat1": {
       "type": "satellite",
-      "n_antennas": 5,
       "metadata": {
-        "orbit": {
-          "TLE": [
-            "1 47284U 20100AC  25348.63401725  .00000369  00000+0  98748-3 0  9994",
-            "2 47284  87.8941  27.3203 0001684  91.6865 268.4456 13.12589579240444"
-          ]
-          },
-        "labels": {
-          "name": "ONEWEB-0138"
+        "sat_config": {
+          "sat_orbit": 1,
+          "sat_num_in_orbit": 1
+        },
+        "shell": "shell1",
+        "shell_config": {
+          "altitude": 1200,
+          "orbit_cycle": 6556,
+          "inclination": 87.9,
+          "phase_shift": 0,
+          "number_of_orbit": 12,
+          "number_of_satellite_per_orbit": 49
         }
       }
     },
     "sat2": {
       "type": "satellite",
-      "n_antennas": 5
+      "metadata": {
+        "sat_config": {
+          "sat_orbit": 1,
+          "sat_num_in_orbit": 2
+        },
+        "shell": "shell1",
+        "shell_config": {
+          "altitude": 1200,
+          "orbit_cycle": 6556,
+          "inclination": 87.9,
+          "phase_shift": 0,
+          "number_of_orbit": 12,
+          "number_of_satellite_per_orbit": 49
+        }
+      }
     },
     "sat3": {
       "type": "satellite",
-      "n_antennas": 5
+      "metadata": {
+        "sat_config": {
+          "sat_orbit": 1,
+          "sat_num_in_orbit": 3
+        },
+        "shell": "shell1",
+        "shell_config": {
+          "altitude": 1200,
+          "orbit_cycle": 6556,
+          "inclination": 87.9,
+          "phase_shift": 0,
+          "number_of_orbit": 12,
+          "number_of_satellite_per_orbit": 49
+        }
+      }
     },
     "sat4": {
       "type": "satellite",
-      "n_antennas": 5
+      "metadata": {
+        "sat_config": {
+          "sat_orbit": 1,
+          "sat_num_in_orbit": 4
+        },
+        "shell": "shell1",
+        "shell_config": {
+          "altitude": 1200,
+          "orbit_cycle": 6556,
+          "inclination": 87.9,
+          "phase_shift": 0,
+          "number_of_orbit": 12,
+          "number_of_satellite_per_orbit": 49
+        }
+      }
     },
     "sat5": {
       "type": "satellite",
-      "n_antennas": 5
+      "metadata": {
+        "sat_config": {
+          "sat_orbit": 1,
+          "sat_num_in_orbit": 5
+        },
+        "shell": "shell1",
+        "shell_config": {
+          "altitude": 1200,
+          "orbit_cycle": 6556,
+          "inclination": 87.9,
+          "phase_shift": 0,
+          "number_of_orbit": 12,
+          "number_of_satellite_per_orbit": 49
+        }
+      }
     },
     "sat6": {
       "type": "satellite",
-      "n_antennas": 5
+      "metadata": {
+        "sat_config": {
+          "sat_orbit": 1,
+          "sat_num_in_orbit": 6
+        },
+        "shell": "shell1",
+        "shell_config": {
+          "altitude": 1200,
+          "orbit_cycle": 6556,
+          "inclination": 87.9,
+          "phase_shift": 0,
+          "number_of_orbit": 12,
+          "number_of_satellite_per_orbit": 49
+        }
+      }
     },
     "sat7": {
       "type": "satellite",
-      "n_antennas": 5
+      "metadata": {
+        "sat_config": {
+          "sat_orbit": 1,
+          "sat_num_in_orbit": 7
+        },
+        "shell": "shell1",
+        "shell_config": {
+          "altitude": 1200,
+          "orbit_cycle": 6556,
+          "inclination": 87.9,
+          "phase_shift": 0,
+          "number_of_orbit": 12,
+          "number_of_satellite_per_orbit": 49
+        }
+      }
     },
     "sat8": {
       "type": "satellite",
-      "n_antennas": 5
+      "metadata": {
+        "sat_config": {
+          "sat_orbit": 1,
+          "sat_num_in_orbit": 8
+        },
+        "shell": "shell1",
+        "shell_config": {
+          "altitude": 1200,
+          "orbit_cycle": 6556,
+          "inclination": 87.9,
+          "phase_shift": 0,
+          "number_of_orbit": 12,
+          "number_of_satellite_per_orbit": 49
+        }
+      }
     },
     "grd1": {
       "type": "gateway",
