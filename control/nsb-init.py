@@ -207,10 +207,11 @@ def auto_ip_addressing(sat_config_data: dict) -> dict:
                     l3_cfg = node_cfg.get("L3-config", {})
 
                     # auto-assign IPs if enabled
+                    matched_string_v4 = "none"
+                    matched_string_v6 = "none"
                     if auto_assign_ip:
                         matched_rule_v4 = None
                         matched_rule_v6 = None
-
                         for rule in super_cidr_rules_v4:
                             if get_nested_value(node_cfg, rule["match-key"]) == rule["match-value"]:
                                 matched_rule_v4 = rule
@@ -229,6 +230,7 @@ def auto_ip_addressing(sat_config_data: dict) -> dict:
                                 new_prefix=30  # /30 for point-to-point links, adjust as needed
                             )
                             matched_rule_v4["next-index"] += 1
+                            matched_string_v4 = f"{matched_rule_v4['match-key']}={matched_rule_v4['match-value']}"
 
                         # ---- IPv6 ----
                         if "cidr-v6" not in l3_cfg and matched_rule_v6:
@@ -238,10 +240,12 @@ def auto_ip_addressing(sat_config_data: dict) -> dict:
                                 new_prefix=126  # /126 for point-to-point links, adjust as needed
                             )
                             matched_rule_v6["next-index"] += 1
+                            matched_string_v6 = f"{matched_rule_v6['match-key']}={matched_rule_v6['match-value']}"
 
                     log.info(
                         f"    ➞ Assigned CIDR v4={l3_cfg.get('cidr', None)} "
-                        f"v6={l3_cfg.get('cidr-v6', None)} to node {name} of type {node_cfg.get('type')}"
+                        f"v6={l3_cfg.get('cidr-v6', None)} "
+                        f"to node {name}, matched rule v4: {matched_string_v4}, matched rule v6: {matched_string_v6}"
                     )
 
                 log.info(f"✅ IP assignment process completed.")
