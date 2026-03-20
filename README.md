@@ -167,6 +167,11 @@ Required software:
 
 Clone or download the repository on the control host and follow these steps to deploy and run a sample emulated satellite system. Ensure that all software requirements on both control and worker hosts are satisfied.
 
+```bash
+git clone https://github.com/mSvcBench/NetSatBench.git
+git submodule update --init --recursive
+```
+
 The sample configuration files are located in [`examples/10nodes`](examples/10nodes).
 The cluster consists of two workers, `host-1` and `host-2`, defined in [`workers-config.json`](examples/10nodes/workers-config.json). For simplicity, `host-1` also acts as the control host.
 
@@ -200,7 +205,7 @@ export ETCD_CA_CERT="/path/to/ca.crt"
 Initialize the worker environment:
 
 ```bash
-python3 control/system-init-docker.py --config ./examples/10nodes/workers-config.json
+python3 ./nsb.py system-init-docker --config ./examples/10nodes/workers-config.json
 ```
 
 ### 3. Initialize, Deploy, and Run the Emulated Satellite System
@@ -232,19 +237,19 @@ Examples:
 Run a bash shell on container `usr1`:
 
 ```bash
-python3 utils/nsb-exec.py -it usr1 bash
+python3 ./nsb.py exec -it usr1 bash
 ```
 
 Display the routing table on `usr1`:
 
 ```bash
-python3 utils/nsb-exec.py usr1 ip route show
+python3 ./nsb.py exec usr1 ip route show
 ```
 
 Run an `iperf3` client from `usr1` to ground station `grd1`:
 
 ```bash
-python3 utils/nsb-exec.py usr1 iperf3 -c grd1 -t 30 -i 2
+python3 ./nsb.py exec usr1 iperf3 -c grd1 -t 30 -i 2
 ```
 
 ### 5. Cleanup
@@ -258,5 +263,5 @@ python3 ./nsb.py rm
 Optionally, remove residual configuration from worker hosts (required only if changing worker settings):
 
 ```bash
-python3 control/system-cleanup-docker.py
+python3 ./nsb.py system-cleanup-docker
 ```
