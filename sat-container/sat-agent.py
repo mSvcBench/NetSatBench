@@ -704,8 +704,7 @@ def main():
     
     log.info(f"✅ All Watchers Started.")
 
-    # Initial Links Setup
-    process_initial_topology(etcd_client)
+
 
     ## Register my IP address in Etcd
     while True:
@@ -728,6 +727,9 @@ def main():
             log.error(f"❌ Failed to initialize L3 routing: {e}")
             routing = None
 
+    # Initial Links Setup
+    process_initial_topology(etcd_client)
+    
     while True: time.sleep(1)
 
 if __name__ == "__main__":
