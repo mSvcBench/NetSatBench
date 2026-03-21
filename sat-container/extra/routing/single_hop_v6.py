@@ -40,20 +40,28 @@ def get_resolved_link_local(interface: str) -> Optional[str]:
     except Exception:
         return None
 
-def wait_for_link_local_resolution(interface: str, retries: int = 30, delay_s: float = 0.1) -> Optional[str]:
+def wait_for_link_local_resolution(interface: str, retries: int = 30, delay_s: float = 1.0) -> Optional[str]:
     for _retry_attempt in range(retries):
+        attempt_start_ts = time.monotonic()
         ll_addr = get_resolved_link_local(interface)
         if ll_addr is not None:
             return ll_addr
-        time.sleep(delay_s)
         # Trigger neighbor activity on-link without relying on a global unicast target.
         print(f" ⏳ Waiting for link-local address resolution on {interface}...attempt {_retry_attempt+1}/{retries}")
         subprocess.run(
-            ["ping", "-6", "-n", "-c1", "-W2", "-I", interface, f"ff02::1%{interface}"],
+            ["ping", "-6", "-n", "-c1", "-W1", "-I", interface, f"ff02::1%{interface}"],
             capture_output=True,
             text=True,
             check=False,
         )
+        ping_done_ts = time.monotonic()
+        ll_addr = get_resolved_link_local(interface)
+        if ll_addr is not None:
+            return ll_addr
+        if _retry_attempt < retries - 1:
+            remaining_delay = delay_s - (ping_done_ts - attempt_start_ts)
+            if remaining_delay > 0:
+                time.sleep(remaining_delay)
     return None
 
 def _neighbor_keepalive_loop(interface: str, target_ip: str, stop_event: threading.Event) -> None:
