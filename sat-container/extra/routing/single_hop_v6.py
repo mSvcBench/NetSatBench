@@ -40,7 +40,7 @@ def get_resolved_link_local(interface: str) -> Optional[str]:
     except Exception:
         return None
 
-def wait_for_link_local_resolution(interface: str, retries: int = 15, delay_s: float = 0.1) -> Optional[str]:
+def wait_for_link_local_resolution(interface: str, retries: int = 30, delay_s: float = 0.1) -> Optional[str]:
     for _retry_attempt in range(retries):
         ll_addr = get_resolved_link_local(interface)
         if ll_addr is not None:

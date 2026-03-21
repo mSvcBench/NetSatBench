@@ -693,19 +693,6 @@ def main():
     cmd = ["ip", "route", "add", sat_vnet_super_cidr, "via", default_gw]
     run(cmd)
 
-    # Start Event Loops
-    threads = [
-        threading.Thread(target=watch_link_actions_loop, daemon=True), # Dynamic
-        threading.Thread(target=watch_command_loop, daemon=True),
-        threading.Thread(target=watch_etchosts_prefix, args=("/config/etchosts/",), daemon=True),
-        threading.Thread(target=watch_etchosts_prefix, args=("/config/etchosts6/",), daemon=True)
-    ]
-    for t in threads: t.start()
-    
-    log.info(f"✅ All Watchers Started.")
-
-
-
     ## Register my IP address in Etcd
     while True:
         if register_my_underlay_ip(etcd_client): break
@@ -726,6 +713,17 @@ def main():
         except Exception as e:
             log.error(f"❌ Failed to initialize L3 routing: {e}")
             routing = None
+
+    # Start Event Loops
+    threads = [
+        threading.Thread(target=watch_link_actions_loop, daemon=True), # Dynamic
+        threading.Thread(target=watch_command_loop, daemon=True),
+        threading.Thread(target=watch_etchosts_prefix, args=("/config/etchosts/",), daemon=True),
+        threading.Thread(target=watch_etchosts_prefix, args=("/config/etchosts6/",), daemon=True)
+    ]
+    for t in threads: t.start()
+    
+    log.info(f"✅ All Watchers Started.")
 
     # Initial Links Setup
     process_initial_topology(etcd_client)
