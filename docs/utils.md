@@ -14,6 +14,7 @@
 - [Inspect Node Status](#inspect-node-status)
 - [Statistics](#statistics)
 - [Inject Run Commands](#inject-run-commands)
+- [Filter Epoch Run Entries](#filter-epoch-run-entries)
 - [Oracle Routing](#oracle-routing-module)
 
 ## Overview
@@ -240,6 +241,38 @@ python3 utils/nsb-run-inject.py \
   --node sat1 \
   --command-list "\"python3 -c \"\"print('a,b')\"\"\",echo done"
 ```
+---
+
+## 🧹 Filter Epoch Run Entries
+`utils/filter_epoch_runs.py`
+
+This utility copies a directory of epoch JSON files into a new output directory and removes selected node entries from each epoch's `run` section.
+
+It is useful when you want to reuse an epoch trace but exclude runtime commands for a subset of nodes, for example removing `run.grd1` and `run.grd2` from oracle-routing-generated epochs.
+
+### Usage
+
+```bash
+python3 utils/filter_epoch_runs.py --epochs-dir <epochs-dir> --output-dir <output-dir> --nodes <node1,node2,...>
+```
+
+### Examples
+
+Remove `grd1` and `grd2` from the `run` sections of the OneWeb delayed-routing epochs and write the filtered copy into a new directory:
+
+```bash
+python3 utils/filter_epoch_runs.py \
+  --epochs-dir examples/StarPerf/OneWeb/epochs-or-del \
+  --output-dir examples/StarPerf/OneWeb/epochs-or-del-filtered \
+  --nodes grd1,grd2
+```
+
+### Notes
+
+- Only entries under the top-level `run` object are removed. Other references to the same node names, such as `links-add`, `links-del`, or command strings, are preserved.
+- If removing the requested nodes leaves an epoch with an empty `run` object, the `run` section is removed entirely from that epoch file.
+- Non-JSON files in the source directory are copied to the output directory unchanged.
+
 ---
 
 ## 🌍 Oracle Routing Module
