@@ -229,12 +229,29 @@ def init_qdisc() -> None:
     run_cmd(["tc", "class", "add", "dev", dev, "parent", "1:", "classid", "1:1", "htb", "rate", "10gbit", "ceil", "10gbit"])
 
 def prepare_qdisc_for_grd(grd_ipv6: str, grd_id: str) -> None:
+    logging.info(f"🎛️ Preparing qdisc for ground station {grd_id} with IPv6 {grd_ipv6}")
     dev = "veth0_rt" # Assuming this is the shaping interface
     dst = grd_ipv6.split("/")[0]  # Extract IP from prefix
     # derive user id as the position of username in the user_list 
     idx = grd_list.index(grd_id)
-    run_cmd(["tc", "class", "add", "dev", dev, "parent", "1:", "classid", f"1:{idx+10}", "htb", "rate", "10gbit", "ceil", "10gbit"])
-    run_cmd(["tc", "filter", "add", "dev", dev, "parent", "1:", "protocol", "ipv6", "prio", "10", "flower","dst_ip" ,dst, "action","pass","flowid" ,f"1:{idx+10}"])
+    classid = f"1:{idx+10}"
+
+    # Rebuild the per-GRD shaping state in case a previous run left stale tc objects behind.
+    try:
+        run_cmd(["tc", "filter", "del", "dev", dev, "parent", "1:", "protocol", "ipv6", "prio", "10", "flower", "dst_ip", dst])
+    except:
+        pass
+    try:        
+        run_cmd(["tc", "class", "del", "dev", dev, "parent", "1:", "classid", classid])
+    except:
+        pass
+    time.sleep(0.1)  # brief pause to ensure tc state is consistent before re-adding
+    qdisc_class_cmd =  ["tc", "class", "add", "dev", dev, "parent", "1:", "classid", classid, "htb", "rate", "10gbit", "ceil", "10gbit"]
+    logging.debug(f"🎛️ Applying tc command: {' '.join(qdisc_class_cmd)}")
+    run_cmd(qdisc_class_cmd)
+    qdisc_filter_cmd = ["tc", "filter", "add", "dev", dev, "parent", "1:", "protocol", "ipv6", "prio", "10", "flower", "dst_ip", dst, "action", "pass", "flowid", classid]
+    logging.debug(f"🎛️ Applying tc command: {' '.join(qdisc_filter_cmd)}")
+    run_cmd(qdisc_filter_cmd)
     logging.info(f"🎛️ Applied created shaping qdisc and filter for {grd_id}, prefix {grd_ipv6}, on dev {dev}")       
 
 
@@ -796,14 +813,11 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
     sock.bind((bind_addr, port))
     logging.info("⚙️ usr_agent listening on [%s]:%d", bind_addr, port)
 
-    # prepare qdisk for grd
-    init_qdisc()
-
     while True:
         data, peer = sock.recvfrom(MAX_UDP_RECV_BYTES)
         try:
             msg = json.loads(data.decode("utf-8"))
-            logging.info(f"📩 Received command from {peer}: {msg}")
+            logging.debug(f"📩 Received command from {peer}: {msg}")
             # ensure grd_id is in grd_list and prepare qdisc for it if it's a new grd_id (e.g., in case of multiple GRDs or if the same GRD serves multiple users with different grd_ids)
             if "grd_id" not in msg:
                 logging.warning("⚠️ Received command without grd_id from %s, ignoring.", peer)
@@ -858,8 +872,6 @@ def main() -> None:
         if not grd_ipv6:
             logging.error(f"❌ Failed to resolve IPV6 address for ground station {grd_id}. Please check /etc/hosts entries.")
             sys.exit(1)
-        grd_list.append(grd_id)
-        prepare_qdisc_for_grd(grd_ipv6=grd_ipv6, grd_id=grd_id)
     except Exception as e:
         logging.error(f"❌ Failed to resolve IPV6 address for ground station {grd_id}: {e}")
         sys.exit(1)
@@ -872,6 +884,7 @@ def main() -> None:
         logging.error(f"❌ Failed to write grd_config file: {e}")
         sys.exit(1) 
 
+    # prepare qdisc for handover delay if configured (requires veth0_rt to be present, which is created by shaping-ns-create-v6.sh script)
     if subprocess.run(
         ["ip", "link", "show", "veth0_rt"],
         text=True,
@@ -879,6 +892,10 @@ def main() -> None:
     ).returncode != 0:
         logging.info("veth0_rt interface not found, creating shaping namespace for handover delay")
         run_cmd(["/app/extra/QoS/shaping-ns-create-v6.sh"])
+    
+    init_qdisc()
+    grd_list.append(grd_id)
+    prepare_qdisc_for_grd(grd_ipv6=grd_ipv6, grd_id=grd_id)
 
     grd_port = args.grd_port
     user_callback_port = args.port
