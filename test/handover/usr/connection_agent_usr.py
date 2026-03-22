@@ -806,8 +806,8 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
             grd_id = msg.get("grd_id", "unknown")
             if grd_id not in grd_list:
                 # add new grd to grd list and prepare qdisc for them
-                grd_list.append(grd_id)
                 prepare_qdisc_for_grd(grd_ipv6=msg.get("grd_ipv6"), grd_id=grd_id)
+                grd_list.append(grd_id)
             handle_command(msg, ho_delay_ms=ho_delay)
         except Exception as e:
             logging.warning("❌ Failed command from [%s]:%d: %s", peer[0], peer[1], e)
