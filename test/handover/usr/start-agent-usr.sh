@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+echo " 🚀 Launching connection-agent.py ..."
+/usr/bin/screen -S CONAGENT -s /bin/bash -t win0 -A -d -m
+sleep 5
+screen -S CONAGENT -p win0 -X stuff $'python3 -u /app/usr/connection_agent_usr.py --handover-delay 80\n'
