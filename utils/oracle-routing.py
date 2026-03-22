@@ -128,15 +128,24 @@ def parse_delay(value) -> float:
 # ==========================================
 # ROUTE COMPUTATION LOGIC
 # ==========================================
-def pick_primary_secondary_next_hops(A_csr: csr_matrix, dist, src_idx: int, target_idx: int) -> list[int]:
+def pick_primary_secondary_next_hops(
+    A_csr: csr_matrix,
+    dist,
+    src_idx: int,
+    target_idx: int,
+    previous_next_hops: list[int] | None = None,
+) -> list[int]:
     """
     Returns [primary_nh] or [primary_nh, secondary_nh].
-    Primary = shortest path (hop count).
-    Secondary = shortest path among those whose first hop != primary (may be longer).
+    Primary = lowest-cost path after applying small anti-flap penalties.
+    Secondary = lowest-cost path among those whose first hop != primary.
     """
     d_st = dist[src_idx, target_idx]
     if d_st == float("inf") or src_idx == target_idx:
         return []
+
+    previous_primary = previous_next_hops[0] if previous_next_hops else None
+    previous_secondary = previous_next_hops[1] if previous_next_hops and len(previous_next_hops) > 1 else None
 
     # neighbors of src in CSR
     row_start = A_csr.indptr[src_idx]
@@ -148,7 +157,12 @@ def pick_primary_secondary_next_hops(A_csr: csr_matrix, dist, src_idx: int, targ
         d_nt = dist[n, target_idx]
         if d_nt == float("inf"):
             continue
-        cands.append((A_csr[src_idx, n] + d_nt, n))  # weighted cost constrained to start with src->n
+        anti_flap_penalty = 0.0
+        if previous_primary is not None and n != previous_primary:
+            anti_flap_penalty += 0.1
+        if previous_secondary is not None and n != previous_secondary:
+            anti_flap_penalty += 0.05
+        cands.append((A_csr[src_idx, n] + d_nt + anti_flap_penalty, n))
 
     if not cands:
         return []
@@ -297,8 +311,15 @@ def compute_routes_single_epoch(
             if src_idx == target_idx:
                 continue
 
-            next_hops = pick_primary_secondary_next_hops(A_csr, dist, src_idx, target_idx)
-            if next_hops == previous_next_hops.get(src_idx, {}).get(target_idx, []):
+            prior_next_hops = previous_next_hops.get(src_idx, {}).get(target_idx, [])
+            next_hops = pick_primary_secondary_next_hops(
+                A_csr,
+                dist,
+                src_idx,
+                target_idx,
+                previous_next_hops=prior_next_hops,
+            )
+            if next_hops == prior_next_hops:
                 continue
             previous_next_hops.setdefault(src_idx, {})[target_idx] = next_hops
 
