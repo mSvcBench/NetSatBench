@@ -803,6 +803,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
         data, peer = sock.recvfrom(MAX_UDP_RECV_BYTES)
         try:
             msg = json.loads(data.decode("utf-8"))
+            logging.info(f"📩 Received command from {peer}: {msg}")
             grd_id = msg.get("grd_id", "unknown")
             if grd_id not in grd_list:
                 # add new grd to grd list and prepare qdisc for them
