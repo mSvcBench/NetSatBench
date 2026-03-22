@@ -804,11 +804,14 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
         try:
             msg = json.loads(data.decode("utf-8"))
             logging.info(f"📩 Received command from {peer}: {msg}")
-            grd_id = msg.get("grd_id", "unknown")
+            # ensure grd_id is in grd_list and prepare qdisc for it if it's a new grd_id (e.g., in case of multiple GRDs or if the same GRD serves multiple users with different grd_ids)
+            if "grd_id" not in msg:
+                logging.warning("⚠️ Received command without grd_id from %s, ignoring.", peer)
+                continue
             if grd_id not in grd_list:
                 # add new grd to grd list and prepare qdisc for them
-                prepare_qdisc_for_grd(grd_ipv6=msg.get("grd_ipv6"), grd_id=grd_id)
-                grd_list.append(grd_id)
+                logging.info(f" ⚠️ Received command for ground station {grd_id} not in the list, ignoring")
+                continue
             handle_command(msg, ho_delay_ms=ho_delay)
         except Exception as e:
             logging.warning("❌ Failed command from [%s]:%d: %s", peer[0], peer[1], e)
@@ -855,6 +858,8 @@ def main() -> None:
         if not grd_ipv6:
             logging.error(f"❌ Failed to resolve IPV6 address for ground station {grd_id}. Please check /etc/hosts entries.")
             sys.exit(1)
+        grd_list.append(grd_id)
+        prepare_qdisc_for_grd(grd_ipv6=grd_ipv6, grd_id=grd_id)
     except Exception as e:
         logging.error(f"❌ Failed to resolve IPV6 address for ground station {grd_id}: {e}")
         sys.exit(1)
