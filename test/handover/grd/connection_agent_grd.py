@@ -372,6 +372,7 @@ def lifetime_strategy_user_handover(user_id: str, metadata: dict) -> Tuple[str, 
     else:
         remaining_duration = current_links_db.get(current_dev, {}).get("last_duration", 0) - (time.time() - current_links_db.get(current_dev, {}).get("last_created", 0))
     
+    logging.debug(f"⏱️ Evaluating handover for user {user_id} on current link {current_dev} with remaining duration {remaining_duration:.1f}s and threshold {threshold_s:.1f}s")
     if remaining_duration > threshold_s:
         # current link has enough remaining duration, no handover needed
         return current_dev, False
