@@ -358,33 +358,38 @@ def handle_link_delete_action(event):
                 logging.warning(f"⚠️ No available link found for {user_id} after deletion of {sat_name}, {user_id} is now without a grd link")
 
 def lifetime_strategy_user_handover(user_id: str, metadata: dict) -> Tuple[str, bool]:
-    threshold_s = metadata.get("threshold_s", link_duration_initial_value_s/4.0)  # threshold for minimum remaining duration to consider a handover
     current_dev = user_db.get(user_id, {}).get("user_dev", None)
     current_links_db = user_db.get(user_id, {}).get("user_links_db", {})
-    status_value = "available"  # for user dev we consider all available links as candidates for handover
+    link_status_acceptable = "available"  # for user dev we consider all available links as candidates for handover
     
     if current_dev == None:
         # no link currently assigned to user, so handover is needed to assign the best connected link
         remaining_duration = 0
-    elif current_links_db.get(current_dev,{}).get("status",None) != status_value:
+    elif current_links_db.get(current_dev,{}).get("status",None) != link_status_acceptable:
             # current link is no more connected (grd) or available (user), so handover is needed to assign the best connected link
         remaining_duration = 0
     else:
         remaining_duration = current_links_db.get(current_dev, {}).get("last_duration", 0) - (time.time() - current_links_db.get(current_dev, {}).get("last_created", 0))
     
+    threshold_s = metadata.get("threshold_s", current_links_db.get(current_dev, {}).get("last_duration", link_duration_initial_value_s)/4.0)  # threshold for minimum remaining duration to consider a handover
+    
     logging.debug(f"⏱️ Evaluating handover for user {user_id} on current link {current_dev} with remaining duration {remaining_duration:.1f}s and threshold {threshold_s:.1f}s")
     if remaining_duration > threshold_s:
         # current link has enough remaining duration, no handover needed
+        logging.debug(f"✅ Current link {current_dev} for user {user_id} has sufficient remaining duration, no handover needed")
         return current_dev, False
-    
-    candidate_devs = [(dev,l) for dev,l in current_links_db.items() if l.get("status") == status_value]
+    logging.info(f"⚠️ Current link {current_dev} for user {user_id} has low remaining duration, looking for handover candidates...")
+    candidate_devs = [(dev,l) for dev,l in current_links_db.items() if l.get("status") == link_status_acceptable]
     if not candidate_devs:
+        logging.warning(f"⚠️ No candidate links with status '{link_status_acceptable}' found for user {user_id} to handover, keeping current link {current_dev} if still available")
         return "", False
 
     candidate_dev = max(candidate_devs, key=lambda x: x[1].get("last_duration", 0) - (time.time() - x[1].get("last_created", 0)))
     if candidate_dev[0] != current_dev:
+        logging.info(f"✅ Found better candidate link {candidate_dev[0]} for user {user_id} with remaining duration {(candidate_dev[1].get('last_duration', 0) - (time.time() - candidate_dev[1].get('last_created', 0))):.1f}s, selecting it for handover")
         return candidate_dev[0],True
     else:
+        logging.info(f"⚠️ No better candidate link found for user {user_id} compared to current link {current_dev}, keeping current link")
         return candidate_dev[0],False
 
 def lifetime_strategy_grd_handover(user_id: str, metadata: dict) -> Tuple[str, bool]:
@@ -392,12 +397,12 @@ def lifetime_strategy_grd_handover(user_id: str, metadata: dict) -> Tuple[str, b
     threshold_s = metadata.get("threshold_s", link_duration_initial_value_s/4.0)  # threshold for minimum remaining duration to consider a handover
     current_dev = user_db.get(user_id, {}).get("grd_dev", None)
     current_links_db = links_db
-    status_value = "connected" # for grd dev we consider only connected links as candidates for handover
+    link_status_acceptable = "connected" # for grd dev we consider only connected links as candidates for handover
     
     if current_dev == None:
         # no link currently assigned to user, so handover is needed to assign the best connected link
         remaining_duration = 0
-    elif current_links_db.get(current_dev,{}).get("status",None) != status_value:
+    elif current_links_db.get(current_dev,{}).get("status",None) != link_status_acceptable:
             # current link is no more connected (grd) or available (user), so handover is needed to assign the best connected link
         remaining_duration = 0
     else:
@@ -407,7 +412,7 @@ def lifetime_strategy_grd_handover(user_id: str, metadata: dict) -> Tuple[str, b
         # current link has enough remaining duration, no handover needed
         return current_dev, False
     
-    candidate_devs = [(dev,l) for dev,l in current_links_db.items() if l.get("status") == status_value]
+    candidate_devs = [(dev,l) for dev,l in current_links_db.items() if l.get("status") == link_status_acceptable]
     if not candidate_devs:
         return "", False
 
@@ -460,7 +465,7 @@ def processing_handover_loop() -> None:
         process_connection_handover(handover_metadata)  # evaluate if we need to switch some of the connected devs to new ones based on the connection handover strategy
         for user_id in list(user_db.keys()):
             if user_db[user_id].get("status") != "registered":
-                logging.warning(f"⚠️ Skipping handover processing for user {user_id} which is not in registered state")
+                logging.debug(f"⚠️ Skipping handover processing for user {user_id} which is not in registered state")
                 continue
             new_grd_dev, grd_needed = is_grd_handover_needed(user_id, handover_metadata)
             if user_id != node_name:
@@ -521,20 +526,21 @@ def heartbeat_monitor_loop() -> None:
             if misses >= heartbeat_max_failures:
                 user_ipv6 = user_info.get("user_ipv6", "unknown")
                 if user_ipv6 != "unknown":
-                    # remove user route before removing user from db
+                    # remove the user route before marking the user unreachable
                     try:
                         ip_cmd = ["ip", "-6", "route", "del", user_ipv6, "dev", user_info.get("grd_dev", "unknown")]
                         run_cmd(ip_cmd)
                     except Exception as e:
                         logging.error("❌ Failed to remove route for user %s with IPv6 %s after missed heartbeats: %s", user_id, user_ipv6, e)
-                try:
-                    remove_qdisc_for_user(user_ipv6=user_info.get("user_ipv6", ""), user_id=user_id)
-                except Exception as e:
-                    logging.error("❌ Failed to remove qdisc state for user %s after missed heartbeats: %s", user_id, e)
-                user_db.pop(user_id, None)
+                # try:
+                #     remove_qdisc_for_user(user_ipv6=user_info.get("user_ipv6", ""), user_id=user_id)
+                # except Exception as e:
+                #     logging.error("❌ Failed to remove qdisc state for user %s after missed heartbeats: %s", user_id, e)
+                # user_db.pop(user_id, None)
+                user_db[user_id]["status"] = "not-registered"  # mark user as not registered in the db after missed heartbeats, but keep its info for potential future handovers when it becomes reachable again
                 with heartbeat_lock:
                     heartbeat_failures.pop(user_id, None)
-                logging.warning("⚠️ Removed user %s from user_db after %d missed heartbeat", user_id, misses)
+                logging.warning("⚠️ Marked user %s as not-registered after %d missed heartbeats; keeping its state in user_db", user_id, misses)
         time.sleep(heartbeat_interval_s)
 
 
@@ -786,6 +792,7 @@ def handle_user_measurement_report(payload: Dict[str, Any]) -> None:
         if user_db.get(user_id, {}).get("status") != "registered":
             logging.debug("Ignoring measurement report for user %s not in registered state", user_id)
             return
+        logging.debug(f"📊 Received measurement report from user {user_id}: {payload}")
         user_sat_ipv6 = payload.get("user_sat_ipv6", payload.get("current_sat_ipv6", ""))
         user_dev = payload.get("user_dev", payload.get("current_sat_dev", ""))
         user_links_db = payload.get("user_links_db", payload.get("user_links_db", ""))

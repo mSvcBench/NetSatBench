@@ -161,14 +161,12 @@ def send_registration_request_udp(
 def send_link_report_udp(
     grd_ipv6: str,
     grd_port: int,
-    user_sat_ipv6: str,
     user_dev: str,
-    user_links_db: str,
+    user_links_db: Dict[str, Dict[str, Any]],
 ) -> None:
     msg: Dict[str, Any] = {
         "type": "measurement_report",
         "user_id": os.environ["NODE_NAME"],
-        "user_sat_ipv6": user_sat_ipv6,
         "user_dev": user_dev,
         "user_links_db": user_links_db,
     }
@@ -375,6 +373,24 @@ def build_links_report() -> Dict[str, Any]:
             sat_report[link_dev] = link_info
     return sat_report
 
+
+def build_measurement_links_report() -> Dict[str, Dict[str, Any]]:
+    report: Dict[str, Dict[str, Any]] = {}
+    for link_dev, link_info in links_db.items():
+        if link_info.get("status") != "available":
+            continue
+        report[link_dev] = {
+            "status": link_info.get("status"),
+            "last_duration": link_info.get("last_duration"),
+            "last_created": link_info.get("last_created"),
+            "rate": link_info.get("rate"),
+            "delay": link_info.get("delay"),
+            "loss": link_info.get("loss"),
+            "remote_endpoint_ipv6": link_info.get("remote_endpoint_ipv6"),
+            "remote_endpoint_name": link_info.get("remote_endpoint_name"),
+        }
+    return report
+
 def latilong_distance(lat1, long1, lat2, long2) -> float:
     # Haversine formula to calculate distance between two lat/long points on Earth surface
     R = 6371000.0  # Earth's radius in meters
@@ -548,13 +564,12 @@ def reporting_loop() -> None:
         if status != "registered":
             time.sleep(reporting_period_s)
             continue
-        links_report = build_links_report()
+        links_report = build_measurement_links_report()
         send_link_report_udp(
             grd_ipv6=grd_ipv6,
             grd_port=grd_port,
-            user_sat_ipv6=links_db.get(current_dev, {}).get("remote_endpoint_ipv6", "") if current_dev else "",
             user_dev=current_dev,
-            user_links_db=json.dumps(links_report)
+            user_links_db=links_report,
         )
         time.sleep(reporting_period_s)  # periodic check interval for handover decision (can be tuned based on expected link dynamics and handover time requirements)
 
