@@ -431,6 +431,10 @@ def preload_links_db_from_etcd() -> None:
                 remote_endpoint = ep2 if ep1 == node_name else ep1
                 remote_endpoint_ipv6 = resolve_ipv6_from_hosts(remote_endpoint) if remote_endpoint else ""
                 update_links_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", last_duration=link_duration_initial_value_s, remote_endpoint_ipv6=remote_endpoint_ipv6)
+                if "expected_duration" in l:
+                    expected_duration_s = parse_expected_duration(l["expected_duration"])
+                    update_links_db(link_dev=link_dev, last_duration=expected_duration_s)
+                    logging.debug(f"⏱️ Preloaded link {link_dev} with expected duration {expected_duration_s:.1f}s from Etcd")
                 loaded += 1
             except Exception as e:
                 skipped += 1

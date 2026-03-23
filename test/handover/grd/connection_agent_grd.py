@@ -291,6 +291,9 @@ def preload_links_db_from_etcd(etcd_client) -> None:
                 remote_endpoint = ep2 if ep1 == node_name else ep1
                 remote_endpoint_ipv6 = resolve_ipv6_from_hosts(remote_endpoint) if remote_endpoint else None
                 update_link_db(link_dev=link_dev, etcd_link_data=l, last_created=time.time(), last_updated=time.time(), status="available", last_duration=link_duration_initial_value_s, remote_endpoint_ipv6=remote_endpoint_ipv6)
+                if "expected_duration" in l:
+                    expected_duration = parse_expected_duration(l["expected_duration"])
+                    update_link_db(link_dev=link_dev, last_duration=expected_duration)
                 loaded += 1
             except Exception as e:
                 skipped += 1
@@ -378,15 +381,17 @@ def lifetime_strategy_user_handover(user_id: str, metadata: dict) -> Tuple[str, 
         # current link has enough remaining duration, no handover needed
         logging.debug(f"✅ Current link {current_dev} for user {user_id} has sufficient remaining duration, no handover needed")
         return current_dev, False
-    logging.info(f"⚠️ Current link {current_dev} for user {user_id} has low remaining duration, looking for handover candidates...")
+    logging.info(f"ℹ️ Current link {current_dev} for user {user_id} has low remaining duration, looking for handover candidates...")
     candidate_devs = [(dev,l) for dev,l in current_links_db.items() if l.get("status") == link_status_acceptable]
     if not candidate_devs:
         logging.warning(f"⚠️ No candidate links with status '{link_status_acceptable}' found for user {user_id} to handover, keeping current link {current_dev} if still available")
         return "", False
 
-    candidate_dev = max(candidate_devs, key=lambda x: x[1].get("last_duration", 0) - (time.time() - x[1].get("last_created", 0)))
+    remaining_duration_s = lambda l: l.get("last_duration", 0) - (time.time() - l.get("last_created", 0))
+    candidate_dev = max(candidate_devs, key=lambda x: remaining_duration_s(x[1]))
+    logging.debug(f"🔎 List of candidates, remaining duration: {[f'{dev}: {remaining_duration_s(l):.1f}s' for dev,l in candidate_devs]}")
     if candidate_dev[0] != current_dev:
-        logging.info(f"✅ Found better candidate link {candidate_dev[0]} for user {user_id} with remaining duration {(candidate_dev[1].get('last_duration', 0) - (time.time() - candidate_dev[1].get('last_created', 0))):.1f}s, selecting it for handover")
+        logging.info(f"✅ Found better candidate link {candidate_dev[0]} for user {user_id} with remaining duration {(remaining_duration_s(candidate_dev[1])):.1f}s, selecting it for handover")
         return candidate_dev[0],True
     else:
         logging.info(f"⚠️ No better candidate link found for user {user_id} compared to current link {current_dev}, keeping current link")
