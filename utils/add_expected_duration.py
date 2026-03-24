@@ -7,10 +7,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Deque, Dict, List, Optional, Tuple
-
-
-EPOCH_FILE_RE = re.compile(r"epoch(\d+)\.json$")
+from typing import Deque, Dict, List, Optional, Tuple, Union
 
 
 @dataclass
@@ -35,6 +32,10 @@ def parse_args() -> argparse.Namespace:
         help="Optional output directory. If omitted, files are updated in place.",
     )
     parser.add_argument(
+        "--file-pattern",default="NetSatBench-epoch*.json",
+        help="Override epoch filename pattern (takes precedence over Etcd).",
+    )
+    parser.add_argument(
         "--indent",
         type=int,
         default=2,
@@ -53,16 +54,29 @@ def link_key(link_obj: Dict[str, object]) -> Tuple[str, str]:
     return tuple(sorted((ep1, ep2)))
 
 
-def epoch_sort_key(path: Path) -> Tuple[int, str]:
-    match = EPOCH_FILE_RE.search(path.name)
-    if match:
-        return (int(match.group(1)), path.name)
-    return (10**18, path.name)
+
+def list_epoch_files(epoch_dir: Union[str, Path], file_pattern: str) -> List[Path]:
+    if not epoch_dir or not file_pattern:
+        return []
+
+    epoch_dir = Path(epoch_dir)
+
+    def last_numeric_suffix(path: Path) -> int:
+        """
+        Extracts the last contiguous sequence of digits from the filename
+        and returns it as an integer. If no digits are found, returns -1.
+        """
+        basename = path.name
+        matches = re.findall(r"(\d+)", basename)
+        return int(matches[-1]) if matches else -1
+
+    files = sorted(epoch_dir.glob(file_pattern), key=last_numeric_suffix)
+    return files
 
 
-def load_epoch_files(epochs_dir: Path) -> List[Tuple[Path, Dict[str, object]]]:
+def load_epoch_files(epoch_dir: Union[str, Path], file_pattern: str) -> List[Tuple[Path, Dict[str, object]]]:
     files: List[Tuple[Path, Dict[str, object]]] = []
-    for path in sorted(epochs_dir.glob("*.json"), key=epoch_sort_key):
+    for path in list_epoch_files(epoch_dir, file_pattern):
         with path.open("r", encoding="utf-8") as fh:
             files.append((path, json.load(fh)))
     return files
@@ -73,7 +87,8 @@ def annotate_expected_durations(epoch_docs: List[Tuple[Path, Dict[str, object]]]
     matched = 0
     unmatched = 0
 
-    for _, doc in epoch_docs:
+    for f, doc in epoch_docs:
+        print(f"🖊️ Processing file {f}")
         epoch_time = parse_epoch_time(str(doc["time"]))
 
         for link_obj in doc.get("links-del", []):
@@ -126,11 +141,12 @@ def main() -> None:
     args = parse_args()
     source_dir = Path(args.epochs_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else None
+    file_pattern = args.file_pattern
 
     if not source_dir.is_dir():
         raise SystemExit(f"Epoch directory not found: {source_dir}")
 
-    epoch_docs = load_epoch_files(source_dir)
+    epoch_docs = load_epoch_files(source_dir, file_pattern)
     if not epoch_docs:
         raise SystemExit(f"No JSON epoch files found in: {source_dir}")
 
