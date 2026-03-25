@@ -338,10 +338,12 @@ def delete_vxlan_link(
 
 def apply_tc_settings(vxlan_if, netem_opts):
     """
-    Apply tc netem settings to an interface, using:
-      - change if a netem root qdisc already exists
-      - add if no root qdisc exists
-      - replace (or del+add fallback) if a non-netem root exists
+    Apply tc settings to an interface with a stable qdisc hierarchy:
+      - root handle 1: netem ...
+      - child handle 10: fq attached to parent 1:1
+
+    This keeps netem in place for impairment emulation while enabling fq-based
+    pacing/fairness underneath, which is generally a better fit for BBR flows.
     """
     if not netem_opts:
         log.info(f" 🎛️ No netem options provided for {vxlan_if}, skipping tc.")
@@ -360,19 +362,29 @@ def apply_tc_settings(vxlan_if, netem_opts):
     if "limit" in netem_opts:
         netem_args += ["limit", str(netem_opts["limit"])]
 
-    # --- Detect current root qdisc ---
-    # Expect your run() to return stdout as a string when capture_output=True
-    out = run(["tc", "qdisc", "show", "dev", vxlan_if], log_errors=False) or ""
-    
-    if "netem" in out.stdout:
-        # Fast path: existing netem root -> change options in place
-        cmd = ["tc", "qdisc", "change", "dev", vxlan_if, "root"] + netem_args
-        run(cmd)
-        return
-    else: 
-        cmd = ["tc", "qdisc", "add", "dev", vxlan_if, "root"] + netem_args
-        run(cmd)
-        return
+    root_cmd = ["tc", "qdisc", "add", "dev", vxlan_if, "root", "handle", "1:"] + netem_args
+    root_change_cmd = ["tc", "qdisc", "change", "dev", vxlan_if, "root", "handle", "1:"] + netem_args
+    fq_cmd = ["tc", "qdisc", "replace", "dev", vxlan_if, "parent", "1:1", "handle", "10:", "fq"]
+
+    out = run(["tc", "qdisc", "show", "dev", vxlan_if], log_errors=False)
+    qdisc_output = out.stdout if out and out.stdout else ""
+    qdisc_lines = qdisc_output.splitlines()
+
+    has_root_netem_handle = any(
+        line.startswith("qdisc netem 1:") and " root " in line
+        for line in qdisc_lines
+    )
+    has_any_root_qdisc = any(" root " in line for line in qdisc_lines)
+
+    if has_root_netem_handle:
+        run(root_change_cmd)
+    else:
+        if has_any_root_qdisc:
+            # Rebuild the tree when the existing root is incompatible or unnamed.
+            run(["tc", "qdisc", "del", "dev", vxlan_if, "root"], log_errors=False)
+        run(root_cmd)
+
+    run(fq_cmd)
 
 def process_link_action(etcd_client, event):
     try:
