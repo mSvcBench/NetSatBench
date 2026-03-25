@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import concurrent.futures
 import json
 import logging
 import os
@@ -26,7 +27,7 @@ def get_nodes_by_type(etcd_client, wanted_type: str) -> List[str]:
         except Exception:
             continue
 
-        if (node_cfg.get("type") or "").lower() != wanted:
+        if (node_cfg.get("type") or "").lower() != wanted and wanted != "any":
             continue
 
         key = meta.key.decode("utf-8")
@@ -62,6 +63,14 @@ def build_nsb_exec_cmd(args, node: str) -> List[str]:
     return cmd
 
 
+def exec_on_node(args, node: str) -> int:
+    cmd = build_nsb_exec_cmd(args, node)
+    rc = subprocess.run(cmd).returncode
+    if rc != 0:
+        log.error(f"❌ Command failed on node '{node}' (exit={rc})")
+    return rc
+
+
 def main() -> int:
     if "-it" in sys.argv or "--interactive" in sys.argv:
         log.error("❌ -it/--interactive is not supported by nsb-exectype")
@@ -85,8 +94,13 @@ def main() -> int:
     p.add_argument("--etcd-password", default=os.getenv("ETCD_PASSWORD", None), help="Etcd password (default: None)")
     p.add_argument("--etcd-ca-cert", default=os.getenv("ETCD_CA_CERT", None), help="Etcd CA certificate path (default: None)")
     p.add_argument("--log-level", default="INFO")
-
-    p.add_argument("node_type", help="Target node type (e.g., satellite, gateway, user)")
+    p.add_argument("--node-type", default="any", help="Target node type (default: any)")
+    p.add_argument(
+        "-t", "--threads",
+        type=int,
+        default=8,
+        help="Number of worker threads for parallel command execution (default: 8).",
+    )
     p.add_argument(
         "command",
         nargs=argparse.REMAINDER,
@@ -95,6 +109,10 @@ def main() -> int:
 
     args = p.parse_args()
     log.setLevel(args.log_level.upper())
+
+    if args.threads < 1:
+        log.error("❌ --threads must be >= 1")
+        return 2
 
     if not args.command:
         log.error("❌ Missing command. Example: nsb.py exectype satellite ip a")
@@ -121,14 +139,23 @@ def main() -> int:
         return 1
 
     log.info(f"🔎 Found {len(nodes)} nodes of type '{args.node_type}': {', '.join(nodes)}")
+    worker_count = min(args.threads, len(nodes))
+    log.info(f"▶️ Executing with {worker_count} thread(s)...")
 
-    for node in nodes:
-        log.info(f"▶️ Executing on node '{node}'")
-        cmd = build_nsb_exec_cmd(args, node)
-        rc = subprocess.run(cmd).returncode
-        if rc != 0:
-            log.error(f"❌ Command failed on node '{node}' (exit={rc})")
-            return rc
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(exec_on_node, args, node): node
+            for node in nodes
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            node = futures[fut]
+            try:
+                rc = fut.result()
+            except Exception as e:
+                log.error(f"❌ Command failed on node '{node}': {e}")
+                return 1
+            if rc != 0:
+                return rc
 
     return 0
 

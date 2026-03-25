@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import concurrent.futures
 import json
 import logging
 import os
@@ -81,6 +82,40 @@ def safe_replace(src: Path, dst: Path) -> None:
     shutil.move(str(src), str(dst))
 
 
+def pull_from_node(args, node: str, node_path: str, host_path: Path) -> Tuple[str, int]:
+    with tempfile.TemporaryDirectory(prefix=f"{node}-") as tmpdir:
+        tmp_path = Path(tmpdir)
+        src = f"{node}:{node_path}"
+        cmd = build_nsb_cp_cmd(args, src, tmpdir)
+        log.info(f"📥 Pulling from node '{node}'")
+        rc = subprocess.run(cmd).returncode
+        if rc != 0:
+            log.error(f"❌ Copy failed for node '{node}' (exit={rc})")
+            return node, rc
+
+        extracted = sorted(tmp_path.iterdir())
+        if not extracted:
+            log.error(f"❌ No files extracted from node '{node}' path '{node_path}'")
+            return node, 1
+
+        for item in extracted:
+            target = host_path / f"{node}_{item.name}"
+            safe_replace(item, target)
+            log.info(f"✅ Wrote {target}")
+
+    return node, 0
+
+
+def push_to_node(args, node: str, node_path: str) -> Tuple[str, int]:
+    dest = f"{node}:{node_path}"
+    cmd = build_nsb_cp_cmd(args, args.src, dest)
+    log.info(f"📤 Pushing to node '{node}'")
+    rc = subprocess.run(cmd).returncode
+    if rc != 0:
+        log.error(f"❌ Copy failed for node '{node}' (exit={rc})")
+    return node, rc
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         prog="nsb-cptype",
@@ -97,6 +132,12 @@ def main() -> int:
     # docker cp options
     p.add_argument("-L", "--follow-link", action="store_true", help="Follow symbolic links when copying (default: False)")
     p.add_argument("-a", "--archive", action="store_true", help="Archive mode; copy directories recursively and preserve attributes (default: False)"   )
+    p.add_argument(
+        "-t", "--threads",
+        type=int,
+        default=8,
+        help="Number of worker threads for parallel copy operations (default: 8).",
+    )
 
     p.add_argument("--log-level", default="INFO", help="Logging level (default: INFO)")
     p.add_argument("src", help="Source path with optional TYPE: prefix (e.g., 'satellite:/data/logs', any:/output or '/local/path')")
@@ -104,6 +145,10 @@ def main() -> int:
 
     args = p.parse_args()
     log.setLevel(args.log_level.upper())
+
+    if args.threads < 1:
+        log.error("❌ --threads must be >= 1")
+        return 2
 
     src_spec = split_type_spec(args.src)
     dest_spec = split_type_spec(args.dest)
@@ -146,42 +191,45 @@ def main() -> int:
         return 1
 
     log.info(f"🔎 Found {len(nodes)} nodes of type '{node_type}': {', '.join(nodes)}")
+    worker_count = min(args.threads, len(nodes))
 
     if direction == "FROM_NODE":
         if not host_path.exists() or not host_path.is_dir():
             log.error(f"❌ Destination must be an existing directory for TYPE:PATH pulls: {host_path}")
             return 2
 
-        for node in nodes:
-            with tempfile.TemporaryDirectory(prefix=f"{node}-") as tmpdir:
-                tmp_path = Path(tmpdir)
-                src = f"{node}:{node_path}"
-                cmd = build_nsb_cp_cmd(args, src, tmpdir)
-                log.info(f"📥 Pulling from node '{node}'")
-                rc = subprocess.run(cmd).returncode
+        log.info(f"📥 Pulling with {worker_count} thread(s)...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(pull_from_node, args, node, node_path, host_path): node
+                for node in nodes
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                node = futures[fut]
+                try:
+                    _, rc = fut.result()
+                except Exception as e:
+                    log.error(f"❌ Copy failed for node '{node}': {e}")
+                    return 1
                 if rc != 0:
-                    log.error(f"❌ Copy failed for node '{node}' (exit={rc})")
                     return rc
 
-                extracted = sorted(tmp_path.iterdir())
-                if not extracted:
-                    log.error(f"❌ No files extracted from node '{node}' path '{node_path}'")
-                    return 1
-
-                for item in extracted:
-                    target = host_path / f"{node}_{item.name}"
-                    safe_replace(item, target)
-                    log.info(f"✅ Wrote {target}")
-
     else:
-        for node in nodes:
-            dest = f"{node}:{node_path}"
-            cmd = build_nsb_cp_cmd(args, args.src, dest)
-            log.info(f"📤 Pushing to node '{node}'")
-            rc = subprocess.run(cmd).returncode
-            if rc != 0:
-                log.error(f"❌ Copy failed for node '{node}' (exit={rc})")
-                return rc
+        log.info(f"📤 Pushing with {worker_count} thread(s)...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(push_to_node, args, node, node_path): node
+                for node in nodes
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                node = futures[fut]
+                try:
+                    _, rc = fut.result()
+                except Exception as e:
+                    log.error(f"❌ Copy failed for node '{node}': {e}")
+                    return 1
+                if rc != 0:
+                    return rc
 
     return 0
 

@@ -54,13 +54,19 @@ Unlike `nsb.py exec`, interactive mode is not supported (`-it` / `--interactive`
 ### Usage
 
 ```bash
-python3 nsb.py exectype [OPTIONS] <node-type> <command> [args...]
+python3 nsb.py exectype [OPTIONS] --node-type <node-type> <command> [args...]
 ```
 
 ### Example
 
 ```bash
-python3 nsb.py exectype satellite ip address show
+python3 nsb.py exectype --node-type satellite ip address show
+```
+
+To control parallel per-node execution, use `-t/--threads`:
+
+```bash
+python3 nsb.py exectype -t 8 --node-type satellite ip address show
 ```
 
 Full command-line help is available via:
@@ -145,6 +151,12 @@ python3 nsb.py cptype [OPTIONS] <src> <dest>
 
 ```bash
 python3 nsb.py cptype ./config.json satellite:/app/config.json
+```
+
+To control parallel per-node copies, use `-t/--threads`:
+
+```bash
+python3 nsb.py cptype -t 8 satellite:/var/log ./logs
 ```
 
 Full command-line help is available via:
