@@ -44,6 +44,7 @@ heartbeat_max_failures = 3
 heartbeat_failures = 0
 heartbeat_lock = threading.Lock()
 MAX_UDP_RECV_BYTES = 65535
+report_file = None  # file handle for detailed report output, if enabled by args
 
 # Status not_registered, registration_in_progress, registered, handover_in_progress
 status = "not_registered" # initial status before registration
@@ -391,6 +392,15 @@ def build_measurement_links_report() -> Dict[str, Dict[str, Any]]:
         }
     return report
 
+
+def write_report_event(event_type: str, strategy_type: str, grd_name: str, sat_name: str) -> None:
+    if report_file is None:
+        return
+    report_file.write(
+        f"{time.time()},{event_type},{os.environ['NODE_NAME']},{strategy_type},{grd_name},{sat_name}\n"
+    )
+    report_file.flush()
+
 def latilong_distance(lat1, long1, lat2, long2) -> float:
     # Haversine formula to calculate distance between two lat/long points on Earth surface
     R = 6371000.0  # Earth's radius in meters
@@ -691,6 +701,7 @@ def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None
 
     if payload.get("type") == "handover_command":
         logging.info(f"📡 Handover command received by {grd_id} with upstream SIDs {upstream_sids} through satellite {new_dev_sat_name}")
+        write_report_event("handover", "user", grd_id, new_dev_sat_name)
 
     send_handover_complete_udp(
         grd_ipv6=grd_ipv6,
@@ -740,6 +751,7 @@ def handle_registration_accept(payload: Dict[str, Any]) -> None:
     status = "registered"
     remote_endpoint = links_db.get(current_dev, {}).get("remote_endpoint_name", "unknown")
     logging.info(f"📡 Registration accepted by {grd_id} with with upstream SIDs {upstream_sids} via satellite {remote_endpoint}")
+    write_report_event("registration", "_", grd_id, remote_endpoint)
 
 def handle_hello(payload: Dict[str, Any]) -> None:
     global heartbeat_failures
@@ -854,7 +866,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
 #   ENTRYPOINT
 # ----------------------------
 def main() -> None:
-    global chose_reg_device, grd_ipv6, grd_port, grd_id, user_callback_port, local_ipv6, etcd_client, link_setup_delay_s, reg_metadata, registration_accept_timeout_s, handover_command_timeout_s, link_duration_initial_value_s, heartbeat_interval_s, heartbeat_max_failures
+    global chose_reg_device, grd_ipv6, grd_port, grd_id, user_callback_port, local_ipv6, etcd_client, link_setup_delay_s, reg_metadata, registration_accept_timeout_s, handover_command_timeout_s, link_duration_initial_value_s, heartbeat_interval_s, heartbeat_max_failures, report_file
     
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="::")
@@ -865,6 +877,7 @@ def main() -> None:
     ap.add_argument("--registration-timeout", type=float, default=3.0, help="seconds to wait for registration_accept before retrying registration")
     ap.add_argument("--link-setup-delay", type=float, default=3, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
     ap.add_argument("--link-duration-initial-value", type=float, default=4*60, help="Initial value in seconds for the duration of new links, default: 4min)")
+    ap.add_argument("--report", action="store_true", help="Enable detailed reporting of internal state for debugging")
     ap.add_argument("--log-level", default="INFO", help="Logging level (e.g., DEBUG, INFO, WARNING)")
     args = ap.parse_args()
     
@@ -923,6 +936,11 @@ def main() -> None:
     link_duration_initial_value_s = args.link_duration_initial_value
     chose_reg_device = lifetime_strategy
     reg_metadata = {}
+
+    if args.report:
+        report_file_name = f"report_{os.environ['NODE_NAME']}_conn_manager_usr.log"
+        report_file = open(report_file_name, "w")
+        logging.info(f"📊 Detailed reporting enabled, writing to {report_file_name}")
 
     preload_links_db_from_etcd()
     

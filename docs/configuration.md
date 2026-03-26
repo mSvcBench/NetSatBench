@@ -425,6 +425,7 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 * **Requirement**: optional
 * **Description**: Enables automatic assignment of overlay IP subnets to nodes. Each node is allocated a /30 subnet (IPv4) and/or /126 subnet (IPv6) from the first matching `auto-assign-super-cidr` rule. Matching is evaluated against node properties using `match-key` + `match-value`. If disabled, nodes must specify their own `cidr` and/or `cidr-v6` in per-node configuration, or they will have no overlay IP addresses for the corresponding IP family.
 
+
 ###### `auto-assign-super-cidr`
 
 * **Type**: array of objects
@@ -454,7 +455,7 @@ Rule evaluation notes:
 * IPv4 allocation uses the first matching rule with `super-cidr`.
 * IPv6 allocation uses the first matching rule with `super-cidr6`.
 * If no rule matches a node for a given IP family, no automatic CIDR is assigned for that family.
-* The v4 `super-cidr` block must not overlap with underlay address space (e.g., worker `sat-vnet-super-cidr`) or host physical networks. Either `super-cidr` or `super-cidr6` can be omitted for single-stack operation, or both for dual-stack operation.
+> **WARNING** Any v4 `super-cidr` block must not overlap with underlay address space specified in `sat-vnet-super-cidr` or host physical networks. Either `super-cidr` or `super-cidr6` can be omitted for single-stack operation, or both for dual-stack operation.
 
 ---
 

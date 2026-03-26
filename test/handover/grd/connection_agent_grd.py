@@ -53,6 +53,8 @@ heartbeat_lock = threading.Lock()
 _UNSET = object() # sentinel value to distinguish between "no update" and "update with None/empty" in db update functions
 MAX_UDP_RECV_BYTES = 65535 # max size of UDP payload to receive for user callbacks, can be tuned based on expected message size and memory constraints
 report_file = None  # file handle for detailed report output, if enabled by args
+USER_STATUS_REGISTERED = "registered"
+USER_STATUS_HANDOVER_IN_PROGRESS = "handover_in_progress"
 
 # ----------------------------
 #   HELPERS
@@ -268,6 +270,17 @@ def parse_expected_duration(expected_duration: Any) -> float:
         return float(value)
     raise ValueError(f"Invalid expected_duration type: {type(expected_duration)}")
 
+
+def get_handover_threshold_s(metadata: dict, last_duration: Any = None) -> float:
+    threshold_s = metadata.get("threshold_s", link_duration_initial_value_s/4.0)
+    if last_duration is not None:
+        threshold_s = min(threshold_s, float(last_duration) / 4.0)
+    return threshold_s
+
+
+def is_user_active(user_id: str) -> bool:
+    return user_db.get(user_id, {}).get("status") in {USER_STATUS_REGISTERED, USER_STATUS_HANDOVER_IN_PROGRESS}
+
 # ----------------------------
 #   MAIN LOGIC FOR LINK MANAGEMENT LOCAL SIDE
 # ----------------------------
@@ -364,6 +377,7 @@ def lifetime_strategy_user_handover(user_id: str, metadata: dict) -> Tuple[str, 
     current_dev = user_db.get(user_id, {}).get("user_dev", None)
     current_links_db = user_db.get(user_id, {}).get("user_links_db", {})
     link_status_acceptable = "available"  # for user dev we consider all available links as candidates for handover
+    current_last_duration = current_links_db.get(current_dev, {}).get("last_duration", None)
     
     if current_dev == None:
         # no link currently assigned to user, so handover is needed to assign the best connected link
@@ -374,7 +388,7 @@ def lifetime_strategy_user_handover(user_id: str, metadata: dict) -> Tuple[str, 
     else:
         remaining_duration = current_links_db.get(current_dev, {}).get("last_duration", 0) - (time.time() - current_links_db.get(current_dev, {}).get("last_created", 0))
     
-    threshold_s = metadata.get("threshold_s", current_links_db.get(current_dev, {}).get("last_duration", link_duration_initial_value_s)/4.0)  # threshold for minimum remaining duration to consider a handover
+    threshold_s = get_handover_threshold_s(metadata, current_last_duration)  # threshold for minimum remaining duration to consider a handover
     
     logging.debug(f"⏱️ Evaluating handover for user {user_id} on current link {current_dev} with remaining duration {remaining_duration:.1f}s and threshold {threshold_s:.1f}s")
     if remaining_duration > threshold_s:
@@ -399,10 +413,11 @@ def lifetime_strategy_user_handover(user_id: str, metadata: dict) -> Tuple[str, 
 
 def lifetime_strategy_grd_handover(user_id: str, metadata: dict) -> Tuple[str, bool]:
     # Example handover strategy: always prefer the link with greatest ttl
-    threshold_s = metadata.get("threshold_s", link_duration_initial_value_s/4.0)  # threshold for minimum remaining duration to consider a handover
     current_dev = user_db.get(user_id, {}).get("grd_dev", None)
     current_links_db = links_db
     link_status_acceptable = "connected" # for grd dev we consider only connected links as candidates for handover
+    current_last_duration = current_links_db.get(current_dev, {}).get("last_duration", None)
+    threshold_s = get_handover_threshold_s(metadata, current_last_duration)  # threshold for minimum remaining duration to consider a handover
     
     if current_dev == None:
         # no link currently assigned to user, so handover is needed to assign the best connected link
@@ -430,9 +445,14 @@ def lifetime_strategy_grd_handover(user_id: str, metadata: dict) -> Tuple[str, b
 def lifetime_strategy_connection_handover(metadata):
     # update of the connectted satellite links that can be used by users 
     max_dev = metadata.get("max_links", max_links)  # max number of simultaneous links (can be tuned based on expected number of available links and resource constraints)
-    threshold_s = metadata.get("threshold_s", link_duration_initial_value_s/4.0)  # threshold for minimum remaining duration to consider a handover
     # compute remaining duration for available links and select the one with the longest remaining duration above threshold
     current_links = [(dev,l) for dev,l in links_db.items() if l.get("status") == "connected"]
+    blocked_links = [
+        (dev, link)
+        for dev, link in current_links
+        if any(user_info.get("grd_dev") == dev for user_info in user_db.values())
+    ]
+    blocked_devs = {dev for dev, _ in blocked_links}
     available_links = [(dev,l) for dev,l in links_db.items() if l.get("status") == "available"]
     sorted_available_links = sorted(available_links, key=lambda x: x[1].get("last_duration", 0) - (time.time() - x[1].get("last_created", 0)), reverse=True)
 
@@ -445,8 +465,15 @@ def lifetime_strategy_connection_handover(metadata):
         sat_name = links_db.get(link_to_connect, {}).get("remote_endpoint_name", "unknown")
         logging.info(f"✅ Ground station connected with satellite {sat_name} with remaining duration {(links_db.get(link_to_connect, {}).get('last_duration', 0) - (time.time() - links_db.get(link_to_connect, {}).get('last_created', 0))):.1f}s to fill available connection slots")
     
+    # evaluate link handover for links not currently used by any user (not in blocked_devs) based on remaining duration and threshold, and switch to better available links if any
+    current_links = [(dev,l) for dev,l in links_db.items() if l.get("status") == "connected"]
+    available_links = [(dev,l) for dev,l in links_db.items() if l.get("status") == "available"]
+    sorted_available_links = sorted(available_links, key=lambda x: x[1].get("last_duration", 0) - (time.time() - x[1].get("last_created", 0)), reverse=True)
     link_switch={}
     for cl in current_links:
+        if cl[0] in blocked_devs:
+            continue
+        threshold_s = get_handover_threshold_s(metadata, cl[1].get("last_duration", None))  # threshold for minimum remaining duration to consider a handover
         remaining_duration = cl[1].get("last_duration", 0) - (time.time() - cl[1].get("last_created", 0))
         if remaining_duration <= threshold_s:
             # current link has low remaining duration, consider it for handover
@@ -469,7 +496,7 @@ def processing_handover_loop() -> None:
     while True:
         process_connection_handover(handover_metadata)  # evaluate if we need to switch some of the connected devs to new ones based on the connection handover strategy
         for user_id in list(user_db.keys()):
-            if user_db[user_id].get("status") != "registered":
+            if user_db[user_id].get("status") != USER_STATUS_REGISTERED:
                 logging.debug(f"⚠️ Skipping handover processing for user {user_id} which is not in registered state")
                 continue
             new_grd_dev, grd_needed = is_grd_handover_needed(user_id, handover_metadata)
@@ -480,6 +507,7 @@ def processing_handover_loop() -> None:
             if grd_needed or user_needed:
                 strategy_type = "grd" if grd_needed and not user_needed else "user" if user_needed and not grd_needed else "grd+user"
                 new_grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
+                new_user_sat_name = ""
                 if new_user_dev is not None:
                     new_user_sat_name = user_db.get(user_id, {}).get("user_links_db", {}).get(new_user_dev, {}).get("remote_endpoint_name", "unknown")
                     logging.info(f"🔀 Handover type '{strategy_type}' for user {user_id}: selected newest grd satellite {new_grd_sat_name} and user satellite {new_user_sat_name}")
@@ -516,7 +544,7 @@ def heartbeat_monitor_loop() -> None:
         for user_id, user_info in list(user_db.items()):
             if user_id == node_name:
                 continue
-            if user_info.get("status") != "registered":
+            if not is_user_active(user_id):
                 continue
             user_ipv6 = user_info.get("user_ipv6", "")
             if not user_ipv6:
@@ -567,11 +595,10 @@ def create_sids(grd_sat_ipv6: str, user_sat_ipv6: str) -> Tuple[str, str]:
 
 def process_user_handover(user_id ,new_grd_dev = None, new_user_dev=None) -> None:
     # reroute user traffic to new link 
-    user = user_db.get(user_id)
-    if user.get("status") != "registered":
+    user = user_db.get(user_id, {})
+    if not is_user_active(user_id):
         logging.warning(f"⚠️ Attempted local handover for user {user_id} which is not in registered state, skipping")
         return
-    # update_user_db(user_id=user_id, status="handover_in_progress")  # Update user_db with new status for the user during local handover processing
     user_ipv6 = user.get("user_ipv6", "")
     
     # new values for handover
@@ -580,9 +607,13 @@ def process_user_handover(user_id ,new_grd_dev = None, new_user_dev=None) -> Non
 
     if not grd_sat_ipv6:
         logging.error(f"❌ No remote endpoint IPv6 found for new GRD dev {new_grd_dev} during handover of user {user_id}, aborting handover")
+        if user_db.get(user_id, {}).get("status") == USER_STATUS_HANDOVER_IN_PROGRESS:
+            update_user_db(user_id=user_id, status=USER_STATUS_REGISTERED)
         return
     if new_user_dev and not user_sat_ipv6:
         logging.error(f"❌ No remote endpoint IPv6 found for new USER dev {new_user_dev} during handover of user {user_id}, aborting handover")
+        if user_db.get(user_id, {}).get("status") == USER_STATUS_HANDOVER_IN_PROGRESS:
+            update_user_db(user_id=user_id, status=USER_STATUS_REGISTERED)
         return
 
     # compute sids
@@ -604,7 +635,7 @@ def process_user_handover(user_id ,new_grd_dev = None, new_user_dev=None) -> Non
                             downstream_sids=new_downstream_sids, 
                             grd_dev=new_grd_dev,
                             user_dev = new_user_dev,
-                            status="registered")
+                            status=USER_STATUS_REGISTERED)
             grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
             logging.info(f"✅  Handover completed for ground station default link with satellite {grd_sat_name}")
             return  # skip sending handover command to self in case of local handover for the satellite subnet
@@ -625,10 +656,20 @@ def process_user_handover(user_id ,new_grd_dev = None, new_user_dev=None) -> Non
 
     except Exception as e:
         logging.error(f"❌ Local handover failed for user {user_id} : {e}")
+        if user_db.get(user_id, {}).get("status") == USER_STATUS_HANDOVER_IN_PROGRESS:
+            update_user_db(user_id=user_id, status=USER_STATUS_REGISTERED)
     return
 
 
 def start_process_user_handover_thread(user_id: str, new_grd_dev=None, new_user_dev=None) -> None:
+    user_status = user_db.get(user_id, {}).get("status")
+    if user_status == USER_STATUS_HANDOVER_IN_PROGRESS:
+        logging.debug("Skipping duplicate handover scheduling for user %s already in progress", user_id)
+        return
+    if user_status != USER_STATUS_REGISTERED:
+        logging.debug("Skipping handover scheduling for user %s with status %s", user_id, user_status)
+        return
+    update_user_db(user_id=user_id, status=USER_STATUS_HANDOVER_IN_PROGRESS)
     threading.Thread(
         target=process_user_handover,
         args=(user_id, new_grd_dev, new_user_dev),
@@ -794,7 +835,7 @@ def traffic_pause(user_id, ho_delay_ms: float) -> None:
 def handle_user_measurement_report(payload: Dict[str, Any]) -> None:
     try:
         user_id = payload["user_id"]
-        if user_db.get(user_id, {}).get("status") != "registered":
+        if not is_user_active(user_id):
             logging.debug("Ignoring measurement report for user %s not in registered state", user_id)
             return
         logging.debug(f"📊 Received measurement report from user {user_id}: {payload}")
@@ -819,7 +860,7 @@ def handle_user_hello(payload: Dict[str, Any]) -> None:
 
 def handle_user_handover_complete(payload: Dict[str, Any]) -> None:
     user_id = payload.get("user_id", "")
-    if user_db.get(user_id, {}).get("status") != "registered":
+    if not is_user_active(user_id):
         logging.debug("Ignoring handover complete for user %s not in registered state", user_id)
         return
     logging.info(f"👤 Received handover complete from user {user_id}")
@@ -847,7 +888,7 @@ def handle_user_handover_complete(payload: Dict[str, Any]) -> None:
                     upstream_sids=payload.get("upstream_sids", ""),
                     grd_dev=new_grd_dev,
                     user_dev = new_user_dev,
-                    status="registered")
+                    status=USER_STATUS_REGISTERED)
     grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
     user_sat_name = user_db.get(user_id, {}).get("user_links_db", {}).get(new_user_dev, {}).get("remote_endpoint_name", "unknown")
     logging.info(f"✅  Handover completed for {user_id}. New grd satellite {grd_sat_name}, new user satellite {user_sat_name}, new downstream sids {new_downstream_sids}, new upstream sids {payload.get('upstream_sids', '')}")
