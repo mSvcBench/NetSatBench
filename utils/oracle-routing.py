@@ -610,7 +610,7 @@ def main() -> int:
     parser.add_argument("--epoch-dir", help="Epoch directory, takes precedence over Etcd.")
     parser.add_argument("--file-pattern", help="Epoch filename pattern, takes precedence over Etcd.")
     parser.add_argument("--out-epoch-dir", help="Output dir for processed epochs with route injection.")
-    parser.add_argument("--report", help="Output JSON file for per-original-epoch routing update statistics. If omitted, no report file is created.")
+    parser.add_argument("--report", action="store_true", help="Output JSON file for per-original-epoch routing update statistics. If omitted, no report file is created.")
 
     parser.add_argument("--node-type-to-route", default="", help="Comma-separated node types to route to (default: --node-type). Matches against node 'type' in config. Use 'any' to route to all nodes.")
     parser.add_argument("--node-type-to-install", default="", help="Comma-separated node types to install routes on (default: --node-type). Matches against node 'type' in config. Use 'any' to install on all nodes.")
@@ -701,6 +701,8 @@ def main() -> int:
             log.error("❌ Please specify an empty output directory to proceed.")
             return 3
         
+    if args.report:
+        report_path = os.path.join(args.out_epoch_dir, "or-report.json")
         
     try:
         compute_routes(
@@ -715,11 +717,11 @@ def main() -> int:
             link_creation_offset=args.link_creation_offset,
             ip_version=args.ip_version,
             etcd_etchosts_prefix="/config/etchosts/" if args.ip_version == 4 else "/config/etchosts6/",
-            redundancy=args.redundancy if args.drain_before_break_offset == 0 else True,  # redundancy needed with drain-before-break
+            redundancy=args.redundancy,
             routing_metric=args.routing_metrics if args.routing_metrics else "hops",
             max_routes_per_epoch=args.max_routes_per_epoch,
             route_batch_sleep_seconds=args.route_batch_sleep_seconds,
-            report_path=args.report,
+            report_path=report_path if args.report else None,
         )
     except Exception as e:
         log.error(f"❌ Error during route computation: {e}")
