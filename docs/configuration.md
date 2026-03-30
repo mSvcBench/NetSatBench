@@ -174,7 +174,13 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 
 ```json
 {
-  "node-config-common": { ... },
+  "node-config-common": [
+    {
+      "match-key": "<node-property-path>",
+      "match-value": "<node-property-value>",
+      "config-common": { ... }
+    }
+  ],
   "epoch-config": { ... },
   "nodes": {
     "<node-name>": { ... }
@@ -187,38 +193,41 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 #### IPv4
 ```json  
 {
-  "node-config-common": {
-    "type": "undefined",
-    "n_antennas": 2,
-    "metadata": {},  
-    "image": "msvcbench/sat-container:latest",
-    "sidecars": [],
-    "cpu-request": "100m",
-    "mem-request": "200MiB",
-    "cpu-limit": "200m",
-    "mem-limit": "400MiB",
-    "L3-config": {
-      "enable-netem"  : true,
-      "enable-routing" : true,
-      "routing-module": "extra.routing.isis",
-      "routing-metadata": {
-        "isis-area-id": "0001",
-        "advertize-default-route": false
-      },
-      "auto-assign-ips": true,
-      "auto-assign-super-cidr": [
-          {"match-key":"type","match-value":"satellite","super-cidr":"172.100.0.0/16"},
-          {"match-key":"type","match-value":"gateway","super-cidr":"172.101.0.0/16"},
-          {"match-key":"type","match-value":"user","super-cidr":"172.102.0.0/16"},
-      ]
+  "node-config-common": [
+    {
+      "match-key": "type",
+      "match-value": "satellite",
+      "config-common": {
+        "type": "undefined",
+        "n_antennas": 2,
+        "metadata": {},
+        "image": "msvcbench/sat-container:latest",
+        "sidecars": [],
+        "cpu-request": "100m",
+        "mem-request": "200MiB",
+        "cpu-limit": "200m",
+        "mem-limit": "400MiB",
+        "L3-config": {
+          "enable-netem": true,
+          "enable-routing": true,
+          "routing-module": "extra.routing.isis",
+          "routing-metadata": {
+            "isis-area-id": "0001",
+            "advertize-default-route": false
+          },
+          "auto-assign-ips": true,
+          "auto-assign-super-cidr": [
+            {"match-key":"type","match-value":"satellite","super-cidr":"172.100.0.0/16"}
+          ]
+        }
+      }
     }
-  },
+  ],
   "epoch-config": {
     "epoch-dir": "examples/10nodes/epochs",
     "file-pattern": "NetSatBench-epoch*.json"
   },
   "nodes": {
-    "nodes": {
     "sat1": {
       "type": "satellite",
       "metadata": {
@@ -282,31 +291,35 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 #### IPv6
 ```json  
 {
-  "node-config-common": {
-    "type": "undefined",
-    "n_antennas": 2,
-    "metadata": {},  
-    "image": "msvcbench/sat-container:latest",
-    "sidecars": [],
-    "cpu-request": "100m",
-    "mem-request": "200MiB",
-    "cpu-limit": "200m",
-    "mem-limit": "400MiB",
-    "L3-config": {
-      "enable-netem"  : true,
-      "enable-routing" : true,
-      "routing-module": "extra.routing.isisv6",
-      "routing-metadata": {
-        "isis-area-id": "0001"
-      },
-      "auto-assign-ips": true,
-      "auto-assign-super-cidr": [
-          {"match-key":"type","match-value":"satellite","super-cidr6":"2001:db8:100::/48"},
-          {"match-key":"type","match-value":"gateway","super-cidr6":"2001:db8:101::/48"},
-          {"match-key":"type","match-value":"user","super-cidr6":"2001:db8:102::/48"}
-      ]
+  "node-config-common": [
+    {
+      "match-key": "type",
+      "match-value": "satellite",
+      "config-common": {
+        "type": "undefined",
+        "n_antennas": 2,
+        "metadata": {},
+        "image": "msvcbench/sat-container:latest",
+        "sidecars": [],
+        "cpu-request": "100m",
+        "mem-request": "200MiB",
+        "cpu-limit": "200m",
+        "mem-limit": "400MiB",
+        "L3-config": {
+          "enable-netem": true,
+          "enable-routing": true,
+          "routing-module": "extra.routing.isisv6",
+          "routing-metadata": {
+            "isis-area-id": "0001"
+          },
+          "auto-assign-ips": true,
+          "auto-assign-super-cidr": [
+            {"match-key":"type","match-value":"satellite","super-cidr6":"2001:db8:100::/48"}
+          ]
+        }
+      }
     }
-  },
+  ],
   ...
 }
 ```
@@ -316,84 +329,104 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 
 #### `node-config-common`
 
-* **Type**: object 
+* **Type**: array of objects
 * **Requirement**: mandatory
-* **Description**: Common configuration applied to all nodes unless overridden within a specific entry in `nodes`.
+* **Description**: Ordered list of common configuration rules applied to nodes before per-node overrides in `nodes`. Each rule is selected by matching a node property through `match-key` and `match-value`, then merged into the node through the embedded `config-common` object. Rules are evaluated in list order, and all matching rules are merged.
 
 #### Per-Field Descriptions of `node-config-common` 
 
-##### `type`
+##### `match-key`
+
+* **Type**: string
+* **Requirement**: mandatory
+* **Description**: Dot-separated path to the node property used to decide whether this common configuration rule applies to a node (for example `type` or `metadata.labels.name`).
+
+##### `match-value`
+
+* **Type**: any JSON scalar (`string`, `number`, `boolean`, or `null`)
+* **Requirement**: mandatory
+* **Description**: Value compared against the resolved node property. The rule is applied when the node value at `match-key` is equal to `match-value`.
+
+##### `config-common`
+
+* **Type**: object
+* **Requirement**: mandatory
+* **Description**: Common parameter block merged into every node that matches this rule. Per-node fields in `nodes` still override the merged result.
+
+##### Fields Inside `config-common`
+
+###### `type`
 
 * **Type**: string 
 * **Requirement**: optional, if not included in per-node configuration
 * **Description**: Logical node type (recommended: `satellite`, `gateway`, `user`). Used for classification, visualization, and rule-based automatic IP assignment. Any string can be used.
 
-##### `n_antennas`
+###### `n_antennas`
 
 * **Type**: integer 
 * **Requirement**: optional
 * **Description**: Number of antennas associated with the node. Informational only; not interpreted by control scripts.
 
-##### `metadata`
+###### `metadata`
 
 * **Type**: object 
 * **Requirement**: optional
 * **Description**: User-defined structured metadata. Not interpreted by control scripts.
 
-##### `image`
+###### `image`
 
 * **Type**: string 
 * **Requirement**: optional, if not included in per-node configuration
 * **Description**: Docker image used to instantiate the node container. Must be accessible from all worker hosts.
 
-##### `sidecars`
+###### `sidecars`
 
 * **Type**: array of strings 
 * **Requirement**: optional
 * **Description**: List of Docker images for sidecar containers to run alongside the main container. Currently not supported by control scripts.
 
-##### `cpu-request`
+###### `cpu-request`
 
 * **Type**: string 
 * **Requirement**: optional
 * **Units / Format**: Docker-compatible CPU syntax (e.g., `100m`).
 * **Description**: Requested CPU resources for container scheduling and relative priority under contention.
 
-##### `mem-request`
+###### `mem-request`
 
 * **Type**: string  
 * **Requirement**: optional
 * **Units / Format**: Binary units `KiB`, `MiB`, `GiB`, `TiB` (e.g., `200MiB`).
 * **Description**: Requested memory for container scheduling and relative priority for OOM behavior (e.g., reservation semantics).
 
-##### `mtu`
+###### `mtu`
 
 * **Type**: integer
 * **Requirement**: optional
 * **Units / Format**: bytes (e.g., `1450`)
 * **Description**: VXLAN interface MTU override used by `sat-agent` when creating overlay links. If omitted, `sat-agent` derives MTU as `eth0_mtu - VXLAN header` (default behavior).
 
-##### `cpu-limit`
+###### `cpu-limit`
 
 * **Type**: string
 * **Requirement**: optional
 * **Units / Format**: Docker-compatible CPU syntax (e.g., `200m`).
 * **Description**: Hard CPU cap enforced at runtime.
 
-##### `mem-limit`
+###### `mem-limit`
 
 * **Type**: string
 * **Requirement**: optional
 * **Units / Format**: Binary units `KiB`, `MiB`, `GiB`, `TiB` (e.g., `400MiB`).
 * **Description**: Hard memory cap enforced at runtime.
 
-##### `L3-config`
+###### `L3-config`
 
 * **Type**: object
 * **Requirement**: optional, if not included in per-node configuration
 * **Description**: Layer-3 configuration applied to VXLAN-based overlay links.
 
-##### Per-Field Description of `L3-config`
+###### Per-Field Description of `L3-config`
 
 ###### `enable-netem`
 
@@ -423,14 +456,14 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 
 * **Type**: boolean
 * **Requirement**: optional
-* **Description**: Enables automatic assignment of overlay IP subnets to nodes. Each node is allocated a /30 subnet (IPv4) and/or /126 subnet (IPv6) from the first matching `auto-assign-super-cidr` rule. Matching is evaluated against node properties using `match-key` + `match-value`. If disabled, nodes must specify their own `cidr` and/or `cidr-v6` in per-node configuration, or they will have no overlay IP addresses for the corresponding IP family.
+* **Description**: Enables automatic assignment of overlay IP subnets to nodes. Each node is allocated a /30 subnet (IPv4) and/or /126 subnet (IPv6) from the first matching `auto-assign-super-cidr` rule inside the selected `config-common` entry. If disabled, nodes must specify their own `cidr` and/or `cidr-v6` in per-node configuration, or they will have no overlay IP addresses for the corresponding IP family.
 
 
 ###### `auto-assign-super-cidr`
 
 * **Type**: array of objects
 * **Requirement**: mandatory if `auto-assign-ips` is `true`, not needed otherwise
-* **Description**: Ordered rules mapping node properties to CIDR blocks from which overlay subnets are sequentially allocated.
+* **Description**: Ordered rules mapping node properties to CIDR blocks from which overlay subnets are sequentially allocated. These rules are interpreted inside the surrounding `config-common` block, and `nsb-init.py` uses only the rules belonging to the common entry selected for the node.
 
 Each rule object:
 
@@ -451,7 +484,7 @@ Each rule object:
   * **Description**: Base CIDR block used to allocate sequential /30 (IPv4) or /126 (IPv6) overlay subnets for nodes matching the rule.
 
 Rule evaluation notes:
-* Rules are evaluated in list order; the first matching rule is used for each IP family.
+* Rules are evaluated in list order; the first matching rule is used for each IP family within the selected `config-common` entry.
 * IPv4 allocation uses the first matching rule with `super-cidr`.
 * IPv6 allocation uses the first matching rule with `super-cidr6`.
 * If no rule matches a node for a given IP family, no automatic CIDR is assigned for that family.
@@ -483,7 +516,7 @@ Rule evaluation notes:
 
 * **Type**: object
 * **Requirement**: mandatory
-* **Description**: Map from `node-name` to per-node configuration objects. Each node may override any field in `node-config-common` re-inserting the same field in the node object.
+* **Description**: Map from `node-name` to per-node configuration objects. Each node may override any field inherited from matching `node-config-common` rules by re-inserting the same field in the node object.
 
 ##### Per-Node Additional Fields
 

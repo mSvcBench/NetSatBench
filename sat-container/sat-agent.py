@@ -36,7 +36,6 @@ logging.basicConfig(level="INFO", format="%(asctime)s [%(levelname)s] %(message)
 log = logging.getLogger(__name__)
 
 # GLOBAL STATE
-LINK_STATE_CACHE = {} # Only used for the initial sync
 l3_flags = None
 my_config = None
 etcd_client = None

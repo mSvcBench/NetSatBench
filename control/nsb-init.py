@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 import argparse
+import copy
 import etcd3
+import ipaddress
 import json
+import logging
 import os
 import sys
-import ipaddress
-import logging
-import copy
 from itertools import islice
-from typing import Any, Dict, Mapping
-from pyparsing import Mapping
+from typing import Any, Mapping
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger("nsb-init")
@@ -86,14 +85,102 @@ def generate_ipv6_subnet(global_index: int, base_cidr6: str, new_prefix: int = 6
     except ValueError as e:
         return f"Error: {e}"
 
+def get_nested_value(data: dict[str, Any], dotted_key: str) -> Any:
+    value: Any = data
+    for key in dotted_key.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+        if value is None:
+            return None
+    return value
+
+def normalize_node_common_entries(node_common_cfg: Any) -> list[dict[str, Any]]:
+    if isinstance(node_common_cfg, list):
+        normalized_entries: list[dict[str, Any]] = []
+        for index, entry in enumerate(node_common_cfg):
+            if not isinstance(entry, dict):
+                log.warning(f"⚠️ Skipping node-config-common entry #{index}: expected object, got {type(entry).__name__}")
+                continue
+            match_key = entry.get("match-key")
+            match_value = entry.get("match-value")
+            config_common = entry.get("config-common")
+            if not match_key or "match-value" not in entry or not isinstance(config_common, dict):
+                log.warning(
+                    f"⚠️ Skipping node-config-common entry #{index}: requires match-key, match-value, and object config-common"
+                )
+                continue
+            normalized_entries.append({
+                "match-key": match_key,
+                "match-value": match_value,
+                "config-common": config_common,
+            })
+        return normalized_entries
+
+    if isinstance(node_common_cfg, dict):
+        return [{
+            "match-key": "any",
+            "match-value": True,
+            "config-common": node_common_cfg,
+        }]
+
+    if node_common_cfg:
+        log.warning(f"⚠️ Unsupported node-config-common type {type(node_common_cfg).__name__}, ignoring it.")
+    return []
+
+def node_matches_common_entry(node_cfg: dict[str, Any], common_entry: dict[str, Any]) -> bool:
+    if common_entry["match-key"] == "any":
+        return True
+    return get_nested_value(node_cfg, common_entry["match-key"]) == common_entry["match-value"]
+
+def build_super_cidr_rule_sets(common_entry: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    super_cidr_rules_v4: list[dict[str, Any]] = []
+    super_cidr_rules_v6: list[dict[str, Any]] = []
+
+    l3_common_cfg = common_entry["config-common"].get("L3-config", {})
+    if not isinstance(l3_common_cfg, dict):
+        return super_cidr_rules_v4, super_cidr_rules_v6
+
+    for index, supercidr_entry in enumerate(l3_common_cfg.get("auto-assign-super-cidr", [])):
+        if not isinstance(supercidr_entry, dict):
+            log.warning(
+                f"⚠️ Skipping auto-assign-super-cidr entry #{index} in node-config-common rule "
+                f"{common_entry.get('match-key')}={common_entry.get('match-value')}: expected object"
+            )
+            continue
+        match_key = supercidr_entry.get("match-key", "")
+        match_value = supercidr_entry.get("match-value", None)
+        super_cidr = supercidr_entry.get("super-cidr", "")
+        super_cidr6 = supercidr_entry.get("super-cidr6", "")
+        if match_key and match_value is not None and super_cidr:
+            super_cidr_rules_v4.append({
+                "match-key": match_key,
+                "match-value": match_value,
+                "next-index": 0,
+                "super-cidr": super_cidr,
+            })
+        if match_key and match_value is not None and super_cidr6:
+            super_cidr_rules_v6.append({
+                "match-key": match_key,
+                "match-value": match_value,
+                "next-index": 0,
+                "super-cidr6": super_cidr6,
+            })
+
+    return super_cidr_rules_v4, super_cidr_rules_v6
+
 def merge_node_common_config(config_data: dict) -> dict:
-    node_common_cfg = config_data.get("node-config-common", {})
+    node_common_entries = normalize_node_common_entries(config_data.get("node-config-common", {}))
     nodes_cfg = config_data.get("nodes", {})
     to_skip_keys = {"auto-assign-ips", "auto-assign-super-cidr"}
 
     merged_nodes_cfg = {}
     for name, node_cfg in nodes_cfg.items():
-        merged_nodes_cfg[name] = deep_merge(node_common_cfg, node_cfg, to_skip_keys)
+        merged_cfg: dict[str, Any] = {}
+        for common_entry in node_common_entries:
+            if node_matches_common_entry(node_cfg, common_entry):
+                merged_cfg = deep_merge(merged_cfg, common_entry["config-common"], to_skip_keys)
+        merged_nodes_cfg[name] = deep_merge(merged_cfg, node_cfg, to_skip_keys)
 
     return {**config_data, "nodes": merged_nodes_cfg}
 
@@ -123,6 +210,23 @@ def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any], to_skip_key
             out[k] = deep_merge(v, {}, to_skip_keys) if isinstance(v, dict) else copy.deepcopy(v)
 
     return out
+
+def get_full_config_path(config_file: str) -> str:
+    base, ext = os.path.splitext(config_file)
+    if not ext:
+        ext = ".json"
+    return f"{base}-full{ext}"
+
+def write_full_config(config_file: str, sat_config_data: dict) -> None:
+    full_config_path = get_full_config_path(config_file)
+    try:
+        with open(full_config_path, "w", encoding="utf-8") as f:
+            json.dump(sat_config_data, f, indent=2)
+            f.write("\n")
+        log.info(f"📝 Wrote expanded full satellite config to {full_config_path}")
+    except Exception as e:
+        log.error(f"❌ Failed to write full config file {full_config_path}: {e}")
+        sys.exit(1)
 
 
 # ==========================================
@@ -160,44 +264,21 @@ def apply_config_to_etcd(etcd, sat_config_data: dict, worker_config_data: dict) 
 def auto_ip_addressing(sat_config_data: dict) -> dict:
     sat_config_data_new = sat_config_data.copy()
     try:
-        def get_nested_value(data: dict[str, Any], dotted_key: str) -> Any:
-            value: Any = data
-            for key in dotted_key.split("."):
-                if not isinstance(value, dict):
-                    return None
-                value = value.get(key)
-                if value is None:
-                    return None
-            return value
-
-        # init for auto-assign-ips (v4 + v6)
-        super_cidr_rules_v4: list[dict[str, Any]] = []
-        super_cidr_rules_v6: list[dict[str, Any]] = []
-        node_common_cfg = sat_config_data_new.get("node-config-common", {})
+        node_common_entries = normalize_node_common_entries(sat_config_data_new.get("node-config-common", {}))
+        common_entry_rule_sets: list[dict[str, Any]] = []
         auto_assign_ip = False
-        if "L3-config" in node_common_cfg:
-            l3_common_cfg = node_common_cfg["L3-config"]
-            if "auto-assign-super-cidr" in l3_common_cfg:
-                auto_assign_ip = True
-                for supercidr_entry in l3_common_cfg["auto-assign-super-cidr"]:
-                    match_key = supercidr_entry.get("match-key", "")
-                    match_value = supercidr_entry.get("match-value", None)
-                    super_cidr = supercidr_entry.get("super-cidr", "")
-                    super_cidr6 = supercidr_entry.get("super-cidr6", "")
-                    if match_key and match_value is not None and super_cidr:
-                        super_cidr_rules_v4.append({
-                            "match-key": match_key,
-                            "match-value": match_value,
-                            "next-index": 0,
-                            "super-cidr": super_cidr,
-                        })
-                    if match_key and match_value is not None and super_cidr6:
-                        super_cidr_rules_v6.append({
-                            "match-key": match_key,
-                            "match-value": match_value,
-                            "next-index": 0,
-                            "super-cidr6": super_cidr6,
-                        })
+        for common_entry in node_common_entries:
+            l3_common_cfg = common_entry["config-common"].get("L3-config", {})
+            if not isinstance(l3_common_cfg, dict):
+                continue
+            super_cidr_rules_v4, super_cidr_rules_v6 = build_super_cidr_rule_sets(common_entry)
+            common_entry_rule_sets.append({
+                "common-entry": common_entry,
+                "auto-assign-ips": bool(l3_common_cfg.get("auto-assign-ips")),
+                "super-cidr-rules-v4": super_cidr_rules_v4,
+                "super-cidr-rules-v6": super_cidr_rules_v6,
+            })
+            auto_assign_ip = auto_assign_ip or bool(l3_common_cfg.get("auto-assign-ips"))
         
         # upload config to etcd and auto-assign IPs if enabled
         for key, value in sat_config_data_new.items():
@@ -210,17 +291,26 @@ def auto_ip_addressing(sat_config_data: dict) -> dict:
                     matched_string_v4 = "none"
                     matched_string_v6 = "none"
                     if auto_assign_ip:
+                        selected_common_entry_rule_set = next(
+                            (
+                                entry_rule_set
+                                for entry_rule_set in common_entry_rule_sets
+                                if node_matches_common_entry(node_cfg, entry_rule_set["common-entry"])
+                            ),
+                            None,
+                        )
                         matched_rule_v4 = None
                         matched_rule_v6 = None
-                        for rule in super_cidr_rules_v4:
-                            if get_nested_value(node_cfg, rule["match-key"]) == rule["match-value"]:
-                                matched_rule_v4 = rule
-                                break
+                        if selected_common_entry_rule_set and selected_common_entry_rule_set["auto-assign-ips"]:
+                            for rule in selected_common_entry_rule_set["super-cidr-rules-v4"]:
+                                if get_nested_value(node_cfg, rule["match-key"]) == rule["match-value"]:
+                                    matched_rule_v4 = rule
+                                    break
 
-                        for rule in super_cidr_rules_v6:
-                            if get_nested_value(node_cfg, rule["match-key"]) == rule["match-value"]:
-                                matched_rule_v6 = rule
-                                break
+                            for rule in selected_common_entry_rule_set["super-cidr-rules-v6"]:
+                                if get_nested_value(node_cfg, rule["match-key"]) == rule["match-value"]:
+                                    matched_rule_v6 = rule
+                                    break
 
                         # ---- IPv4 ----
                         if "cidr" not in l3_cfg and matched_rule_v4:
@@ -303,6 +393,11 @@ def main() -> int:
         default="INFO",
         help="Logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--write-full-config",
+        action="store_true",
+        help="Write an expanded '<config>-full.json' file after merge, scheduling, and IP assignment.",
+    )
     args = parser.parse_args()
     log.setLevel(args.log_level.upper())
 
@@ -367,6 +462,8 @@ def main() -> int:
     sat_config_data = merge_node_common_config(sat_config_data)
     sat_config_data, worker_confing_data = scheduler_impl.schedule_workers(sat_config_data, worker_confing_data)
     sat_config_data = auto_ip_addressing(sat_config_data)
+    if args.write_full_config:
+        write_full_config(config_file, sat_config_data)
     apply_config_to_etcd(etcd, sat_config_data, worker_confing_data)
     return 0
 

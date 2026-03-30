@@ -1,23 +1,81 @@
 {
-  "node-config-common": {
-    "type": "undefined",
-    "n_antennas": 2,
-    "metadata": {},  
-    "image": "msvcbench/sat-container:latest",
-    "sidecars": [],
-    "cpu-request": "100m",
-    "mem-request": "200MiB",
-    "L3-config": {
-      "enable-netem"  : true,
-      "enable-routing" : false,
-      "auto-assign-ips": true,
-      "auto-assign-super-cidr": [
-          {"match-key":"type","match-value":"satellite","super-cidr6":"2001:db8:100::/48"},
-          {"match-key":"type","match-value":"gateway","super-cidr6":"2001:db8:101::/48"},
-          {"match-key":"type","match-value":"user","super-cidr6":"2001:db8:102::/48"}
-      ]
+  "node-config-common": [
+    {
+      "match-key": "type",
+      "match-value": "satellite",
+      "config-common": {
+        "type": "undefined",
+        "n_antennas": 2,
+        "metadata": {},
+        "image": "msvcbench/sat-container:latest",
+        "sidecars": [],
+        "cpu-request": "100m",
+        "mem-request": "200MiB",
+        "L3-config": {
+          "enable-netem": true,
+          "enable-routing": false,
+          "auto-assign-ips": true,
+          "auto-assign-super-cidr": [
+            {
+              "match-key": "type",
+              "match-value": "satellite",
+              "super-cidr6": "2001:db8:100::/48"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "match-key": "type",
+      "match-value": "gateway",
+      "config-common": {
+        "type": "undefined",
+        "n_antennas": 2,
+        "metadata": {},
+        "image": "msvcbench/sat-container:latest",
+        "sidecars": [],
+        "cpu-request": "100m",
+        "mem-request": "200MiB",
+        "L3-config": {
+          "enable-netem": true,
+          "enable-routing": false,
+          "auto-assign-ips": true,
+          "auto-assign-super-cidr": [
+            {
+              "match-key": "type",
+              "match-value": "gateway",
+              "super-cidr6": "2001:db8:101::/48"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "match-key": "type",
+      "match-value": "user",
+      "config-common": {
+        "type": "undefined",
+        "n_antennas": 2,
+        "metadata": {},
+        "image": "msvcbench/sat-container:latest",
+        "sidecars": [],
+        "cpu-request": "100m",
+        "mem-request": "200MiB",
+        "L3-config": {
+          "enable-netem": true,
+          "enable-routing": false,
+          "auto-assign-ips": true,
+          "auto-assign-super-cidr": [
+            {
+              "match-key": "type",
+              "match-value": "user",
+              "super-cidr6": "2001:db8:102::/48"
+            }
+          ]
+        }
+      }
     }
-  },
+  ],
   "epoch-config": {
     "epoch-dir": "examples/10nodes/epochs-or",
     "file-pattern": "NetSatBench-epoch*.json"

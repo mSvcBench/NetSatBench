@@ -115,11 +115,14 @@ For each node defined in the configuration file, the script:
 
 - Automatically selects worker hosts based on available resources.
 - Automatically assigns overlay IP addresses and network masks to each node.
+- Merges each node with the matching `node-config-common` entries before scheduling and IP assignment.
 - Stores per-node static configuration data in **Etcd** for later consumption
   by other control scripts (e.g., `control/nsb-deploy.py`) and by
   `sat-agent` instances running inside the node containers
 
 The stored metadata doen't include any information on dynamic satellite links, which are instead managed at runtime by the `control/nsb-run.py` script based on the epoch files.
+
+If `--write-full-config` is provided, the script also writes an expanded configuration file next to the input config. The output file name is derived from the input one by appending the `-full` suffix before `.json`, for example `sat-config.json` -> `sat-config-full.json`. The generated file keeps the original top-level structure and contains the effective per-node configuration after common-parameter merge, worker scheduling, and IP assignment.
 
 
 ### Usage <!-- omit in toc -->
@@ -129,6 +132,12 @@ Example invocation:
 ```bash
 python3 nsb.py init \
   --config ./examples/10nodes/sat-config.json
+```
+
+```bash
+python3 nsb.py init \
+  --config ./examples/10nodes/sat-config.json \
+  --write-full-config
 ```
 
 Run with `--help` to see the full list of available options.
