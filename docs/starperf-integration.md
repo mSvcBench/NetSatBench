@@ -11,8 +11,8 @@
   - [Overview](#overview)
   - [Installation](#installation)
   - [Workflow](#workflow)
-  - [NetSatBenchGenerate](#netsatbenchgenerate)
-  - [NetSatBenchExport](#netsatbenchexport)
+  - [StarPerf Generate](#starperf-generate)
+  - [StarPerf Export](#starperf-export)
   - [Example](#example)
     - [Constellation Definition](#constellation-definition)
     - [Ground Stations Definition](#ground-stations-definition)
@@ -37,15 +37,24 @@ git submodule update --init --recursive
 
 
 ## Workflow
-1. move to the `generators/StarPerf_Simulator` directory.
-2. Define the satellite constellation via XML StarPerf_Simulator input formats and store it in the `/config/XML_constellation/<constellation_name>.XML`
-3. Define users and ground station via XML file as per StarPerf_Simulator specifications and store them into `/config/users/<constellation_name>.XML` and `/config/ground_stations/<constellation_name>.XML` respectively.
-4. Run the `kits/NetSatBench/NetSatBenchGenerate.py` plugin to generate the extended H5 file containing the snapshots of the satellite system with delay, rate and loss values of all links. The file is stored in `/data/XML_constellation/<constellation_name>_ext.h5`
-5. Use the generated H5 file to create epoch files for NetSatBench emulation with `kits/NetSatBench/NetSatBenchExport.py`
+1. Define the satellite constellation via XML StarPerf_Simulator input formats and store it in `generators/StarPerf_Simulator/config/XML_constellation/<constellation_name>.xml`.
+2. Define users and ground stations via XML files as per StarPerf_Simulator specifications and store them in `generators/StarPerf_Simulator/config/users/<constellation_name>.xml` and `generators/StarPerf_Simulator/config/ground_stations/<constellation_name>.xml`.
+3. Run `python3 nsb.py starperf-generate ...` from the NetSatBench repository root to generate the extended H5 file containing the snapshots of the satellite system with delay, rate, and loss values of all links. The file is stored under `generators/StarPerf_Simulator/data/...`.
+4. Use the generated H5 file to create epoch files for NetSatBench emulation with `python3 nsb.py starperf-export ...`.
+5. Optionally generate static Cesium output with `python3 nsb.py starperf-visualize ...` or launch the MATLAB desktop visualizer with `python3 nsb.py starperf-matlab-visualize ...`.
 
-## NetSatBenchGenerate
+The `nsb.py` integration automatically runs the StarPerf tools from `generators/StarPerf_Simulator/`. Specifically, the command mapping is:
 
-The `NetSatBenchGenerate.py` script is responsible for generating the H5 file containing the snapshots of the satellite system based on the XML constellation, users and ground stations definitions. It processes the input XML files, simulates the satellite system performance using StarPerf_Simulator, and outputs an H5 file that can be used for further processing and emulation in NetSatBench.
+| `nsb.py` command | StarPerf entrypoint |
+| --- | --- |
+| `python3 nsb.py starperf-generate` | `generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchGenerate.py` |
+| `python3 nsb.py starperf-export` | `generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchExport.py` |
+| `python3 nsb.py starperf-visualize` | `generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchVisualizer.py` |
+| `python3 nsb.py starperf-matlab-visualize` | `generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchMatlabVisualizer.m` via `utils/nsb-starperf-matlab-visualize.py` |
+
+## StarPerf Generate
+
+The recommended entrypoint for H5 generation is `python3 nsb.py starperf-generate`. This command wraps StarPerf's NetSatBench generation tool and produces the H5 file containing the snapshots of the satellite system based on the XML constellation, users, and ground station definitions. It processes the input XML files, simulates the satellite system performance using StarPerf_Simulator, and outputs an H5 file that can be used for further processing and emulation in NetSatBench.
 
 The script extend the original StarPerf_Simulator functionality by adding support for user-defined ground stations and users in the H5 file and adding rate and loss values to the generated snapshots, in addition to delay values. Addtional informatinon in the H5 file include the configuratin used to generate the H5 file and the type of nodes (sat,gs,usr) for each node in the system.
 
@@ -66,20 +75,20 @@ The H5 group structure of the generated H5 file is as follows:
     - snapshot_Y: [1..n_tot,1..n_tot] # square matrix with loss values in percentage of all links between nodes (i,j) in snapshot n. Y of shell n. X.
 ```
 Whe a delay value (i,j) is greatehr than zero, as for StarPerf specification, there is a link between the object i and j in the snapshot.
-The existence of inter-satellite-links (ISLs) is managed by ISL connectivity plugin of StarPerf_Simulator, passed as argument to `NetSatBenchGenerate.py`.
-The existence of links for ground stations and users is managed by `NetSatBenchGenerate.py` in two steps:
-- first, all possible links are generated based on the minimum elevation angle passed passed as input to `NetSatBenchGenerate.py` 
-- second, the generated set of possible links is modified according to antenna constraints by extended antenna plugin used by `NetSatBenchGenerate.py` and passed as argument.
+The existence of inter-satellite-links (ISLs) is managed by the ISL connectivity plugin of StarPerf_Simulator, passed as an argument to `python3 nsb.py starperf-generate`.
+The existence of links for ground stations and users is managed by `python3 nsb.py starperf-generate` in two steps:
+- first, all possible links are generated based on the minimum elevation angle passed as input
+- second, the generated set of possible links is modified according to antenna constraints by the selected extended antenna plugin
 
-The compuation of rate and loss values for any link is based on extended loss and rate plugins used by the `NetSatBenchGenerate.py` script. 
+The compuation of rate and loss values for any link is based on the extended loss and rate plugins used by `python3 nsb.py starperf-generate`. 
 
 The extended plugins are contained in the [ext_connectivity_plugin](generators/StarPerf_Simulator/kits/NetSatBench/ext_connectivity_plugin) directory. For their doculmentation, please refer to the docstrings in the dummy `pass_antenna, pass_loss, pass_rate` plugin files.
 
-Refer to the `NetSatBenchGenerate.py --help` script for more details on the input arguments and usage.
+Refer to `python3 nsb.py starperf-generate --help` for more details on the input arguments and usage.
 
-## NetSatBenchExport
-The `NetSatBenchExport.py` script is responsible for generating the `sat-config.json` and epoch files for NetSatBench emulation based on the extended H5 file generated by `NetSatBenchGenerate.py`. It processes the H5 file, extracts the relevant snapshots, and creates epoch files that can be used for emulation in NetSatBench. To generate the `sat-config.json` file, the script uses a common configuration file (`sat-config-common.json`) that contains the `node-config-common` section to be used in the final `sat-config.json` file.
-Refer to the `NetSatBenchExport.py --help` script for more details on the input arguments and usage.
+## StarPerf Export
+The recommended entrypoint for exporting epoch files is `python3 nsb.py starperf-export`. It generates the `sat-config.json` and epoch files for NetSatBench emulation based on the extended H5 file generated by `python3 nsb.py starperf-generate`. To generate the `sat-config.json` file, the export step uses a common configuration file (`sat-config-common.json`) that contains the `node-config-common` section to be used in the final `sat-config.json` file.
+Refer to `python3 nsb.py starperf-export --help` for more details on the input arguments and usage.
 
 
 ## Example
@@ -213,20 +222,20 @@ This XML file describes 6 users located in Rome (Italy), London (UK), Paris (Fra
 ### H5 Generation
 To generate the H5 file with the snapshots of the satellite system, run the following command:
 ```bash
-python3 kits/NetSatBench/NetSatBenchGenerate.py \
---constellation OneWeb \
---dT 15 \
+python3 nsb.py starperf-generate \
+--constellation-name OneWeb \
+--dT 5 \
 --isl-connectivity-plugin positive_Grid \
---gs-antenna-plugin retain_antenna \
---user-antenna-plugin retain_antenna \
+--gs-antenna-plugin pass_antenna \
+--user-antenna-plugin pass_antenna \
 --isl-rate-plugin pass_rate \
---gs-rate-plugin pass_rate \
---user-rate-plugin pass_rate \
+--gs-rate-plugin slant_rate \
+--user-rate-plugin slant_rate \
 --isl-loss-plugin pass_loss \
 --gs-loss-plugin pass_loss \
 --user-loss-plugin pass_loss \
---isl-rate 100 \
---gs-rate 100 \
+--isl-rate 400 \
+--gs-rate 200 \
 --user-rate 50 \
 --loss-isl 0.0 \
 --loss-gs 0.0 \
@@ -234,20 +243,24 @@ python3 kits/NetSatBench/NetSatBenchGenerate.py \
 --include-ground-stations \
 --include-users \
 --minimum-elevation 25 \
---duration 60 \
+--duration 3600 \
 --overwrite
 ```
-This command generates an H5 file with snapshots of the OneWeb constellation, including ground stations and users, with a timeslot interval of 15 seconds and a total duration of 60 seconds.
-The ISL connectivity is managed by the `positive_Grid` plugin (+Grid Inter-Satellite Link model), while the antenna limitations, rate and loss characteristics for links are managed by the `retain_antenna`, `pass_rate` and `pass_loss` plugins respectively. 
-In this case, all visible ground station and user links over minimum elevation angle are possible candidate, and the antenna plugin prefers to retain old links for limitation in the number of antennas (see also theplugin documentation within the python files in `generators/StarPerf_Simulator/kits/NetSatBench/ext_connectivity_plugin`). 
-The pass_rate and pass_loss plugins are used to assign default rate and loss values to all links.
-The default rate values are set to 100 Mbit/s for ISL and ground station links, and 50 Mbit/s for user links, while the default loss values are set to 0% for all links. The minimum elevation angle for visibility is set to 25 degrees, and existing information in the output H5 file will be overwritten if they already exist.
+
+This command generates an H5 file with snapshots of the OneWeb constellation, including ground stations and users, with a timeslot interval of 5 seconds and a total simulation duration of 3600 seconds.
+
+ISL connectivity is managed by the `positive_Grid` plugin (+Grid inter-satellite link model). Antenna constraints, link rate, and packet loss are handled by the `pass_antenna`, `slant_rate`, and `pass_loss` plugins, respectively.
+
+In this configuration, all satellite-to-ground-station and satellite-to-user links above the minimum elevation threshold are considered valid candidates by the `pass_antenna` plugin. The `slant_rate` plugin reduces satellite-to-user and satellite-to-gateway bitrates from their default values of 50 Mbps and 200 Mbps, respectively, as a function of elevation angle. ISL links use the default rate of 400 Mbps through the `pass_rate` model. The `pass_loss` plugin assigns a loss value of `0.0` to all links.
+
+The minimum elevation angle for satellite-to-ground visibility is set to 25 degrees, and existing information in the output H5 file will be overwritten if it already exists.
+
 
 ### Sat-config and Epoch File Generation
 To generate the `sat-config.json` and epoch files for NetSatBench emulation based on the generated H5 file, run the following command:
 
 ```bash
-python3 kits/NetSatBench/NetSatBenchExport.py \
+python3 nsb.py starperf-export \
 --h5 data/XML_constellation/OneWeb_ext.h5 \
 --sat-config-common kits/NetSatBench/sat-config-common.json
 ```
@@ -256,13 +269,15 @@ This will generate the `sat-config.json` file and epoch files for NetSatBench em
 directory of the NetSatBench repository.
 
 ## Dynamic system visualization with MATLAB
-The `NetSatBenchMatlabVisualizer.m` script visualizes a selected shell directly in MATLAB by loading satellite trajectories from the generated HDF5 file and pairing them with the StarPerf XML constellation, user, and gateway definitions. It can optionally create HDF5-driven user, gateway access, ISL links (access objects) inside a `satelliteScenario` Matlab object.
+The recommended entrypoint for MATLAB visualization is `python3 nsb.py starperf-matlab-visualize`. It launches the MATLAB visualizer for a selected shell by loading satellite trajectories from the generated HDF5 file and pairing them with the StarPerf XML constellation, user, and gateway definitions. It can optionally create HDF5-driven user, gateway access, ISL links (access objects) inside a `satelliteScenario` Matlab object.
+
+NetSatBench exposes this visualizer through `python3 nsb.py starperf-matlab-visualize ...`. The wrapper launches a normal MATLAB desktop session because the visualization requires desktop UI support for `satelliteScenarioViewer`.
 
 Inputs:
 - constellation XML file
 - user XML file
 - gateway XML file
-- extended HDF5 file generated by `NetSatBenchGenerate.py`
+- extended HDF5 file generated by `python3 nsb.py starperf-generate`
 
 Key name-value parameters:
 - `"SelectedShell"` to choose which shell to visualize
@@ -270,7 +285,7 @@ Key name-value parameters:
 - `"StartTime"`, `"StopTime"`, and `"SampleTime"` to control the MATLAB scenario timing
 - `"CacheFile"` and `"UseCache"` to reuse cached visualization data between runs
 
-Example:
+Direct MATLAB example:
 
 ```matlab
 NetSatBenchMatlabVisualizer("../../config/XML_constellation/OneWeb.xml", ...
@@ -282,8 +297,27 @@ NetSatBenchMatlabVisualizer("../../config/XML_constellation/OneWeb.xml", ...
 
 This opens a MATLAB `satelliteScenarioViewer`, animates the selected shell, and prints a summary of the loaded constellation, terminals, and link sets. Only user links are added in this example, and the generated cache file is stored in `matlab_cache/OneWeb.mat` for reuse in future anumations.
 
+Equivalent `nsb.py` example:
+
+```bash
+python3 nsb.py starperf-matlab-visualize \
+  --constellation-name OneWeb \
+  --h5 data/XML_constellation/OneWeb_ext.h5 \
+  --add-user-access \
+  --cache-file matlab_cache/OneWeb.mat
+```
+
+If MATLAB is not on your `PATH`, pass the executable explicitly:
+
+```bash
+python3 nsb.py starperf-matlab-visualize \
+  --matlab-path /usr/local/MATLAB/R2024b/bin/matlab \
+  --constellation-name OneWeb \
+  --h5 data/XML_constellation/OneWeb_ext.h5
+```
+
 ## Static system visualization with Cesium
-The `NetSatBenchVisualizer.py` script generates a Cesium HTML view of a constellation using the StarPerf XML configuration files.  
+The recommended entrypoint for Cesium visualization is `python3 nsb.py starperf-visualize`. It generates a Cesium HTML view of a constellation using the StarPerf XML configuration files.  
 It renders:
 - satellites (as 3D points),
 - ground stations (from `config/ground_stations/<constellation>.xml`),
@@ -315,7 +349,7 @@ Default output directory: `./visualization/CesiumAPP`.
 - The `--minimum-elevation` parameter (degree) is used to compute satellite coverage circles as a function of the minimum elevation angles used to determine satellite visibility from the earth.
   
 ### CLI arguments <!-- omit in toc -->
-Run `python3 kits/NetSatBench/NetSatBenchVisualizer.py --help` for full details. Main options:
+Run `python3 nsb.py starperf-visualize --help` for full details. Main options:
 - `--constellation-name` (required)
 - `--minimum-elevation` (default `25.0`)
 - `--outdir` (default `./visualization/CesiumAPP`)
@@ -326,7 +360,7 @@ Run `python3 kits/NetSatBench/NetSatBenchVisualizer.py --help` for full details.
 
 ### Example <!-- omit in toc -->
 ```bash
-python3 kits/NetSatBench/NetSatBenchVisualizer.py \
+python3 nsb.py starperf-visualize \
   --constellation-name OneWeb \
   --minimum-elevation 25 \
   --satellite-color RED \
