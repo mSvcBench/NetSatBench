@@ -45,6 +45,8 @@ heartbeat_failures = 0
 heartbeat_lock = threading.Lock()
 MAX_UDP_RECV_BYTES = 65535
 report_file = None  # file handle for detailed report output, if enabled by args
+measurement_top_n_links = 3
+select_measurement_report_links = None # function handle for selecting best link to send in the measurement report
 
 # Status not_registered, registration_in_progress, registered, handover_in_progress
 status = "not_registered" # initial status before registration
@@ -146,7 +148,7 @@ def send_registration_request_udp(
     user_ipv6: str,
     user_callback_port: int,
     init_sat_dev: str, 
-    user_links_db: str,
+    user_links_db: Dict[str, Dict[str, Any]],
 ) -> None:
     msg: Dict[str, Any] = {
         "type": "registration_request",
@@ -156,6 +158,14 @@ def send_registration_request_udp(
         "callback_port": user_callback_port,
         "user_links_db": user_links_db,
     }
+    report_size_bytes = len(json.dumps(user_links_db).encode("utf-8"))
+    payload_size_bytes = len(json.dumps(msg).encode("utf-8"))
+    logging.info(
+        "📏 Registration link report size: %d bytes across %d link(s); UDP JSON payload: %d bytes",
+        report_size_bytes,
+        len(user_links_db),
+        payload_size_bytes,
+    )
     send_udp_json(grd_ipv6, grd_port, msg)
 
 
@@ -171,6 +181,14 @@ def send_link_report_udp(
         "user_dev": user_dev,
         "user_links_db": user_links_db,
     }
+    report_size_bytes = len(json.dumps(user_links_db).encode("utf-8"))
+    payload_size_bytes = len(json.dumps(msg).encode("utf-8"))
+    logging.info(
+        "📏 Measurement link report size: %d bytes across %d link(s); UDP JSON payload: %d bytes",
+        report_size_bytes,
+        len(user_links_db),
+        payload_size_bytes,
+    )
     send_udp_json(grd_ipv6, grd_port, msg)
 
 def send_hello_udp(
@@ -367,7 +385,13 @@ def resolve_ipv6_from_hosts(hostname: str) -> str:
         return ipv6
     raise RuntimeError(f"❌ Could not derive IPv6 for endpoint '{hostname}' from /etc/hosts")
 
-def build_links_report() -> Dict[str, Any]:
+def build_link_registration_report(selected_dev: str | None = None) -> Dict[str, Any]:
+    if selected_dev:
+        link_info = links_db.get(selected_dev, {})
+        if link_info.get("status") == "available":
+            return {selected_dev: link_info}
+        return {}
+
     sat_report = {}
     for link_dev, link_info in links_db.items():
         if link_info.get("status") == "available":
@@ -377,8 +401,9 @@ def build_links_report() -> Dict[str, Any]:
 
 def build_measurement_links_report() -> Dict[str, Dict[str, Any]]:
     report: Dict[str, Dict[str, Any]] = {}
-    for link_dev, link_info in links_db.items():
-        if link_info.get("status") != "available":
+    for link_dev in select_measurement_report_links(current_dev, measurement_top_n_links):
+        link_info = links_db.get(link_dev, {})
+        if not link_info:
             continue
         report[link_dev] = {
             "status": link_info.get("status"),
@@ -391,6 +416,32 @@ def build_measurement_links_report() -> Dict[str, Dict[str, Any]]:
             "remote_endpoint_name": link_info.get("remote_endpoint_name"),
         }
     return report
+
+
+def remaining_link_duration_s(link_info: Dict[str, Any]) -> float:
+    return link_info.get("last_duration", 0) - (time.time() - link_info.get("last_created", 0))
+
+
+def select_measurement_report_links_lifetime(selected_dev: str | None, top_n: int) -> List[str]:
+    chosen_links: List[str] = []
+
+    if selected_dev and selected_dev in links_db:
+        chosen_links.append(selected_dev)
+
+    available_links = [
+        (link_dev, link_info)
+        for link_dev, link_info in links_db.items()
+        if link_info.get("status") == "available" and link_dev != selected_dev
+    ]
+    available_links.sort(
+        key=lambda item: remaining_link_duration_s(item[1]),
+        reverse=True,
+    )
+
+    for link_dev, _link_info in available_links[: max(top_n, 0)]:
+        chosen_links.append(link_dev)
+
+    return chosen_links
 
 
 def write_report_event(event_type: str, strategy_type: str, grd_name: str, sat_name: str) -> None:
@@ -526,14 +577,14 @@ def handle_registration_request() -> None:
                 )
             ip_cmd = build_srv6_route_replace(grd_ipv6, init_sat_ipv6, init_dev)
             run_cmd(ip_cmd)
-            links_report = build_links_report()
+            links_report = build_link_registration_report(init_dev)
             send_registration_request_udp(
                 grd_ipv6=grd_ipv6,
                 grd_port=grd_port,
                 user_ipv6=local_ipv6,
                 user_callback_port=user_callback_port,
                 init_sat_dev=init_dev,
-                user_links_db=json.dumps(links_report),
+                user_links_db=links_report,
             )
             current_dev = init_dev
             start_registration_timeout()
@@ -866,7 +917,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
 #   ENTRYPOINT
 # ----------------------------
 def main() -> None:
-    global chose_reg_device, grd_ipv6, grd_port, grd_id, user_callback_port, local_ipv6, etcd_client, link_setup_delay_s, reg_metadata, registration_accept_timeout_s, handover_command_timeout_s, link_duration_initial_value_s, heartbeat_interval_s, heartbeat_max_failures, report_file
+    global chose_reg_device, grd_ipv6, grd_port, grd_id, user_callback_port, local_ipv6, etcd_client, link_setup_delay_s, reg_metadata, registration_accept_timeout_s, handover_command_timeout_s, link_duration_initial_value_s, heartbeat_interval_s, heartbeat_max_failures, report_file, measurement_top_n_links, select_measurement_report_links
     
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="::")
@@ -877,6 +928,8 @@ def main() -> None:
     ap.add_argument("--registration-timeout", type=float, default=3.0, help="seconds to wait for registration_accept before retrying registration")
     ap.add_argument("--link-setup-delay", type=float, default=3, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
     ap.add_argument("--link-duration-initial-value", type=float, default=4*60, help="Initial value in seconds for the duration of new links, default: 4min)")
+    ap.add_argument("--measurement-top-n-links-strategy", default="lifetime", help="Strategy selecting best available links to include in measurement reports in addition to current_dev (default : lifetime")
+    ap.add_argument("--measurement-top-n-links", type=int, default=3, help="Number of best available links to include in measurement reports in addition to current_dev")
     ap.add_argument("--report", action="store_true", help="Enable detailed reporting of internal state for debugging")
     ap.add_argument("--log-level", default="INFO", help="Logging level (e.g., DEBUG, INFO, WARNING)")
     args = ap.parse_args()
@@ -934,7 +987,13 @@ def main() -> None:
     registration_accept_timeout_s = args.registration_timeout
     link_setup_delay_s = args.link_setup_delay
     link_duration_initial_value_s = args.link_duration_initial_value
-    chose_reg_device = lifetime_strategy
+    measurement_top_n_links = args.measurement_top_n_links
+    if args.measurement_top_n_links_strategy == "lifetime":
+        chose_reg_device = lifetime_strategy
+        select_measurement_report_links = select_measurement_report_links_lifetime
+    else:
+        logging.error(f"❌ Link selection strategy {args.measurement_top_n_links_strategy} not supported")
+        sys.exit(1) 
     reg_metadata = {}
 
     if args.report:
