@@ -162,7 +162,7 @@ def send_registration_request_udp(
     }
     report_size_bytes = len(json.dumps(user_links_db).encode("utf-8"))
     payload_size_bytes = len(json.dumps(msg).encode("utf-8"))
-    logging.info(
+    logging.debug(
         "📏 Registration link report size: %d bytes across %d link(s); UDP JSON payload: %d bytes",
         report_size_bytes,
         len(user_links_db),
