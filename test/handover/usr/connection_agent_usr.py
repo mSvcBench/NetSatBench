@@ -35,6 +35,7 @@ DEV_RE = re.compile(r"\bdev\s+([^\s]+)\b")
 VIA_RE = re.compile(r"\bvia\s+([^\s]+)\b")
 node_name = os.getenv("NODE_NAME")
 KEY_LINKS_PREFIX = f"/config/links/{node_name}/"
+KEY_NODES_PREFIX = "/config/nodes/"
 link_setup_delay_s = 0.2 # estimated time needed by sat-agent to setup relevat routes
 registration_accept_timeout_s = None
 reporting_period_s = 3.3 # periodic check interval for handover decision 
@@ -45,8 +46,9 @@ heartbeat_failures = 0
 heartbeat_lock = threading.Lock()
 MAX_UDP_RECV_BYTES = 65535
 report_file = None  # file handle for detailed report output, if enabled by args
-measurement_top_n_links = 3
+measurement_top_n_links = 5
 select_measurement_report_links = None # function handle for selecting best link to send in the measurement report
+satellite_nodes_db: Dict[str, Dict[str, Any]] = {}
 
 # Status not_registered, registration_in_progress, registered, handover_in_progress
 status = "not_registered" # initial status before registration
@@ -183,11 +185,16 @@ def send_link_report_udp(
     }
     report_size_bytes = len(json.dumps(user_links_db).encode("utf-8"))
     payload_size_bytes = len(json.dumps(msg).encode("utf-8"))
-    logging.info(
-        "📏 Measurement link report size: %d bytes across %d link(s); UDP JSON payload: %d bytes",
+    reported_sats = []
+    for link_dev, link_info in user_links_db.items():
+        if link_info.get("status") == "available":
+            reported_sats.append(link_info.get("remote_endpoint_name", "unknown"))
+    logging.debug(
+        "📏 Measurement link report size: %d bytes across %d link(s); UDP JSON payload: %d bytes; Reported satellites: %s",
         report_size_bytes,
         len(user_links_db),
         payload_size_bytes,
+        ", ".join(reported_sats) if reported_sats else "-",
     )
     send_udp_json(grd_ipv6, grd_port, msg)
 
@@ -422,24 +429,78 @@ def remaining_link_duration_s(link_info: Dict[str, Any]) -> float:
     return link_info.get("last_duration", 0) - (time.time() - link_info.get("last_created", 0))
 
 
-def select_measurement_report_links_lifetime(selected_dev: str | None, top_n: int) -> List[str]:
+def select_measurement_report_links_grid_lifetime(selected_dev: str | None, top_n: int) -> List[str]:
     chosen_links: List[str] = []
 
     if selected_dev and selected_dev in links_db:
         chosen_links.append(selected_dev)
 
-    available_links = [
-        (link_dev, link_info)
-        for link_dev, link_info in links_db.items()
-        if link_info.get("status") == "available" and link_dev != selected_dev
-    ]
-    available_links.sort(
+    user_sat = links_db.get(selected_dev, {}).get("remote_endpoint_name", "") if selected_dev else ""
+    if not user_sat:
+        return chosen_links
+
+    try:
+        user_sat_orbit, _user_sat_num_in_orbit = get_satellite_orbit_num(user_sat)
+    except Exception as e:
+        logging.warning("⚠️ Could not derive grid-plus neighbors for %s: %s", user_sat, e)
+        return chosen_links
+
+    user_shell_config = satellite_nodes_db.get(user_sat, {}).get("shell_config", {})
+    total_orbits = user_shell_config.get("number_of_orbit", 0)
+    if not total_orbits:
+        return chosen_links
+
+    left_orbit = user_sat_orbit - 1 if user_sat_orbit > 1 else total_orbits
+    right_orbit = user_sat_orbit + 1 if user_sat_orbit < total_orbits else 1
+
+    same_orbit_candidates: List[Tuple[str, Dict[str, Any]]] = []
+    candidate_links_left_orbit: List[Tuple[str, Dict[str, Any]]] = []
+    candidate_links_right_orbit: List[Tuple[str, Dict[str, Any]]] = []
+    for link_dev, link_info in links_db.items():
+        if link_dev == selected_dev or link_info.get("status") != "available":
+            continue
+        remote_sat = link_info.get("remote_endpoint_name", "")
+        if not remote_sat:
+            continue
+        try:
+            sat_orbit, _sat_num_in_orbit = get_satellite_orbit_num(remote_sat)
+        except Exception:
+            continue
+
+        if sat_orbit == user_sat_orbit:
+            same_orbit_candidates.append((link_dev, link_info))
+        elif sat_orbit == left_orbit:
+            candidate_links_left_orbit.append((link_dev, link_info))
+        elif sat_orbit == right_orbit:
+            candidate_links_right_orbit.append((link_dev, link_info))
+
+    same_orbit_candidates.sort(
+        key=lambda item: remaining_link_duration_s(item[1]),
+        reverse=True,
+    )
+    candidate_links_left_orbit.sort(
+        key=lambda item: remaining_link_duration_s(item[1]),
+        reverse=True,
+    )
+    candidate_links_right_orbit.sort(
         key=lambda item: remaining_link_duration_s(item[1]),
         reverse=True,
     )
 
-    for link_dev, _link_info in available_links[: max(top_n, 0)]:
-        chosen_links.append(link_dev)
+    # Strategy requested:
+    # - best two from same orbit
+    # - best one from left orbit
+    # - best one from right orbit
+    extra_candidates: List[str] = []
+    extra_candidates.extend([link_dev for link_dev, _ in same_orbit_candidates[:2]])
+    extra_candidates.extend([link_dev for link_dev, _ in candidate_links_left_orbit[:1]])
+    extra_candidates.extend([link_dev for link_dev, _ in candidate_links_right_orbit[:1]])
+
+    max_total = max(top_n, 0)
+    remaining_slots = max(max_total - len(chosen_links), 0)
+    for link_dev in extra_candidates[:remaining_slots]:
+        if link_dev not in chosen_links:
+            chosen_links.append(link_dev)
 
     return chosen_links
 
@@ -464,10 +525,65 @@ def latilong_distance(lat1, long1, lat2, long2) -> float:
     surface_distance = R * c
     return surface_distance
 
+def get_satellite_orbit_num(sat_name: str) -> Tuple[int,int]:
+    satellite_metadata = satellite_nodes_db.get(sat_name, {})
+    sat_config = satellite_metadata.get("sat_config", {})
+    sat_orbit = sat_config.get("sat_orbit")
+    sat_num_in_orbit = sat_config.get("sat_num_in_orbit")
+    if sat_orbit is None or sat_num_in_orbit is None:
+        raise RuntimeError(f"Satellite '{sat_name}' has no sat_orbit or sat_num_in_orbit metadata")
+    return int(sat_orbit),int(sat_num_in_orbit)
 
 # ----------------------------
 #   MAIN LOGIC
 # ----------------------------
+
+def preload_satellite_nodes_db_from_etcd() -> None:
+    loaded = 0
+    skipped = 0
+    logging.info("📥 Preloading satellite node metadata from Etcd prefix %s", KEY_NODES_PREFIX)
+    try:
+        for value, metadata in etcd_client.get_prefix(KEY_NODES_PREFIX):
+            if not value:
+                skipped += 1
+                continue
+            try:
+                key = metadata.key.decode() if metadata and metadata.key else ""
+                node_name_from_key = key.split("/")[-1] if key else ""
+                node_payload = json.loads(value.decode())
+
+                if (
+                    isinstance(node_payload, dict)
+                    and node_name_from_key in node_payload
+                    and isinstance(node_payload[node_name_from_key], dict)
+                ):
+                    node_payload = node_payload[node_name_from_key]
+
+                if not isinstance(node_payload, dict):
+                    skipped += 1
+                    continue
+                if node_payload.get("type") != "satellite":
+                    skipped += 1
+                    continue
+
+                satellite_name = node_name_from_key or node_payload.get("name")
+                if not satellite_name:
+                    skipped += 1
+                    continue
+
+                satellite_metadata = node_payload.get("metadata")
+                if not isinstance(satellite_metadata, dict):
+                    skipped += 1
+                    continue
+
+                satellite_nodes_db[satellite_name] = satellite_metadata
+                loaded += 1
+            except Exception as e:
+                skipped += 1
+                logging.error("❌ Skipping malformed node entry: %s", e)
+        logging.info("📥 Satellite node preload completed: loaded=%d skipped=%d", loaded, skipped)
+    except Exception as e:
+        logging.error("❌ Failed to preload satellite node metadata from Etcd: %s", e)
 
 def preload_links_db_from_etcd() -> None:
     loaded = 0
@@ -929,7 +1045,7 @@ def main() -> None:
     ap.add_argument("--link-setup-delay", type=float, default=3, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
     ap.add_argument("--link-duration-initial-value", type=float, default=4*60, help="Initial value in seconds for the duration of new links, default: 4min)")
     ap.add_argument("--measurement-top-n-links-strategy", default="lifetime", help="Strategy selecting best available links to include in measurement reports in addition to current_dev (default : lifetime")
-    ap.add_argument("--measurement-top-n-links", type=int, default=3, help="Number of best available links to include in measurement reports in addition to current_dev")
+    ap.add_argument("--measurement-top-n-links", type=int, default=5, help="Number of best available links to include in measurement reports in addition to current_dev")
     ap.add_argument("--report", action="store_true", help="Enable detailed reporting of internal state for debugging")
     ap.add_argument("--log-level", default="INFO", help="Logging level (e.g., DEBUG, INFO, WARNING)")
     args = ap.parse_args()
@@ -990,7 +1106,7 @@ def main() -> None:
     measurement_top_n_links = args.measurement_top_n_links
     if args.measurement_top_n_links_strategy == "lifetime":
         chose_reg_device = lifetime_strategy
-        select_measurement_report_links = select_measurement_report_links_lifetime
+        select_measurement_report_links = select_measurement_report_links_grid_lifetime
     else:
         logging.error(f"❌ Link selection strategy {args.measurement_top_n_links_strategy} not supported")
         sys.exit(1) 
@@ -1001,6 +1117,7 @@ def main() -> None:
         report_file = open(report_file_name, "w")
         logging.info(f"📊 Detailed reporting enabled, writing to {report_file_name}")
 
+    preload_satellite_nodes_db_from_etcd()
     preload_links_db_from_etcd()
     
     handle_registration_request()
