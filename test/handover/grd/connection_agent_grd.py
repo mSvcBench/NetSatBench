@@ -40,14 +40,13 @@ user_db: Dict[str, Dict[str, str]] = {} # key: user_id, value: {"upstream_sids"
 links_db: Dict[str, Dict[str, str]] = {}  # key dev_id, value: {"endpoint1": str, "endpoint2": str, ...}
 satellite_nodes_db: Dict[str, Dict[str, Any]] = {}
 link_duration_initial_value_s = 4*60  # initial value for link duration (sec)
-max_links = 16  # max number of simultaneous links (can be tuned based on expected number of available links and resource constraints)
-is_user_handover_needed = None  # assign the handover strategy function to use for processing user handover decisions
-is_grd_handover_needed = None  # assign the handover strategy function to use for processing grd handover decisions
+max_links = 1024  # max number of simultaneous links (can be tuned based on expected number of available links and resource constraints)
 process_connection_handover = None  # assign the function to process the set of links/devs to be used for connecting to the satellite network
 handover_metadata = {}  # metadata dict to pass to the handover strategy function (can include threshold values, weights, or other parameters needed for the strategy logic)
 handover_periodic_check_s = 3.3  # periodic check interval for handover decision (can be tuned based on expected link dynamics and handover time requirements)
 handover_delay_ms = 0.0
-handover_filters = {}  # list of filters to apply in the handover decision process, in order (e.g., "min_duration,orbit_hops,load_balancing"), can be tuned based on expected link dynamics and handover strategy requirements
+user_handover_filters: List[str] = []  # filters to apply in the exact provided sequence for user handover decisions
+grd_handover_filters: List[str] = []  # filters to apply in the exact provided sequence for grd handover decisions
 handover_hold_period_s = 15.0  # hold period after a handover during which no new handover is allowed, to avoid too frequent handovers in case of rapidly changing link conditions. 
 
 hosts_ipv6_cache: Dict[str, str] = {}
@@ -267,6 +266,21 @@ def parse_delay(delay) -> float:
     raise ValueError(f"Invalid delay type: {type(delay)}")
 
 
+def parse_handover_filters(raw_filters: str, accepted_filters: set[str], label: str) -> List[str]:
+    # Preserve comma-separated filter order exactly as provided (except surrounding whitespace).
+    parsed_filters = [f.strip() for f in raw_filters.split(",")]
+    if any(not f for f in parsed_filters):
+        raise ValueError(
+            f"Invalid {label} handover filters: empty filter found in '{raw_filters}'."
+        )
+    invalid_filters = [f for f in parsed_filters if f not in accepted_filters]
+    if invalid_filters:
+        raise ValueError(
+            f"Invalid {label} handover filter(s): {invalid_filters}. Accepted values are: {sorted(accepted_filters)}"
+        )
+    return parsed_filters
+
+
 def parse_expected_duration(expected_duration: Any) -> float:
     if expected_duration is None:
         return float(link_duration_initial_value_s)
@@ -369,21 +383,21 @@ def filter_devs_min_duration(
         logging.warning(f"⚠️ No {candidate_type} links for user {user_id} has remaining duration above threshold of {min_remaining_duration_s:.1f}s, keeping all candidates for next selection step")
     return new_candidate_devs   
 
-def filter_devs_orbit_hops(
+def filter_devs_min_orbit_hops(
     user_id: str,
     candidate_devs: List[Tuple[str, Dict[str, Any]]],
+    other_endpoint_dev: str,
     candidate_type: str,
 ) -> List[Tuple[str, Dict[str, Any]]]:
-    # find minimum orbit hops 
+    # find minimum orbit hops
+    endpoint_dev = other_endpoint_dev 
     if candidate_type == "grd":
-        endpoint_dev = user_db.get(user_id, {}).get("user_dev")
         user_links_db = user_db.get(user_id, {}).get("user_links_db") or {}
         endpoint_name = user_links_db.get(endpoint_dev, {}).get("remote_endpoint_name")
     elif candidate_type == "user":
-        endpoint_dev = user_db.get(user_id, {}).get("grd_dev")
         endpoint_name =links_db.get(endpoint_dev, {}).get("remote_endpoint_name")
     if endpoint_name:
-        min_orbit_hops = min(
+        best_orbit_hops = min(
             get_orbit_distance_between_satellites(link.get("remote_endpoint_name"), endpoint_name)
             for dev, link in candidate_devs
             if link.get("remote_endpoint_name")
@@ -391,9 +405,9 @@ def filter_devs_orbit_hops(
         new_candidate_devs = [
             (dev, link)
             for dev, link in candidate_devs
-            if link.get("remote_endpoint_name") and get_orbit_distance_between_satellites(link.get("remote_endpoint_name"), endpoint_name) == min_orbit_hops
+            if link.get("remote_endpoint_name") and get_orbit_distance_between_satellites(link.get("remote_endpoint_name"), endpoint_name) == best_orbit_hops
         ]
-        logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by min orbit hops ({min_orbit_hops}): {list(dev for dev, _ in new_candidate_devs)}")
+        logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by min orbit hops ({best_orbit_hops}): {list(dev for dev, _ in new_candidate_devs)}")
         return new_candidate_devs
     else:
         logging.warning(f"⚠️ Could not determine endpoint satellite for user {user_id} to filter candidates by orbit hops, skipping this filter")
@@ -402,6 +416,7 @@ def filter_devs_orbit_hops(
 def filter_devs_load_balancing(
     user_id: str,
     candidate_devs: List[Tuple[str, Dict[str, Any]]],
+    tolerance: int,
     candidate_type: str,
 ) -> List[Tuple[str, Dict[str, Any]]]:
     # find minimum user count among candidate devs
@@ -419,12 +434,12 @@ def filter_devs_load_balancing(
     new_candidate_devs = [
         (dev, link)
         for dev, link in candidate_devs
-        if get_grd_dev_user_count(dev, exclude_user_id=user_id) == min_user_count
+        if ((user_count := get_grd_dev_user_count(dev, exclude_user_id=user_id)) == min_user_count or user_count <= tolerance)
     ]
     logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by load balancing (min user count {min_user_count}): {list(dev for dev, _ in new_candidate_devs)}")
     return new_candidate_devs
 
-def filter_devs_remaining_duration(
+def filter_devs_longest_duration(
     user_id: str,
     candidate_devs: List[Tuple[str, Dict[str, Any]]],
     candidate_type: str,
@@ -574,17 +589,20 @@ def handle_link_delete_action(event):
     for user_id, user_info in user_db.items():
         if user_info.get("grd_dev") == link_dev:
             sat_name = links_db.get(link_dev, {}).get("remote_endpoint_name", "unknown")
-            logging.info(f"⚠️ Ground station using out of range satellite {sat_name} for user {user_id}, evaluating handover decision...")
+            logging.info(f"⚠️ Ground station using out of range satellite {sat_name} for user {user_id}, evaluating rescue handover...")
             update_user_db(user_id=user_id, grd_dev=None)  # Update user_db with new status for the user during local handover processing
-            new_grd_dev, needed = is_grd_handover_needed(user_id, handover_metadata, handover_filters)
+            new_user_dev = user_info.get("user_dev")
+            new_grd_dev, needed = user_handover_strategy(user_id, handover_metadata, new_user_dev, user_handover_filters)
             if needed:
                 sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
-                start_process_user_handover_thread(user_id, new_grd_dev)
+                start_process_user_handover_thread(user_id = user_id, new_grd_dev = new_grd_dev, new_user_dev = new_user_dev)
             else:
                 logging.warning(f"⚠️ No available link found for {user_id} after deletion of {sat_name}, {user_id} is now without a grd link")
 
-def user_handover_strategy(user_id: str, metadata: dict, handover_filters: list) -> Tuple[str, bool]:
+def user_handover_strategy(user_id: str, metadata: dict, new_grd_dev: str, handover_filters: list) -> Tuple[str, bool]:
     user_dev = user_db.get(user_id, {}).get("user_dev", None)
+    if new_grd_dev==None:
+        new_grd_dev = user_db.get(user_id, {}).get("grd_dev", None)
     user_links_db = user_db.get(user_id, {}).get("user_links_db") or {}
     link_status_acceptable = "available"  # for user dev we consider all available links as candidates for handover
     user_dev_last_duration = user_links_db.get(user_dev, {}).get("last_duration", None)
@@ -617,15 +635,16 @@ def user_handover_strategy(user_id: str, metadata: dict, handover_filters: list)
     if not candidate_devs:
         logging.warning(f"⚠️ No candidate links with status '{link_status_acceptable}' found for user {user_id} to handover, keeping current link {user_dev} if still available")
         return "", False
-    if "min_duration" in handover_filters:
-        # remove links with low remaining duration
-        candidate_devs = filter_devs_min_duration(user_id, candidate_devs, metadata.get("min_remaining_duration_s", threshold_s), candidate_type="user")
-    if "orbit_hops" in handover_filters:
-        # remove links with orbit distance greather than the minimum ones among candidates
-        candidate_devs = filter_devs_orbit_hops(user_id, candidate_devs, candidate_type="user")
-    if "remaining_duration" in handover_filters:
-        # remove links with remaining duration lower than the maximum one among candidates
-        candidate_devs = filter_devs_remaining_duration(user_id, candidate_devs, candidate_type="user")
+    for filter in handover_filters:
+        if filter == "min_duration":
+            # remove links with low remaining duration
+            candidate_devs = filter_devs_min_duration(user_id, candidate_devs, metadata.get("min_remaining_duration_s", threshold_s), candidate_type="user")
+        if filter == "min_orbit_hops":
+            # remove links with orbit distance greather than the minimum ones among candidates
+            candidate_devs = filter_devs_min_orbit_hops(user_id, candidate_devs, new_grd_dev, candidate_type="user")
+        if filter == "longest_duration":
+            # remove links with remaining duration lower than the maximum one among candidates
+            candidate_devs = filter_devs_longest_duration(user_id, candidate_devs, candidate_type="user")
     
     if not candidate_devs:
         logging.warning(f"⚠️ No candidate user links found for user {user_id} after filtering, keeping current user link {user_dev} if still available")
@@ -638,12 +657,15 @@ def user_handover_strategy(user_id: str, metadata: dict, handover_filters: list)
     else:
         return candidate_dev,False
 
-def grd_handover_strategy(user_id: str, metadata: dict, handover_filters: List[str]) -> Tuple[str, bool]:
+def grd_handover_strategy(user_id: str, metadata: dict, new_user_dev: str, handover_filters: List[str]) -> Tuple[str, bool]:
     # Handover strategy for the grd link of the user SRv6 tunnel
     grd_dev = user_db.get(user_id, {}).get("grd_dev", None)
+    if new_user_dev==None:
+        new_user_dev = user_db.get(user_id, {}).get("user_dev", None)
     acceptable_link_status = "connected" # for grd dev we consider only connected links as candidates for handover
     grd_dev_last_duration = links_db.get(grd_dev, {}).get("last_duration", None)
-    threshold_s = get_handover_threshold_s(metadata, grd_dev_last_duration)  # threshold for minimum remaining duration to consider a handover
+    threshold_s = get_handover_threshold_s(metadata, grd_dev_last_duration)  # threshold for minimum remaining duration to enforce an handover
+    load_balancing_tolerance = metadata.get("load_balancing_tolerance", 4)  # tolerance in n. connections for load balancing filter
     grd_last_handover = user_db.get(user_id, {}).get("last_handover")
     if grd_last_handover is None:
         grd_last_handover = 0.0
@@ -671,20 +693,21 @@ def grd_handover_strategy(user_id: str, metadata: dict, handover_filters: List[s
     candidate_devs = [(dev,l) for dev,l in links_db.items() if l.get("status") == acceptable_link_status]
     if not candidate_devs:
         return "", False
-    if "min_duration" in handover_filters:
-        # remove links with low remaining duration
-        candidate_devs = filter_devs_min_duration(user_id, candidate_devs, metadata.get("min_remaining_duration_s", threshold_s), candidate_type="grd")
-    if user_id != node_name:
-        if "orbit_hops" in handover_filters:
-            # remove links with orbit distance greather than the minimum ones among candidates
-            candidate_devs = filter_devs_orbit_hops(user_id, candidate_devs, candidate_type="grd")
-        if "load_balancing" in handover_filters:
+    for filter in handover_filters:
+        if filter == "min_duration":
+            # remove links with low remaining duration
+            candidate_devs = filter_devs_min_duration(user_id, candidate_devs, metadata.get("min_remaining_duration_s", threshold_s), candidate_type="grd")
+        if filter == "longest_duration":
+            # remove links with remaining duration lower than the maximum one among candidates
+            candidate_devs = filter_devs_longest_duration(user_id, candidate_devs, candidate_type="grd")
+        if filter == "load_balancing":
             # remove links with user count greather than the minimum ones among candidates for load balancing
-            candidate_devs = filter_devs_load_balancing(user_id, candidate_devs, candidate_type="grd")
-    if "remaining_duration" in handover_filters:
-        # remove links with remaining duration lower than the maximum one among candidates
-        candidate_devs = filter_devs_remaining_duration(user_id, candidate_devs, candidate_type="grd")
-
+            candidate_devs = filter_devs_load_balancing(user_id, candidate_devs, load_balancing_tolerance, candidate_type="grd")
+        if user_id != node_name:
+            # filters not applicable for grd default user access
+            if filter == "min_orbit_hops":
+                # remove links with orbit distance greather than the minimum ones among candidates
+                candidate_devs = filter_devs_min_orbit_hops(user_id, candidate_devs, new_user_dev, candidate_type="grd")                  
     if not candidate_devs:
         logging.warning(f"⚠️ No candidate grd links found for user {user_id} after filtering, keeping current grd link {grd_dev} if still available")
         return grd_dev, False
@@ -752,16 +775,12 @@ def processing_handover_loop() -> None:
                 if user_db[user_id].get("status") != USER_STATUS_REGISTERED:
                     logging.debug(f"⚠️ Skipping handover processing for user {user_id} which is not in registered state")
                     continue
-                new_grd_dev, grd_needed = is_grd_handover_needed(user_id, handover_metadata, handover_filters)
+                new_grd_dev, grd_needed = grd_handover_strategy(user_id, handover_metadata, None, grd_handover_filters)
                 if user_id != node_name:  
                     # for grd pseudo-user we only have grd dev and no user dev, so we skip user handover evaluation for it as it's not applicable
-                    new_user_dev, user_needed = is_user_handover_needed(user_id, handover_metadata, handover_filters)
+                    new_user_dev, user_needed = user_handover_strategy(user_id, handover_metadata, new_grd_dev, user_handover_filters)
                 else:
                     new_user_dev, user_needed = None, False  # self user doesn't have a satellite dev, so we skip user handover evaluation for it
-                if grd_needed and user_needed:
-                    logging.warning(f"⚠️ Both grd and user handover needed for user {user_id}, which is not supported. Prefer user handover only")
-                    grd_needed = False
-                    new_grd_dev = user_db[user_id].get("grd_dev")
 
                 if grd_needed or user_needed:
                     strategy_type = "grd" if grd_needed and not user_needed else "user" if user_needed and not grd_needed else "grd+user"
@@ -772,19 +791,18 @@ def processing_handover_loop() -> None:
                     if grd_needed:
                         new_grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
                     if strategy_type == "grd+user":
-                        logging.warning(f"⚠️ Both grd and user handover user {user_id} not suported, skipping...")
-                        continue
+                        logging.info(f"🔀 Handover type '{strategy_type}' for user {user_id}: selected newest grd satellite {new_grd_sat_name} and user satellite {new_user_sat_name}")
                     if strategy_type == "user":
                         logging.info(f"🔀 Handover type '{strategy_type}' for user {user_id}: selected newest user satellite {new_user_sat_name}")
                     elif strategy_type == "grd":
-
                         logging.info(f"🔀 Handover type '{strategy_type}' for user {user_id}: selected newest grd satellite {new_grd_sat_name}")
                     
-                    start_process_user_handover_thread(user_id, new_grd_dev, new_user_dev)
+                    start_process_user_handover_thread(user_id = user_id, new_grd_dev = new_grd_dev, new_user_dev = new_user_dev)
+                    
                     if report_file:
                         report_file.write(f"{time.time()},handover,{user_id},{strategy_type},{new_grd_sat_name},{new_user_sat_name}\n")
                         report_file.flush()
-
+                    
                     if user_needed and handover_delay_ms > 0: 
                         threading.Thread(
                                 target=traffic_pause,
@@ -961,7 +979,7 @@ def handle_user_registration_request(
     try:
         user_id = payload["user_id"]
         user_ipv6 = payload["user_ipv6"]        
-        user_sat_dev = payload.get("init_sat_dev", "")
+        user_dev = payload.get("init_sat_dev", "")
         user_links_db = payload.get("user_links_db", payload.get("user_links_db", ""))
         if isinstance(user_links_db, str):
             user_links_db = json.loads(user_links_db) if user_links_db else {}
@@ -984,38 +1002,38 @@ def handle_user_registration_request(
         if user.get("status") == "registration_in_progress":
             logging.warning(f"⚠️ Registration already in progress for user {user_id}, ignoring duplicate registration request")
             return
-        update_user_db(user_id=user_id, user_ipv6=user_ipv6, user_links_db=user_links_db, user_dev=user_sat_dev, status="registration_in_progress")
+        update_user_db(user_id=user_id, user_ipv6=user_ipv6, user_links_db=user_links_db, user_dev=user_dev, status="registration_in_progress")
         
         # chose of the grd dev to serve the user    
-        grd_dev, needed = is_grd_handover_needed(user_id, handover_metadata, handover_filters)
-        grd_sat_ipv6 = links_db.get(grd_dev, {}).get("remote_endpoint_ipv6", "") if grd_dev else ""
+        new_grd_dev, needed = grd_handover_strategy(user_id, handover_metadata, user_dev, grd_handover_filters)
+        new_grd_sat_ipv6 = links_db.get(new_grd_dev, {}).get("remote_endpoint_ipv6", "") if new_grd_dev else ""
         
-        if grd_dev == "" or grd_sat_ipv6 == "":
+        if new_grd_dev == "" or new_grd_sat_ipv6 == "":
             logging.warning(f"⚠️ No suitable access satellite found for user {user_id}, registration aborted")
             # reset user state
             update_user_db(user_id=user_id, user_ipv6=user_ipv6, upstream_sids= None, downstream_sids=None, grd_dev=None, user_links_db=None, user_dev = None, status="not-registered")
             return
         
         # chose the access user dev
-        user_dev_new, _ = is_user_handover_needed(user_id, handover_metadata, handover_filters)
-        user_sat_ipv6_new = user_links_db.get(user_dev_new, {}).get("remote_endpoint_ipv6", "") if user_dev_new else ""
-        if user_dev_new == "" or user_sat_ipv6_new == "":
+        new_user_dev, _ = user_handover_strategy(user_id, handover_metadata, new_grd_dev, user_handover_filters)
+        new_user_sat_ipv6 = user_links_db.get(new_user_dev, {}).get("remote_endpoint_ipv6", "") if new_user_dev else ""
+        if new_user_dev == "" or new_user_sat_ipv6 == "":
             logging.warning(f"⚠️ No suitable user satellite dev found for user {user_id}, registration aborted")
             # reset user state
             update_user_db(user_id=user_id, user_ipv6=user_ipv6, upstream_sids= None, downstream_sids=None, grd_dev=None, user_links_db=None, user_dev = None, status="not-registered")
             return
-        grd_sat_name = links_db.get(grd_dev, {}).get("remote_endpoint_name", "unknown")
-        user_sat_name = user_links_db.get(user_dev_new, {}).get("remote_endpoint_name", "unknown")
-        logging.info(f"✅ Registration for user {user_id} accepted: grd satellite {grd_sat_name} and user satellite {user_sat_name}")
+        new_grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
+        new_user_sat_name = user_links_db.get(new_user_dev, {}).get("remote_endpoint_name", "unknown")
+        logging.info(f"✅ Registration for user {user_id} accepted: grd satellite {new_grd_sat_name} and user satellite {new_user_sat_name}")
 
         if report_file:
-            report_file.write(f"{time.time()},registration,{user_id},_,{grd_sat_name},{user_sat_name}\n")
+            report_file.write(f"{time.time()},registration,{user_id},_,{new_grd_sat_name},{new_user_sat_name}\n")
             report_file.flush()
-        # build sids
-        downstream_sids, upstream_sids = create_sids(grd_sat_ipv6, user_sat_ipv6_new)
+        # build sids for the SRv6 tunnels
+        downstream_sids, upstream_sids = create_sids(new_grd_sat_ipv6, new_user_sat_ipv6)
 
         # user route injection
-        ip_cmd = build_srv6_route_replace(dst_prefix = user_ipv6, sids = downstream_sids, dev = grd_dev)
+        ip_cmd = build_srv6_route_replace(dst_prefix = user_ipv6, sids = downstream_sids, dev = new_grd_dev)
         run_cmd(ip_cmd)
 
         # Sending registration_accept to usr with the sids to use 
@@ -1036,10 +1054,10 @@ def handle_user_registration_request(
         update_user_db(
             user_id=user_id,
             user_ipv6=user_ipv6,
-            user_dev=user_dev_new,
+            user_dev=new_user_dev,
             upstream_sids=upstream_sids,
             downstream_sids=downstream_sids,
-            grd_dev=grd_dev,
+            grd_dev=new_grd_dev,
             status="registered",
             last_handover=time.time()
         )
@@ -1290,19 +1308,21 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
 #   ENTRYPOINT
 # ----------------------------
 def main() -> None:
-    global is_user_handover_needed, is_grd_handover_needed, process_connection_handover, grd_ipv6, is_walker_star, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links, handover_delay_ms, report_file, handover_filters, handover_hold_period_s
+    global process_connection_handover, grd_ipv6, is_walker_star, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links, handover_delay_ms, report_file, user_handover_filters, grd_handover_filters, handover_hold_period_s
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="::", help="Address to bind the UDP server for handover (default: :: for all interfaces)")
     ap.add_argument("--port", type=int, default=5005, help="UDP port where grd listens for handover_request (default: 5005)")
     ap.add_argument("--local-address", help="IPv6 address of local node (Default: address found in /etc/hosts for the hostname)")
-    ap.add_argument("--handover-strategy", type=str, default="lifetime", help="Handover strategy to use for handover decision (default: lifetime)")
+    ap.add_argument("--user-handover-filters", type=str, default="min_duration,min_orbit_hops,longest_duration", help="comma separated value of filters to apply in sequence for user handover decisions (default: min_duration,min_orbit_hops,longest_duration)")
+    ap.add_argument("--grd-handover-filters", type=str, default="min_duration,min_orbit_hops,load_balancing,longest_duration", help="comma separated value of filters to apply in sequence for grd handover decisions (default: min_duration,min_orbit_hops,load_balancing,longest_duration)")
     ap.add_argument("--handover-strategy-metadata", type=json.loads, default='{}', help="JSON string with metadata parameters for the handover strategy (e.g., threshold values, weights, etc.)")
     ap.add_argument("--handover-delay", type=float, help="Handover delay in mseconds (requires veth0_rt interface, use app/shaping-ns-create-v6.sh)", default=0)
     ap.add_argument("--usr-port", type=int, default=5006, help="Default UDP port where user agent listens for commands (default: 5006)")
     ap.add_argument("--sat-ipv6-prefix", default="2001:db8:100::/64", help="IPv6 prefix used for satellite IPv6 addresses (default: 2001:db8:100::/64)")
     ap.add_argument("--link-setup-delay", type=float, default=5, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
     ap.add_argument("--link-duration-initial-value", type=float, default=4*60, help="Initial value in seconds for the duration of new links, default: 4min)")
-    ap.add_argument("--max-links", type=int, default=16, help="Max number of simultaneous links")
+    ap.add_argument("--max-links", type=int, default=1024, help="Max number of simultaneous links (default: 1024)")
     ap.add_argument("--handover-hold-period", type=float, default=15.0, help="Hold period in seconds after a handover during which no new handover is allowed while the current link is healthy (default: 15s)")
     ap.add_argument("--walker-star", action="store_true", help="Set when the constellation is a Walker Star")
     ap.add_argument("--report", action="store_true", help="Enable detailed reporting of internal state for debugging")
@@ -1323,15 +1343,26 @@ def main() -> None:
     user_callback_port = args.usr_port
     is_walker_star = args.walker_star
     
-    # Set handover strategy function based on argument
-    if args.handover_strategy == "lifetime":
-        is_user_handover_needed = user_handover_strategy
-        is_grd_handover_needed = grd_handover_strategy
-        process_connection_handover = lifetime_strategy_connection_handover
-        handover_filters = ["min_duration", "orbit_hops", "remaining_duration","load_balancing"]
-    else:        
-        logging.error(f"Unsupported handover strategy: {args.handover_strategy}")
-        sys.exit(1)
+    # Set handover filters preserving the exact comma-separated sequence provided by the user.
+    accepted_user_filters = {"min_duration", "min_orbit_hops", "longest_duration"}
+    accepted_grd_filters = {"min_duration", "min_orbit_hops", "load_balancing", "longest_duration"}
+    try:
+        user_handover_filters = parse_handover_filters(
+            args.user_handover_filters,
+            accepted_user_filters,
+            label="user",
+        )
+        grd_handover_filters = parse_handover_filters(
+            args.grd_handover_filters,
+            accepted_grd_filters,
+            label="GRD",
+        )
+    except ValueError as e:
+        logging.error("❌ %s", e)
+        return
+    logging.info(f"User handover decisions will be based on the following filters in sequence: {user_handover_filters}")
+    logging.info(f"GRD handover decisions will be based on the following filters in sequence: {grd_handover_filters}")
+    process_connection_handover = lifetime_strategy_connection_handover
     handover_metadata = args.handover_strategy_metadata
     handover_delay_ms = args.handover_delay
     handover_hold_period_s = args.handover_hold_period
@@ -1370,12 +1401,12 @@ def main() -> None:
     
     # configure default route for satellites
     process_connection_handover(handover_metadata)
-    new_grd_dev, needed = is_grd_handover_needed(os.environ["NODE_NAME"], handover_metadata, handover_filters)  # trigger initial handover decision for default route towards satellites based on initial links_db state (if any)
+    new_grd_dev, needed = grd_handover_strategy(os.environ["NODE_NAME"], handover_metadata, None, grd_handover_filters)  # trigger initial handover decision for default route towards satellites based on initial links_db state (if any)
     if needed:
         new_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
         logging.info(f"🔀 Initial decision for {node_name} default route {args.sat_ipv6_prefix} via satellite {new_sat_name}")
-        start_process_user_handover_thread(os.environ["NODE_NAME"], new_grd_dev)
-    
+        start_process_user_handover_thread(user_id=os.environ["NODE_NAME"], new_grd_dev=new_grd_dev)
+
     # Start background thread to watch for link actions and update links_db accordingly
     threading.Thread(
         target=watch_link_actions_loop,
