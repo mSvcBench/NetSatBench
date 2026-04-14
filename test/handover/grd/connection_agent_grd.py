@@ -458,6 +458,25 @@ def filter_devs_longest_duration(
     logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by max remaining duration ({max_remaining_duration:.1f}s): {list(dev for dev, _ in new_candidate_devs)}")
     return new_candidate_devs
 
+def filter_devs_min_delay(
+    user_id: str,
+    candidate_devs: List[Tuple[str, Dict[str, Any]]],
+    candidate_type: str,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    now = time.time()
+    delay_by_dev = {
+        dev: parse_delay(link.get("delay", 0))
+        for dev, link in candidate_devs
+    }
+    min_delay = min(delay_by_dev.values())
+    new_candidate_devs = [
+        (dev, link)
+        for dev, link in candidate_devs
+        if delay_by_dev[dev] == min_delay
+    ]
+    logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by min delay ({min_delay:.1f}ms): {list(dev for dev, _ in new_candidate_devs)}")
+    return new_candidate_devs
+
 # ----------------------------
 #   MAIN LOGIC FOR LINK MANAGEMENT LOCAL SIDE
 # ----------------------------
@@ -645,6 +664,9 @@ def user_handover_strategy(user_id: str, metadata: dict, new_grd_dev: str, hando
         if filter == "longest_duration":
             # remove links with remaining duration lower than the maximum one among candidates
             candidate_devs = filter_devs_longest_duration(user_id, candidate_devs, candidate_type="user")
+        if filter == "min_delay":
+            # remove links with delay higher than the minimum one among candidates
+            candidate_devs = filter_devs_min_delay(user_id, candidate_devs, candidate_type="user")
     
     if not candidate_devs:
         logging.warning(f"⚠️ No candidate user links found for user {user_id} after filtering, keeping current user link {user_dev} if still available")
@@ -703,6 +725,9 @@ def grd_handover_strategy(user_id: str, metadata: dict, new_user_dev: str, hando
         if filter == "load_balancing":
             # remove links with user count greather than the minimum ones among candidates for load balancing
             candidate_devs = filter_devs_load_balancing(user_id, candidate_devs, load_balancing_tolerance, candidate_type="grd")
+        if filter == "min_delay":
+            # remove links with delay higher than the minimum one among candidates
+            candidate_devs = filter_devs_min_delay(user_id, candidate_devs, candidate_type="grd")
         if user_id != node_name:
             # filters not applicable for grd default user access
             if filter == "min_orbit_hops":
@@ -784,17 +809,26 @@ def processing_handover_loop() -> None:
 
                 if grd_needed or user_needed:
                     strategy_type = "grd" if grd_needed and not user_needed else "user" if user_needed and not grd_needed else "grd+user"
-                    if new_user_dev:
-                        new_user_sat_name = user_db.get(user_id, {}).get("user_links_db", {}).get(new_user_dev, {}).get("remote_endpoint_name", "unknown")
-                    else:
-                        new_user_sat_name = "unknown"
-                    if grd_needed:
-                        new_grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
+                    # if new_user_dev:
+                    #     new_user_sat_name = user_db.get(user_id, {}).get("user_links_db", {}).get(new_user_dev, {}).get("remote_endpoint_name", "unknown")
+                    # else:
+                    #     new_user_sat_name = "unknown"
+                    # if grd_needed:
+                    #     new_grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
                     if strategy_type == "grd+user":
+                        new_user_sat_name = user_db.get(user_id, {}).get("user_links_db", {}).get(new_user_dev, {}).get("remote_endpoint_name", "unknown")
+                        new_grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
                         logging.info(f"🔀 Handover type '{strategy_type}' for user {user_id}: selected newest grd satellite {new_grd_sat_name} and user satellite {new_user_sat_name}")
                     if strategy_type == "user":
+                        new_user_sat_name = user_db.get(user_id, {}).get("user_links_db", {}).get(new_user_dev, {}).get("remote_endpoint_name", "unknown")
+                        new_grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
                         logging.info(f"🔀 Handover type '{strategy_type}' for user {user_id}: selected newest user satellite {new_user_sat_name}")
                     elif strategy_type == "grd":
+                        new_grd_sat_name = links_db.get(new_grd_dev, {}).get("remote_endpoint_name", "unknown")
+                        if new_user_dev:
+                            new_user_sat_name = user_db.get(user_id, {}).get("user_links_db", {}).get(new_user_dev, {}).get("remote_endpoint_name", "unknown")
+                        else:                            
+                            new_user_sat_name = "unknown"
                         logging.info(f"🔀 Handover type '{strategy_type}' for user {user_id}: selected newest grd satellite {new_grd_sat_name}")
                     
                     start_process_user_handover_thread(user_id = user_id, new_grd_dev = new_grd_dev, new_user_dev = new_user_dev)
@@ -1344,8 +1378,8 @@ def main() -> None:
     is_walker_star = args.walker_star
     
     # Set handover filters preserving the exact comma-separated sequence provided by the user.
-    accepted_user_filters = {"min_duration", "min_orbit_hops", "longest_duration"}
-    accepted_grd_filters = {"min_duration", "min_orbit_hops", "load_balancing", "longest_duration"}
+    accepted_user_filters = {"min_duration", "min_orbit_hops", "longest_duration","min_delay"}
+    accepted_grd_filters = {"min_duration", "min_orbit_hops", "load_balancing", "longest_duration", "min_delay"}
     try:
         user_handover_filters = parse_handover_filters(
             args.user_handover_filters,
