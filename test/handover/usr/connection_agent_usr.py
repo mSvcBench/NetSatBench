@@ -49,6 +49,17 @@ report_file = None  # file handle for detailed report output, if enabled by args
 measurement_top_n_links = 5
 select_measurement_report_links = None # function handle for selecting best link to send in the measurement report
 satellite_nodes_db: Dict[str, Dict[str, Any]] = {}
+COMPACT_LINK_REPORT_FMT = "cldb1"
+STATUS_TO_CODE = {
+    "unavailable": 0,
+    "available": 1,
+    "connected": 2,
+}
+CODE_TO_STATUS = {
+    0: "unavailable",
+    1: "available",
+    2: "connected",
+}
 
 # Status not_registered, registration_in_progress, registered, handover_in_progress
 status = "not_registered" # initial status before registration
@@ -175,7 +186,7 @@ def send_link_report_udp(
     grd_ipv6: str,
     grd_port: int,
     user_dev: str,
-    user_links_db: Dict[str, Dict[str, Any]],
+    user_links_db: Dict[str, Any],
 ) -> None:
     msg: Dict[str, Any] = {
         "type": "measurement_report",
@@ -185,14 +196,28 @@ def send_link_report_udp(
     }
     report_size_bytes = len(json.dumps(user_links_db).encode("utf-8"))
     payload_size_bytes = len(json.dumps(msg).encode("utf-8"))
-    reported_sats = []
-    for link_dev, link_info in user_links_db.items():
-        if link_info.get("status") == "available":
-            reported_sats.append(link_info.get("remote_endpoint_name", "unknown"))
+    reported_sats: List[str] = []
+    report_links_count = 0
+    if user_links_db.get("_fmt") == COMPACT_LINK_REPORT_FMT:
+        for row in user_links_db.get("r", []):
+            if not isinstance(row, list) or len(row) < 9:
+                continue
+            report_links_count += 1
+            status_code = row[1]
+            status = CODE_TO_STATUS.get(status_code, "unavailable")
+            if status == "available":
+                reported_sats.append(row[8] if row[8] else "unknown")
+    else:
+        for _link_dev, link_info in user_links_db.items():
+            if not isinstance(link_info, dict):
+                continue
+            report_links_count += 1
+            if link_info.get("status") == "available":
+                reported_sats.append(link_info.get("remote_endpoint_name", "unknown"))
     logging.debug(
         "📏 Measurement link report size: %d bytes across %d link(s); UDP JSON payload: %d bytes; Reported satellites: %s",
         report_size_bytes,
-        len(user_links_db),
+        report_links_count,
         payload_size_bytes,
         ", ".join(reported_sats) if reported_sats else "-",
     )
@@ -406,27 +431,35 @@ def build_link_registration_report(selected_dev: str | None = None) -> Dict[str,
     return sat_report
 
 
-def build_measurement_links_report() -> Dict[str, Dict[str, Any]]:
-    report: Dict[str, Dict[str, Any]] = {}
+def build_measurement_links_report() -> Dict[str, Any]:
+    rows: List[List[Any]] = []
     for link_dev in select_measurement_report_links(current_dev, measurement_top_n_links):
         link_info = links_db.get(link_dev, {})
         if not link_info:
             continue
-        report[link_dev] = {
-            "status": link_info.get("status"),
-            "last_duration": link_info.get("last_duration"),
-            "last_created": link_info.get("last_created"),
-            "rate": link_info.get("rate"),
-            "delay": link_info.get("delay"),
-            "loss": link_info.get("loss"),
-            "remote_endpoint_ipv6": link_info.get("remote_endpoint_ipv6"),
-            "remote_endpoint_name": link_info.get("remote_endpoint_name"),
-        }
-    return report
+        rows.append([
+            link_dev,
+            STATUS_TO_CODE.get(link_info.get("status"), 0),
+            link_info.get("last_duration"),
+            link_info.get("last_created"),
+            link_info.get("rate"),
+            link_info.get("delay"),
+            link_info.get("loss"),
+            link_info.get("remote_endpoint_ipv6"),
+            link_info.get("remote_endpoint_name"),
+        ])
+    return {
+        "_fmt": COMPACT_LINK_REPORT_FMT,
+        "r": rows,
+    }
 
 
 def remaining_link_duration_s(link_info: Dict[str, Any]) -> float:
     return link_info.get("last_duration", 0) - (time.time() - link_info.get("last_created", 0))
+
+def link_delay_ms(link_info: Dict[str, Any]) -> float:
+    delay_str = link_info.get("delay")
+    return parse_delay(delay_str) if delay_str else 0
 
 
 def select_measurement_report_links_grid_lifetime(selected_dev: str | None, top_n: int) -> List[str]:
@@ -487,14 +520,10 @@ def select_measurement_report_links_grid_lifetime(selected_dev: str | None, top_
         reverse=True,
     )
 
-    # Strategy requested:
-    # - best two from same orbit
-    # - best one from left orbit
-    # - best one from right orbit
     extra_candidates: List[str] = []
-    extra_candidates.extend([link_dev for link_dev, _ in same_orbit_candidates[:2]])
-    extra_candidates.extend([link_dev for link_dev, _ in candidate_links_left_orbit[:1]])
-    extra_candidates.extend([link_dev for link_dev, _ in candidate_links_right_orbit[:1]])
+    extra_candidates.extend([link_dev for link_dev, _ in same_orbit_candidates[:4]])
+    extra_candidates.extend([link_dev for link_dev, _ in candidate_links_left_orbit[:4]])
+    extra_candidates.extend([link_dev for link_dev, _ in candidate_links_right_orbit[:4]])
 
     max_total = max(top_n, 0)
     remaining_slots = max(max_total - len(chosen_links), 0)
@@ -504,6 +533,76 @@ def select_measurement_report_links_grid_lifetime(selected_dev: str | None, top_
 
     return chosen_links
 
+def select_measurement_report_links_grid_delay(selected_dev: str | None, top_n: int) -> List[str]:
+    chosen_links: List[str] = []
+
+    if selected_dev and selected_dev in links_db:
+        chosen_links.append(selected_dev)
+
+    user_sat = links_db.get(selected_dev, {}).get("remote_endpoint_name", "") if selected_dev else ""
+    if not user_sat:
+        return chosen_links
+
+    try:
+        user_sat_orbit, _user_sat_num_in_orbit = get_satellite_orbit_num(user_sat)
+    except Exception as e:
+        logging.warning("⚠️ Could not derive grid-plus neighbors for %s: %s", user_sat, e)
+        return chosen_links
+
+    user_shell_config = satellite_nodes_db.get(user_sat, {}).get("shell_config", {})
+    total_orbits = user_shell_config.get("number_of_orbit", 0)
+    if not total_orbits:
+        return chosen_links
+
+    left_orbit = user_sat_orbit - 1 if user_sat_orbit > 1 else total_orbits
+    right_orbit = user_sat_orbit + 1 if user_sat_orbit < total_orbits else 1
+
+    same_orbit_candidates: List[Tuple[str, Dict[str, Any]]] = []
+    candidate_links_left_orbit: List[Tuple[str, Dict[str, Any]]] = []
+    candidate_links_right_orbit: List[Tuple[str, Dict[str, Any]]] = []
+    for link_dev, link_info in links_db.items():
+        if link_dev == selected_dev or link_info.get("status") != "available":
+            continue
+        remote_sat = link_info.get("remote_endpoint_name", "")
+        if not remote_sat:
+            continue
+        try:
+            sat_orbit, _sat_num_in_orbit = get_satellite_orbit_num(remote_sat)
+        except Exception:
+            continue
+
+        if sat_orbit == user_sat_orbit:
+            same_orbit_candidates.append((link_dev, link_info))
+        elif sat_orbit == left_orbit:
+            candidate_links_left_orbit.append((link_dev, link_info))
+        elif sat_orbit == right_orbit:
+            candidate_links_right_orbit.append((link_dev, link_info))
+
+    same_orbit_candidates.sort(
+        key=lambda item: link_delay_ms(item[1]),
+        reverse=True,
+    )
+    candidate_links_left_orbit.sort(
+        key=lambda item: link_delay_ms(item[1]),
+        reverse=True,
+    )
+    candidate_links_right_orbit.sort(
+        key=lambda item: link_delay_ms(item[1]),
+        reverse=True,
+    )
+
+    extra_candidates: List[str] = []
+    extra_candidates.extend([link_dev for link_dev, _ in same_orbit_candidates[:4]])
+    extra_candidates.extend([link_dev for link_dev, _ in candidate_links_left_orbit[:4]])
+    extra_candidates.extend([link_dev for link_dev, _ in candidate_links_right_orbit[:4]])
+
+    max_total = max(top_n, 0)
+    remaining_slots = max(max_total - len(chosen_links), 0)
+    for link_dev in extra_candidates[:remaining_slots]:
+        if link_dev not in chosen_links:
+            chosen_links.append(link_dev)
+
+    return chosen_links
 
 def write_report_event(event_type: str, strategy_type: str, grd_name: str, sat_name: str) -> None:
     if report_file is None:
@@ -842,21 +941,23 @@ def handle_handover_command(payload: Dict[str, Any], ho_delay_ms: float) -> None
     new_sat_ipv6 = upstream_sids.split(",")[0]          # first SID is the new satellite to reach the grd.
     new_dev = derive_egress_dev(new_sat_ipv6)  # derive the egress dev to reach the grd via the new satellite
     
-    if new_dev != current_dev:
-        threading.Thread(
+    threading.Thread(
             target=traffic_pause,
             args=(ho_delay_ms,),
             daemon=True,
             name="handover-traffic-pause",
-        ).start()
+    ).start()
+    
+    if new_dev != current_dev:
         current_dev = new_dev
         if not wait_for_link_local_via_route(new_sat_ipv6, timeout_s=link_setup_delay_s):
             logging.warning(
                 f"⚠️ No route with link-local next-hop for {new_sat_ipv6} before handover command timeout window."
             )
-        ip_cmd = build_srv6_route_replace(grd_ipv6, upstream_sids, new_dev)
-        run_cmd(ip_cmd)
-    
+
+    # update route to grd via new satellite
+    ip_cmd = build_srv6_route_replace(grd_ipv6, upstream_sids, new_dev)
+    run_cmd(ip_cmd)
     # add new default route
     default_prefix = "default"
     ip_cmd = build_srv6_route_replace(default_prefix, upstream_sids, new_dev)
@@ -1044,8 +1145,8 @@ def main() -> None:
     ap.add_argument("--registration-timeout", type=float, default=3.0, help="seconds to wait for registration_accept before retrying registration")
     ap.add_argument("--link-setup-delay", type=float, default=3, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
     ap.add_argument("--link-duration-initial-value", type=float, default=4*60, help="Initial value in seconds for the duration of new links, default: 4min)")
-    ap.add_argument("--measurement-top-n-links-strategy", default="lifetime", help="Strategy selecting best available links to include in measurement reports in addition to current_dev (default : lifetime")
-    ap.add_argument("--measurement-top-n-links", type=int, default=5, help="Number of best available links to include in measurement reports in addition to current_dev")
+    ap.add_argument("--measurement-top-n-links-strategy", default="lifetime", help="Strategy selecting best available links to include in measurement reports in addition to current_dev (default : lifetime). Supported values: lifetime, delay")
+    ap.add_argument("--measurement-top-n-links", type=int, default=16, help="Number of best available links to include in measurement reports in addition to current_dev (default: 16)")
     ap.add_argument("--report", action="store_true", help="Enable detailed reporting of internal state for debugging")
     ap.add_argument("--log-level", default="INFO", help="Logging level (e.g., DEBUG, INFO, WARNING)")
     args = ap.parse_args()
@@ -1103,10 +1204,13 @@ def main() -> None:
     registration_accept_timeout_s = args.registration_timeout
     link_setup_delay_s = args.link_setup_delay
     link_duration_initial_value_s = args.link_duration_initial_value
-    measurement_top_n_links = args.measurement_top_n_links
+    measurement_top_n_links = args.measurement_top_n_links + 1  # +1 to account for current_dev which is always included in the report
     if args.measurement_top_n_links_strategy == "lifetime":
         chose_reg_device = lifetime_strategy
         select_measurement_report_links = select_measurement_report_links_grid_lifetime
+    elif args.measurement_top_n_links_strategy == "delay":
+        chose_reg_device = lifetime_strategy
+        select_measurement_report_links = select_measurement_report_links_grid_delay
     else:
         logging.error(f"❌ Link selection strategy {args.measurement_top_n_links_strategy} not supported")
         sys.exit(1) 
