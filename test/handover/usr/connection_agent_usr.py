@@ -814,7 +814,7 @@ def handle_registration_request() -> None:
 
 def lifetime_strategy(metadata: dict) -> Tuple[str, bool]:
     # Example strategy: always prefer the link with greatest ttl
-    threshold_s = metadata.get("threshold_s", link_duration_initial_value_s/4.0)  # threshold for minimum remaining duration to consider a handover
+    lifetime_threshold_s = metadata.get("lifetime_threshold_s", link_duration_initial_value_s/4.0)  # threshold for minimum remaining duration to consider a handover
     # compute remaining duration for available links and select the one with the longest remaining duration above threshold
     if current_dev == None:
         # no link currently assigned to user, so handover is needed to assign the best available link
@@ -825,7 +825,7 @@ def lifetime_strategy(metadata: dict) -> Tuple[str, bool]:
     else:
         remaining_duration = links_db.get(current_dev, {}).get("last_duration", 0) - (time.time() - links_db.get(current_dev, {}).get("last_created", 0))
     
-    if remaining_duration > threshold_s:
+    if remaining_duration > lifetime_threshold_s:
         # current link has enough remaining duration, no handover needed
         return current_dev, False
     

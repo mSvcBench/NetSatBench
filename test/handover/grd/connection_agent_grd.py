@@ -47,7 +47,14 @@ handover_periodic_check_s = 3.3  # periodic check interval for handover decision
 handover_delay_ms = 0.0
 user_handover_filters: List[str] = []  # filters to apply in the exact provided sequence for user handover decisions
 grd_handover_filters: List[str] = []  # filters to apply in the exact provided sequence for grd handover decisions
-handover_hold_period_s = 15.0  # hold period after a handover during which no new handover is allowed, to avoid too frequent handovers in case of rapidly changing link conditions. 
+
+handover_hold_period_s_default = 15.0  # hold period after a handover during which no new handover is allowed, to avoid too frequent handovers in case of rapidly changing link conditions.
+load_balancing_tolerance_default = 4  # tolerance value for load balancing filter, to avoid excluding candidate links with slightly higher user count than the minimum (can be tuned based on expected number of users per link and load balancing requirements)
+min_hops_tolerance_default = 0  # tolerance value for min orbit hops filter, to avoid excluding candidate links with slightly higher orbit hops than the minimum (can be tuned based on expected orbit configuration and handover requirements)
+lifetime_threshold_s_default = 60.0  # default threshold for minimum remaining duration to consider a handover, can be overridden by handover metadata
+min_delay_tolerance_ms_default = 0.0  # tolerance value for min delay filter in ms, to avoid excluding candidate links with slightly higher delay than the minimum (can be tuned based on expected delay variability and handover requirements)
+longest_duration_tolerance_s_default = 0.0  # tolerance value for longest duration filter, to avoid excluding candidate links with slightly shorter duration than the maximum (can be tuned based on expected link duration variability and handover requirements)
+max_rate_tolerance_mbit_default = 0.0  # tolerance value for max rate filter in Mbit/s, to avoid excluding candidate links with slightly lower rate than the maximum (can be tuned based on expected rate variability and handover requirements)
 
 hosts_ipv6_cache: Dict[str, str] = {}
 grd_ipv6 = ""
@@ -288,6 +295,7 @@ def wait_for_link_local_via_route(dst_ipv6: str, timeout_s: float = 2.0, poll_s:
 
 
 def parse_delay(delay) -> float:
+    # return rate in ms, accepting int/float (assumed to be ms) or string with units (e.g. "100ms", "0.1s", "100000us")
     if isinstance(delay, (int, float)):
         return float(delay)
     if isinstance(delay, str):
@@ -301,6 +309,20 @@ def parse_delay(delay) -> float:
         raise ValueError(f"Unknown delay format: {delay}")
     raise ValueError(f"Invalid delay type: {type(delay)}")
 
+def parse_rate(rate) -> float:
+    # return rate in Mbit/s, accepting int/float (assumed to be Mbit/s) or string with units (e.g. "100Mbit", "100000Kbit", "100000000bit")
+    if isinstance(rate, (int, float)):
+        return float(rate)
+    if isinstance(rate, str):
+        rate = rate.strip().lower()
+        if rate.endswith("mbit"):
+            return float(rate[:-4])
+        if rate.endswith("kbit"):
+            return float(rate[:-4]) / 1000
+        if rate.endswith("bit"):
+            return float(rate[:-3]) / 1000000
+        raise ValueError(f"Unknown rate format: {rate}")
+    raise ValueError(f"Invalid rate type: {type(rate)}")
 
 def parse_handover_filters(raw_filters: str, accepted_filters: set[str], label: str) -> List[str]:
     # Preserve comma-separated filter order exactly as provided (except surrounding whitespace).
@@ -331,13 +353,6 @@ def parse_expected_duration(expected_duration: Any) -> float:
             return delay_ms / 1000.0
         return float(value)
     raise ValueError(f"Invalid expected_duration type: {type(expected_duration)}")
-
-
-def get_handover_threshold_s(metadata: dict, last_duration: Any = None) -> float:
-    threshold_s = metadata.get("threshold_s", link_duration_initial_value_s/4.0)
-    if last_duration is not None:
-        threshold_s = min(threshold_s, float(last_duration) / 4.0)
-    return threshold_s
 
 
 def is_user_active(user_id: str) -> bool:
@@ -411,7 +426,7 @@ def filter_devs_min_duration(
     new_candidate_devs = []
     for dev, link in candidate_devs:
         remaining_duration = link.get("last_duration", 0) - (now - link.get("last_created", 0))
-        if remaining_duration >= min_remaining_duration_s:
+        if remaining_duration >= min_remaining_duration_s - 1e-6:  # add a small epsilon to avoid excluding links that are very close to the threshold due to timing imprecision
             new_candidate_devs.append((dev, link))
     if not new_candidate_devs:
         # if no candidate dev has remaining duration above threshold, keep all candidates for the next selection step (which can be based on other criteria like load balancing or orbit distance)
@@ -461,7 +476,7 @@ def filter_devs_min_orbit_hops(
         new_candidate_devs = [
             (dev, link)
             for dev, link in candidate_devs
-            if link.get("remote_endpoint_name") and get_orbit_distance_between_satellites(link.get("remote_endpoint_name"), endpoint_name) <= best_orbit_hops + tolerance
+            if link.get("remote_endpoint_name") and get_orbit_distance_between_satellites(link.get("remote_endpoint_name"), endpoint_name) <= best_orbit_hops + tolerance + 1e-6
         ]
         logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by min orbit hops ({best_orbit_hops}): {list(dev for dev, _ in new_candidate_devs)}")
         return new_candidate_devs
@@ -472,7 +487,6 @@ def filter_devs_min_orbit_hops(
 def filter_devs_min_orbit_hops_coupled(
     user_id: str,   
     access_sat_couples: List[Tuple[str, str]],
-    min_remaining_duration_s: float,
     tolerance: int = 2,
 ) -> List[Tuple[str, str]]:
     # find minimum orbit hops
@@ -558,6 +572,7 @@ def filter_devs_longest_duration_coupled(
 def filter_devs_longest_duration(
     user_id: str,
     candidate_devs: List[Tuple[str, Dict[str, Any]]],
+    tolerance: float,
     candidate_type: str,
 ) -> List[Tuple[str, Dict[str, Any]]]:
     now = time.time()
@@ -569,7 +584,7 @@ def filter_devs_longest_duration(
     new_candidate_devs = [
         (dev, link)
         for dev, link in candidate_devs
-        if remaining_by_dev[dev] >= max_remaining_duration - 1e-6 # use a small tolerance to avoid floating point comparison issues
+        if remaining_by_dev[dev] >= max_remaining_duration - tolerance - 1e-6 # use a small tolerance to avoid floating point comparison issues
     ]
     logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by max remaining duration ({max_remaining_duration:.1f}s): {list(dev for dev, _ in new_candidate_devs)}")
     return new_candidate_devs
@@ -577,6 +592,7 @@ def filter_devs_longest_duration(
 def filter_devs_min_delay(
     user_id: str,
     candidate_devs: List[Tuple[str, Dict[str, Any]]],
+    tolerance: float,
     candidate_type: str,
 ) -> List[Tuple[str, Dict[str, Any]]]:
     now = time.time()
@@ -588,7 +604,7 @@ def filter_devs_min_delay(
     new_candidate_devs = [
         (dev, link)
         for dev, link in candidate_devs
-        if delay_by_dev[dev] <= min_delay + 1e-6 # use a small tolerance to avoid floating point comparison issues
+        if delay_by_dev[dev] <= min_delay + tolerance + 1e-6 # use a small tolerance to avoid floating point comparison issues
     ]
     logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by min delay ({min_delay:.1f}ms): {list(dev for dev, _ in new_candidate_devs)}")
     return new_candidate_devs
@@ -598,13 +614,11 @@ def filter_devs_min_delay_coupled(
     access_sat_couples: List[Tuple[str, str]],
     tolerance: float = 0,
 ) -> List[Tuple[str, str]]:
-    # find minimum orbit hops
     new_access_sat_couples = []
     user_links_db = user_db.get(user_id, {}).get("user_links_db", {}) or {}
     grd_links_db = links_db
     min_delay_couples = {}
     best_delay = None
-    now = time.time()
     for c_grd_dev, c_user_dev in access_sat_couples:
         delay_grd_dev = parse_delay(grd_links_db.get(c_grd_dev, {}).get("delay", 0))
         delay_user_dev = parse_delay(user_links_db.get(c_user_dev, {}).get("delay", 0))
@@ -623,6 +637,55 @@ def filter_devs_min_delay_coupled(
         new_access_sat_couples = access_sat_couples
     else:
         logging.debug(f"🔎 Candidate access links for user {user_id} after filtering by minimum delay ({best_delay:.1f}ms): {new_access_sat_couples}")
+    return new_access_sat_couples
+
+def filter_devs_max_rate(
+    user_id: str,
+    candidate_devs: List[Tuple[str, Dict[str, Any]]],
+    tolerance: float,
+    candidate_type: str,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    rate_by_dev = {
+        dev: parse_rate(link.get("rate", 0))
+        for dev, link in candidate_devs
+    }
+    max_rate = max(rate_by_dev.values())
+    new_candidate_devs = [
+        (dev, link)
+        for dev, link in candidate_devs
+        if rate_by_dev[dev] >= max_rate - tolerance - 1e-6 # use a small tolerance to avoid floating point comparison issues
+    ]
+    logging.debug(f"🔎 Candidate {candidate_type} links for user {user_id} after filtering by max rate ({max_rate:.1f}Mbit/s): {list(dev for dev, _ in new_candidate_devs)}")
+    return new_candidate_devs
+
+def filter_devs_max_rate_coupled(
+    user_id: str,   
+    access_sat_couples: List[Tuple[str, str]],
+    tolerance: float = 0,
+) -> List[Tuple[str, str]]:
+    new_access_sat_couples = []
+    user_links_db = user_db.get(user_id, {}).get("user_links_db", {}) or {}
+    grd_links_db = links_db
+    max_rate_couples = {}
+    best_rate = None
+    for c_grd_dev, c_user_dev in access_sat_couples:
+        rate_grd_dev = parse_rate(grd_links_db.get(c_grd_dev, {}).get("rate", 0))
+        rate_user_dev = parse_rate(user_links_db.get(c_user_dev, {}).get("rate", 0))
+        couple_rate = min(rate_grd_dev, rate_user_dev) # the couple rate is the minimum rate among the user and grd dev to avoid selecting couples with one of the two links having a very low rate even if the other link has a high rate
+        max_rate_couples[(c_grd_dev, c_user_dev)] = couple_rate
+        if best_rate is None or couple_rate > best_rate:
+            best_rate = couple_rate
+    if best_rate is not None:
+        new_access_sat_couples = [
+            (c_grd_dev, c_user_dev)
+            for (c_grd_dev, c_user_dev), couple_rate in max_rate_couples.items()
+            if couple_rate >= best_rate - tolerance - 1e-6 # use a small tolerance to avoid floating point comparison issues
+        ]
+    if not new_access_sat_couples:
+        logging.warning(f"⚠️ No couple access links for user {user_id} passed max-rate filtering, keeping all candidates for next selection step")
+        new_access_sat_couples = access_sat_couples
+    else:
+        logging.debug(f"🔎 Candidate access links for user {user_id} after filtering by maximum rate ({best_rate:.1f}Mbit/s): {new_access_sat_couples}")
     return new_access_sat_couples
 
 # ----------------------------
@@ -772,9 +835,11 @@ def user_handover_strategy(user_id: str, metadata: dict, new_grd_dev: str, hando
         new_grd_dev = user_db.get(user_id, {}).get("grd_dev", None)
     user_links_db = user_db.get(user_id, {}).get("user_links_db") or {}
     link_status_acceptable = "available"  # for user dev we consider all available links as candidates for handover
-    user_dev_last_duration = user_links_db.get(user_dev, {}).get("last_duration", None)
     user_last_handover = user_db.get(user_id, {}).get("last_handover")
     min_hops_tolerance = metadata.get("min_hops_tolerance", 0)  # tolerance in number of hops for min orbit hops filter
+    longest_duration_tolerance_s = metadata.get("longest_duration_tolerance_s",longest_duration_tolerance_s_default)
+    min_delay_tolerance_ms = metadata.get("min_delay_tolerance_ms",min_delay_tolerance_ms_default)
+    max_rate_tolerance_mbit = metadata.get("max_rate_tolerance_mbit", max_rate_tolerance_mbit_default)
     if user_last_handover is None:
         user_last_handover = 0.0
     
@@ -787,18 +852,18 @@ def user_handover_strategy(user_id: str, metadata: dict, new_grd_dev: str, hando
     else:
         remaining_duration = user_links_db.get(user_dev, {}).get("last_duration", 0) - (time.time() - user_links_db.get(user_dev, {}).get("last_created", 0))
     
-    threshold_s = get_handover_threshold_s(metadata, user_dev_last_duration)  # threshold for minimum remaining duration to consider a handover
+    lifetime_threshold_s = metadata.get("lifetime_threshold_s", lifetime_threshold_s_default)  # threshold for minimum remaining duration to consider a handover
     
     current_ok = (
         user_dev is not None
         and user_links_db.get(user_dev, {}).get("status") == link_status_acceptable
     )
-    if current_ok and remaining_duration > threshold_s and time.time() - user_last_handover < handover_hold_period_s:
+    if current_ok and remaining_duration > lifetime_threshold_s and time.time() - user_last_handover < handover_hold_period_s_default:
         # no handover while current link is healthy and hold period is still active
-        logging.debug(f"✅ Current user link {user_dev} for user {user_id} has remaining duration {remaining_duration:.1f}s and threshold {threshold_s:.1f}s, sec since last handover {time.time() - user_last_handover:.1f}s and handover_hold_period_s {handover_hold_period_s:.1f}s, no handover needed")
+        logging.debug(f"✅ Current user link {user_dev} for user {user_id} has remaining duration {remaining_duration:.1f}s and threshold {lifetime_threshold_s:.1f}s, sec since last handover {time.time() - user_last_handover:.1f}s and handover_hold_period_s {handover_hold_period_s_default:.1f}s, no handover needed")
         return user_dev, False
     
-    logging.debug(f"⏱️ Evaluating user handover for user {user_id} on current user link {user_dev} with remaining duration {remaining_duration:.1f}s and threshold {threshold_s:.1f}s")
+    logging.debug(f"⏱️ Evaluating user handover for user {user_id} on current user link {user_dev} with remaining duration {remaining_duration:.1f}s and threshold {lifetime_threshold_s:.1f}s")
     candidate_devs = [(dev,l) for dev,l in user_links_db.items() if l.get("status") == link_status_acceptable]
     if not candidate_devs:
         logging.warning(f"⚠️ No candidate links with status '{link_status_acceptable}' found for user {user_id} to handover, keeping current link {user_dev} if still available")
@@ -806,16 +871,34 @@ def user_handover_strategy(user_id: str, metadata: dict, new_grd_dev: str, hando
     for filter in handover_filters:
         if filter == "min_duration":
             # remove links with low remaining duration
-            candidate_devs = filter_devs_min_duration(user_id, candidate_devs, metadata.get("min_remaining_duration_s", threshold_s), candidate_type="user")
+            candidate_devs = filter_devs_min_duration(user_id, candidate_devs, metadata.get("min_remaining_duration_s", lifetime_threshold_s), candidate_type="user")
         if filter == "min_orbit_hops":
             # remove links with orbit distance greather than the minimum ones among candidates
             candidate_devs = filter_devs_min_orbit_hops(user_id, candidate_devs, new_grd_dev, candidate_type="user", tolerance=min_hops_tolerance)
         if filter == "longest_duration":
             # remove links with remaining duration lower than the maximum one among candidates
-            candidate_devs = filter_devs_longest_duration(user_id, candidate_devs, candidate_type="user")
+            candidate_devs = filter_devs_longest_duration(
+                user_id,
+                candidate_devs,
+                tolerance=longest_duration_tolerance_s,
+                candidate_type="user",
+            )
         if filter == "min_delay":
             # remove links with delay higher than the minimum one among candidates
-            candidate_devs = filter_devs_min_delay(user_id, candidate_devs, candidate_type="user")
+            candidate_devs = filter_devs_min_delay(
+                user_id,
+                candidate_devs,
+                tolerance=min_delay_tolerance_ms,
+                candidate_type="user",
+            )
+        if filter == "max_rate":
+            # remove links with rate lower than the maximum one among candidates
+            candidate_devs = filter_devs_max_rate(
+                user_id,
+                candidate_devs,
+                tolerance=metadata.get("max_rate_tolerance_mbit", max_rate_tolerance_mbit_default),
+                candidate_type="user",
+            )
     
     if not candidate_devs:
         logging.warning(f"⚠️ No candidate user links found for user {user_id} after filtering, keeping current user link {user_dev} if still available")
@@ -834,10 +917,12 @@ def grd_handover_strategy(user_id: str, metadata: dict, new_user_dev: str, hando
     if new_user_dev==None:
         new_user_dev = user_db.get(user_id, {}).get("user_dev", None)
     acceptable_link_status = "connected" # for grd dev we consider only connected links as candidates for handover
-    grd_dev_last_duration = links_db.get(grd_dev, {}).get("last_duration", None)
-    threshold_s = get_handover_threshold_s(metadata, grd_dev_last_duration)  # threshold for minimum remaining duration to enforce an handover
-    load_balancing_tolerance = metadata.get("load_balancing_tolerance", 4)  # tolerance in n. connections for load balancing filter
-    min_hops_tolerance = metadata.get("min_hops_tolerance", 0)  # tolerance in number of hops for min orbit hops filter
+    lifetime_threshold_s = metadata.get("lifetime_threshold_s", lifetime_threshold_s_default)  # threshold for minimum remaining duration to enforce an handover
+    load_balancing_tolerance = metadata.get("load_balancing_tolerance", load_balancing_tolerance_default)  # tolerance in n. connections for load balancing filter
+    min_hops_tolerance = metadata.get("min_hops_tolerance", min_hops_tolerance_default)  # tolerance in number of hops for min orbit hops filter
+    longest_duration_tolerance_s = metadata.get("longest_duration_tolerance_s",longest_duration_tolerance_s_default)
+    min_delay_tolerance_ms = metadata.get("min_delay_tolerance_ms",min_delay_tolerance_ms_default)
+    max_rate_tolerance_mbit = metadata.get("max_rate_tolerance_mbit", max_rate_tolerance_mbit_default)
     grd_last_handover = user_db.get(user_id, {}).get("last_handover")
     if grd_last_handover is None:
         grd_last_handover = 0.0
@@ -855,12 +940,12 @@ def grd_handover_strategy(user_id: str, metadata: dict, new_user_dev: str, hando
         grd_dev is not None
         and links_db.get(grd_dev, {}).get("status") == acceptable_link_status
     )
-    if current_ok and remaining_duration > threshold_s and time.time() - grd_last_handover < handover_hold_period_s:
+    if current_ok and remaining_duration > lifetime_threshold_s and (time.time() - grd_last_handover) < handover_hold_period_s_default:
         # no handover while current link is healthy and hold period is still active
-        logging.debug(f"✅ Current grd link {grd_dev} for user {user_id} has remaining duration {remaining_duration:.1f}s and threshold {threshold_s:.1f}s, sec since last handover {time.time() - grd_last_handover:.1f}s and handover_hold_period_s {handover_hold_period_s:.1f}s, no handover needed")
+        logging.debug(f"✅ Current grd link {grd_dev} for user {user_id} has remaining duration {remaining_duration:.1f}s and threshold {lifetime_threshold_s:.1f}s, sec since last handover {time.time() - grd_last_handover:.1f}s and handover_hold_period_s {handover_hold_period_s_default:.1f}s, no handover needed")
         return grd_dev, False
     
-    logging.debug(f"⏱️ Evaluating grd handover for user {user_id} on current grd link {grd_dev} with remaining duration {remaining_duration:.1f}s and threshold {threshold_s:.1f}s")
+    logging.debug(f"⏱️ Evaluating grd handover for user {user_id} on current grd link {grd_dev} with remaining duration {remaining_duration:.1f}s and threshold {lifetime_threshold_s:.1f}s")
     # grd link has not enough remaining duration, handover needed
     candidate_devs = [(dev,l) for dev,l in links_db.items() if l.get("status") == acceptable_link_status]
     if not candidate_devs:
@@ -868,16 +953,34 @@ def grd_handover_strategy(user_id: str, metadata: dict, new_user_dev: str, hando
     for filter in handover_filters:
         if filter == "min_duration":
             # remove links with low remaining duration
-            candidate_devs = filter_devs_min_duration(user_id, candidate_devs, metadata.get("min_remaining_duration_s", threshold_s), candidate_type="grd")
+            candidate_devs = filter_devs_min_duration(user_id, candidate_devs, metadata.get("min_remaining_duration_s", lifetime_threshold_s), candidate_type="grd")
         if filter == "longest_duration":
             # remove links with remaining duration lower than the maximum one among candidates
-            candidate_devs = filter_devs_longest_duration(user_id, candidate_devs, candidate_type="grd")
+            candidate_devs = filter_devs_longest_duration(
+                user_id,
+                candidate_devs,
+                tolerance=longest_duration_tolerance_s,
+                candidate_type="grd",
+            )
         if filter == "load_balancing":
             # remove links with user count greather than the minimum ones among candidates for load balancing
             candidate_devs = filter_devs_load_balancing(user_id, candidate_devs, load_balancing_tolerance, candidate_type="grd")
         if filter == "min_delay":
             # remove links with delay higher than the minimum one among candidates
-            candidate_devs = filter_devs_min_delay(user_id, candidate_devs, candidate_type="grd")
+            candidate_devs = filter_devs_min_delay(
+                user_id,
+                candidate_devs,
+                tolerance=min_delay_tolerance_ms,
+                candidate_type="grd",
+            )
+        if filter == "max_rate":
+            # remove links with rate lower than the maximum one among candidates
+            candidate_devs = filter_devs_max_rate(
+                user_id,
+                candidate_devs,
+                tolerance=max_rate_tolerance_mbit,
+                candidate_type="grd",
+            )
         if user_id != node_name:
             # filters not applicable for grd default user access
             if filter == "min_orbit_hops":
@@ -896,10 +999,13 @@ def grd_handover_strategy(user_id: str, metadata: dict, new_user_dev: str, hando
 
 def handover_strategy_coupled(user_id: str, metadata: dict, handover_filters: List[str]) -> Tuple[str, str, bool, bool]:
 
-    threshold_s = metadata.get("threshold_s", handover_hold_period_s)
+    lifetime_threshold_s = metadata.get("lifetime_threshold_s", lifetime_threshold_s_default)  # threshold for minimum remaining duration to consider a handover
+    handover_hold_period_s = metadata.get("handover_hold_period_s", handover_hold_period_s_default)  # hold period after a handover during which no new handover is allowed to let the new link stabilize and avoid ping-pong effects
+    
     last_handover = user_db.get(user_id, {}).get("last_handover")
     if last_handover is None:
         last_handover = 0.0
+    
     # access_sat_couples
     user_link_db = user_db.get(user_id, {}).get("user_links_db", {}) or {}
     grd_link_db = links_db
@@ -919,12 +1025,14 @@ def handover_strategy_coupled(user_id: str, metadata: dict, handover_filters: Li
     else:
         remaining_duration_grd_dev = grd_link_db.get(grd_dev, {}).get("last_duration", 0) - (time.time() - grd_link_db.get(grd_dev, {}).get("last_created", 0))
 
-    remaining_duration_couple = min(remaining_duration_usr_dev, remaining_duration_grd_dev)
-    if remaining_duration_couple > threshold_s and (time.time() - last_handover) < handover_hold_period_s:
-        logging.debug(f"✅ Current grd-user link couple ({grd_dev}, {user_dev}) for user {user_id} has remaining duration {remaining_duration_couple:.1f}s and threshold {threshold_s:.1f}s, sec since last handover {time.time() - last_handover:.1f}s and handover_hold_period_s {handover_hold_period_s:.1f}s, no handover needed")
+    remaining_duration_coupled = min(remaining_duration_usr_dev, remaining_duration_grd_dev)
+    if remaining_duration_coupled > lifetime_threshold_s and (time.time() - last_handover) < handover_hold_period_s:
+        logging.debug(f"✅ Current grd-user link couple ({grd_dev}, {user_dev}) for user {user_id} has remaining duration {remaining_duration_coupled:.1f}s and threshold {lifetime_threshold_s:.1f}s, sec since last handover {time.time() - last_handover:.1f}s and handover_hold_period_s {handover_hold_period_s:.1f}s, no handover needed")
         return grd_dev, user_dev, False, False
     
     # filtering phase
+    
+    ## couples building
     candidate_grd_devs = [(dev, l) for dev, l in grd_link_db.items() if l.get("status") == "connected"]
     candidate_usr_devs = [(dev, link) for dev, link in user_link_db.items() if link.get("status") == "available"]
     access_sat_couples = [
@@ -932,15 +1040,18 @@ def handover_strategy_coupled(user_id: str, metadata: dict, handover_filters: Li
         for candidate_grd_dev, _ in candidate_grd_devs
         for candidate_usr_dev, _ in candidate_usr_devs
     ]
+    ## filters application
     for filter in handover_filters:
         if filter == "min_duration":
-            access_sat_couples = filter_devs_min_duration_coupled(user_id, access_sat_couples, metadata.get("min_remaining_duration_s", threshold_s))
+            access_sat_couples = filter_devs_min_duration_coupled(user_id, access_sat_couples, metadata.get("min_remaining_duration_s", lifetime_threshold_s))
         if filter == "min_orbit_hops":
-            access_sat_couples = filter_devs_min_orbit_hops_coupled(user_id, access_sat_couples, metadata.get("min_remaining_duration_s", threshold_s), tolerance=metadata.get("min_hops_tolerance", 0))
+            access_sat_couples = filter_devs_min_orbit_hops_coupled(user_id, access_sat_couples, tolerance=metadata.get("min_hops_tolerance",min_hops_tolerance_default))
         if filter == "min_delay":
-            access_sat_couples = filter_devs_min_delay_coupled(user_id, access_sat_couples, tolerance=metadata.get("min_delay_tolerance", 0))
+            access_sat_couples = filter_devs_min_delay_coupled(user_id, access_sat_couples, tolerance=metadata.get("min_delay_tolerance_ms",min_delay_tolerance_ms_default))
         if filter == "longest_duration":
-            access_sat_couples = filter_devs_longest_duration_coupled(user_id, access_sat_couples, metadata.get("longest_duration_tolerance", 0))
+            access_sat_couples = filter_devs_longest_duration_coupled(user_id, access_sat_couples, metadata.get("longest_duration_tolerance_s", longest_duration_tolerance_s_default))
+        if filter == "max_rate":
+            access_sat_couples = filter_devs_max_rate_coupled(user_id, access_sat_couples, tolerance=metadata.get("max_rate_tolerance_mbit", max_rate_tolerance_mbit_default))
     if not access_sat_couples:
         logging.warning(f"⚠️ No candidate grd-user link couples found for user {user_id} after filtering, keeping current links ({grd_dev}, {user_dev}) if still available")
         return grd_dev, user_dev, False, False
@@ -1051,7 +1162,7 @@ def processing_handover_loop() -> None:
             logging.error("❌ Error in handover processing loop: %s", e)
         time.sleep(handover_periodic_check_s)  # periodic check interval for handover decision 
 
-def processing_handover_loop_couple() -> None:
+def processing_handover_loop_coupled() -> None:
     while True:
         try:
             logging.debug("🔄 Starting handover evaluation...")
@@ -1595,7 +1706,7 @@ def serve(bind_addr: str, port: int, ho_delay: float) -> None:
 #   ENTRYPOINT
 # ----------------------------
 def main() -> None:
-    global process_connection_handover, grd_ipv6, is_walker_star, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links, handover_delay_ms, report_file, user_handover_filters, grd_handover_filters, handover_hold_period_s
+    global process_connection_handover, grd_ipv6, is_walker_star, user_callback_port, handover_metadata, link_duration_initial_value_s, link_setup_delay_s, max_links, handover_delay_ms, report_file, user_handover_filters, grd_handover_filters, handover_hold_period_s_default
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default="::", help="Address to bind the UDP server for handover (default: :: for all interfaces)")
@@ -1605,6 +1716,7 @@ def main() -> None:
     ap.add_argument("--grd-handover-filters", type=str, default="min_duration,min_orbit_hops,load_balancing,longest_duration", help="comma separated value of filters to apply in sequence for grd handover decisions (default: min_duration,min_orbit_hops,load_balancing,longest_duration)")
     ap.add_argument("--handover-strategy-metadata", type=json.loads, default='{}', help="JSON string with metadata parameters for the handover strategy (e.g., threshold values, weights, etc.)")
     ap.add_argument("--handover-delay", type=float, help="Handover delay in mseconds (requires veth0_rt interface, use app/shaping-ns-create-v6.sh)", default=0)
+    ap.add_argument("--handover-mode", type=float, default=2, help="Handover mode: 1 for independent user and grd handover, 2 for combined approach (default: 2)")
     ap.add_argument("--usr-port", type=int, default=5006, help="Default UDP port where user agent listens for commands (default: 5006)")
     ap.add_argument("--sat-ipv6-prefix", default="2001:db8:100::/64", help="IPv6 prefix used for satellite IPv6 addresses (default: 2001:db8:100::/64)")
     ap.add_argument("--link-setup-delay", type=float, default=5, help="Estimated time in seconds needed by to setup relevat routes and interfaces after link creatio, default 5s)")
@@ -1652,7 +1764,7 @@ def main() -> None:
     process_connection_handover = lifetime_strategy_connection_handover
     handover_metadata = args.handover_strategy_metadata
     handover_delay_ms = args.handover_delay
-    handover_hold_period_s = args.handover_hold_period
+    handover_hold_period_s_default = args.handover_hold_period
     
     if args.report:
         report_file_name = f"report_{os.environ['NODE_NAME']}_conn_manager_grd.log"
@@ -1703,12 +1815,23 @@ def main() -> None:
         ).start()
     
     # Start background thread to periodically evaluate local handover decisions for users based on the selected strategy and current links_db state
-    threading.Thread(
-        target=processing_handover_loop_couple,
-        args=(),
-        daemon=True,
-        name="local-handover-loop",
-    ).start()
+    if args.handover_mode == 2:
+        threading.Thread(
+            target=processing_handover_loop_coupled,
+            args=(),
+            daemon=True,
+            name="local-handover-loop",
+        ).start()
+    elif args.handover_mode == 1:
+        threading.Thread(
+            target=processing_handover_loop,
+            args=(),
+            daemon=True,
+            name="local-handover-loop",
+        ).start()
+    else:
+        logging.error(f"❌ Invalid handover mode {args.handover_mode} specified, skipping local handover loop")   
+        exit(1)
     threading.Thread(
         target=heartbeat_monitor_loop,
         args=(),
