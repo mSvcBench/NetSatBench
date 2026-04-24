@@ -1743,8 +1743,8 @@ def main() -> None:
     is_walker_star = args.walker_star
     
     # Set handover filters preserving the exact comma-separated sequence provided by the user.
-    accepted_user_filters = {"min_duration", "min_orbit_hops", "longest_duration","min_delay"}
-    accepted_grd_filters = {"min_duration", "min_orbit_hops", "load_balancing", "longest_duration", "min_delay"}
+    accepted_user_filters = {"min_duration", "min_orbit_hops", "longest_duration","min_delay","max_rate"}
+    accepted_grd_filters = {"min_duration", "min_orbit_hops", "load_balancing", "longest_duration", "min_delay", "max_rate"}
     try:
         user_handover_filters = parse_handover_filters(
             args.user_handover_filters,
