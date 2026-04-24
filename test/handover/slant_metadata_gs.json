@@ -1,0 +1,6 @@
+{
+    "zenith_rate_mbps":200, 
+    "zenith_altitude_km":1200, 
+    "zenith_atm_loss_db":0.5,
+    "zenith_SNR_db": 30
+}
