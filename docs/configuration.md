@@ -1,7 +1,7 @@
 <div align="center">
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
-# NetSatBench Configuration Reference Manual
+# Configuration Reference Manual
 
 </div>
 
@@ -17,13 +17,13 @@
 
 ## Introduction
 
-This document provides a unified reference for all JSON configuration files used by **NetSatBench**. It describes the structure, semantics, and constraints of:
+This document provides a unified reference for all JSON configuration files used by NetSatBench. It describes the structure, semantics, and constraints of:
 
 - the **worker configuration file**, `worker-config.json`, defining the execution cluster and underlay networking substrate;
 - the **satellite configuration file**, `sat-config.json`, defining static configuration parameters of the satellite system;
 - the **epoch configuration files**, defining time-based events affecting dynamic behavior at runtime.
 
-All configurations are expressed in **JSON format** and are processed by control scripts executed on the control host. Configuration data are stored in the **Etcd** datastore and consumed by runtime components.
+All configurations are expressed in **JSON format** and are processed by control CLI executed on the control host. Configuration data are stored in the **Etcd** datastore and consumed by runtime components.
 
 NetSatBench distinguishes between:
 - an **underlay network**, providing IP connectivity between containers across workers; and
@@ -125,7 +125,7 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
 
 * **Type**: string 
 * **Requirement**: mandatory, if not included in `workers-common`
-* **Description**: Absolute path to the private SSH key used for authentication. The key must be readable by the control scripts and authorized on the worker host.
+* **Description**: Absolute path to the private SSH key used for authentication. The key must be readable by the control CLI and authorized on the worker host.
 
 ##### `sat-vnet`
 
@@ -145,14 +145,14 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
 * **Type**: string 
 * **Requirement**: mandatory, if not included in `workers-common`
 * **Units / Format**: n. of CPU cores or millicore (e.g., `4`, `2.5`, `500m`).
-* **Description**: CPU capacity available on the worker for container execution, used by control scripts for container scheduling.
+* **Description**: CPU capacity available on the worker for container execution, used by control CLI for container scheduling.
 
 ##### `mem`
 
 * **Type**: string 
 * **Requirement**: mandatory, if not included in `workers-common`
 * **Units / Format**: Binary units `KiB`, `MiB`, `GiB`, `TiB` (e.g., `6GiB`).
-* **Description**: Memory capacity available on the worker for container execution, used by control scripts for container scheduling.
+* **Description**: Memory capacity available on the worker for container execution, used by control CLI for container scheduling.
 
 ---
 
@@ -198,7 +198,6 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
       "match-key": "type",
       "match-value": "satellite",
       "config-common": {
-        "type": "undefined",
         "n_antennas": 2,
         "metadata": {},
         "image": "msvcbench/sat-container:latest",
@@ -296,7 +295,6 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
       "match-key": "type",
       "match-value": "satellite",
       "config-common": {
-        "type": "undefined",
         "n_antennas": 2,
         "metadata": {},
         "image": "msvcbench/sat-container:latest",
@@ -365,13 +363,13 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 
 * **Type**: integer 
 * **Requirement**: optional
-* **Description**: Number of antennas associated with the node. Informational only; not interpreted by control scripts.
+* **Description**: Number of antennas associated with the node. Informational only; not interpreted by control CLI.
 
 ###### `metadata`
 
 * **Type**: object 
 * **Requirement**: optional
-* **Description**: User-defined structured metadata. Not interpreted by control scripts.
+* **Description**: User-defined structured metadata. Not interpreted by control CLI.
 
 ###### `image`
 
@@ -383,7 +381,7 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 
 * **Type**: array of strings 
 * **Requirement**: optional
-* **Description**: List of Docker images for sidecar containers to run alongside the main container. Currently not supported by control scripts.
+* **Description**: List of Docker images for sidecar containers to run alongside the main container. Currently not supported by control CLI.
 
 ###### `cpu-request`
 
@@ -444,13 +442,13 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 
 * **Type**: string 
 * **Requirement**: required if `enable-routing` is `true` and not included in per-node configuration
-* **Description**: Identifier of the routing configuration Python module used by the node agent (see `routing-interface.md`).
+* **Description**: Identifier of the routing configuration Python plug-in used by the node agent (see `routing-interface.md`).
 
 ###### `routing-metadata`
 
 * **Type**: object
 * **Requirement**: optional
-* **Description**: Module-specific configuration stored in Etcd used by the routing module (e.g., IS-IS area ID).
+* **Description**: Plug-in-specific configuration stored in Etcd used by the routing plug-in (e.g., IS-IS area ID).
 
 ###### `auto-assign-ips`
 
@@ -543,7 +541,7 @@ An epoch configuration file defines dynamic events that modify the state of the 
 * overlay links to add, update, or delete; and
 * commands to execute inside node containers.
 
-Epoch files are loaded sequentially by the control logic (nsb-run) and applied at the specified emulation time with an offset equal to the difference between the current epoch time and the first epoch time. 
+Epoch files are loaded sequentially by the control logic (`nsb.py run`) and applied at the specified emulation time with an offset equal to the difference between the current epoch time and the first epoch time. 
 
 The epoch file names are expected to terminate with a numerical suffix that indicates their processing sequence. E.g., `NetSatBench-epoch0.json`, `NetSatBench-epoch1.json`, etc. 
 
@@ -681,14 +679,14 @@ All fields except `time` are optional.
 * **Units / Format**: Number of packets.
 * **Description**: Maximum number of packets that can be queued in the `tc netem` buffer.
 
-#### `pos1`
+##### `pos1`
 * **Type**: string
 * **Requirement**: optional
 * **Units / Format**: "longitude (deg),latitude (deg), altitude (km)" (e.g., `-1.311470,50.822530,0.00`).
 * **Description**: Position of the first endpoint.
 * **Note**: This field is informational and does not affect the emulation behavior. It can be used by user-defined applications or visualization tools that consume epoch data.
 
-#### `pos2`
+##### `pos2`
 * **Type**: string
 * **Requirement**: optional
 * **Units / Format**: "longitude (deg),latitude (deg), altitude (km)" (e.g., `-7.910557,36.775805,1198.28`).
@@ -773,5 +771,3 @@ Per-entry:
 
 * Worker names referenced in `sat-config.json` must exist in `worker-config.json`.
 * All node names referenced in epoch files (`endpoint1`, `endpoint2`, and `run` keys) must correspond to nodes defined in `sat-config.json`.
-
-```
