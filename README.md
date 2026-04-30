@@ -13,7 +13,7 @@
 
 **NetSatBench** is a distributed emulation framework for evaluating communication protocols and application workloads over large-scale satellite systems.
 
-The emulated system consists of satellites, ground stations, and user terminals, each implemented as a Linux container and distributed across a cluster of bare-metal or virtual machines. This architecture enables high parallelism and scalability.
+The emulated system consists of satellites, gateway ground stations, and user terminals, each implemented as a Linux container and distributed across a cluster of bare-metal or virtual machines. This architecture enables high parallelism and scalability.
 
 The satellite network is realized as an overlay Layer-2 fabric, where connections (satellite-to-satellite, satellite-to-ground, etc.) are implemented as VXLAN tunnels. Their lifecycle and performance characteristics (e.g., latency, bandwidth, packet loss) follow those of the modeled satellite system in real time.
 
