@@ -78,7 +78,7 @@ Supported execution styles:
 
 Main docs:
 
-- [CLI Emulation Control](docs/contro-commands.md)
+- [CLI Emulation Control](docs/control-commands.md)
 - [CLI Utilities](docs/utils.md)
 - [Configuration and Epoch Files](docs/configuration.md)
 - [Etcd Key-Value Store](docs/etcd.md)
