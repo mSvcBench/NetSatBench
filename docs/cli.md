@@ -1,7 +1,7 @@
 <div align="center">
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
-# NetSatBench Control Commands <!-- omit in toc -->
+# NetSatBench Command-Line Interface <!-- omit in toc -->
 
 </div>
 
@@ -18,7 +18,7 @@
 
 
 ## Overview
-This document describes the control scripts provided with NetSatBench for managing and running satellite network emulations.
+This document describes the control commands provided with NetSatBench for managing and running satellite network emulations.
 The script should be executed from the control host. It is usefull to define the `ETCD_HOST` environment variables to point to the Etcd server used by the control host.
 ```bash
 export ETCD_HOST=<etcd-server-ip>
@@ -36,7 +36,7 @@ export NODE_ETCD_PORT=<etcd-server-port-for-nodes>
 
 
 ## Worker Initialization  
-`control/system-init-docker.py` or `nsb.py system-init-docker`
+`nsb.py system-init-docker` or `control/system-init-docker.py`
 
 This Python script initializes and configures emulation worker nodes using a central **Etcd** datastore.
 
@@ -84,7 +84,7 @@ Run with `--help` to see the full list of available options.
 
 
 ## Worker Cleaning 
-`control/system-clean-docker.py` or `nsb.py system-clean-docker`
+`nsb.py system-clean-docker` or `control/system-clean-docker.py`
 
 This Python script cleans up the emulation worker nodes by removing the Docker network and associated iptables rules created during initialization. It is intended to be executed when the emulation is no longer needed, to free up resources on the worker hosts.
 
