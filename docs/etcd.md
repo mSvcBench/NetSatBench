@@ -1,7 +1,7 @@
 <div align="center">
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
-# NetSatBench ETCD Keyspace <!-- omit in toc --> 
+# ETCD Keyspace <!-- omit in toc --> 
 
 </div>
 
