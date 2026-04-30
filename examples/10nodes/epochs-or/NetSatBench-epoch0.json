@@ -1,0 +1,11 @@
+{
+  "time": "2024-06-01T11:59:58Z",
+  "run": {
+    "usr1": [
+      "ip route replace 172.101.0.2 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink; ip route replace 172.100.0.2 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink; ip route replace 172.100.0.6 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink; ip route replace 172.100.0.10 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink; ip route replace 172.100.0.14 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink; ip route replace 172.100.0.18 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink; ip route replace 172.100.0.22 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink; ip route replace 172.100.0.26 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink; ip route replace 172.100.0.30 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink"
+    ],
+    "sat8": [
+      "ip route replace 172.102.0.2 via 172.100.0.2 dev vl_sat1_1 metric 100 onlink"
+    ]
+  }
+}

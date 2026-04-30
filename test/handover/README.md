@@ -86,7 +86,15 @@ cd ../..
 Create new epochs with hop-based oracle routing:
 
 ```bash
-python3 utils/oracle-routing.py --out-epoch-dir examples/StarPerf/OneWeb/epochs-or-hops --epoch-dir examples/StarPerf/OneWeb/epochs --ip-version 6 --node-type-to-route satellite,gateway --node-type-to-install satellite --routing-metric hops --report --redundancy --drain-before-break-offset 2
+python3 utils/oracle-routing.py --out-epoch-dir examples/StarPerf/OneWeb/epochs-or-hops \
+--epoch-dir examples/StarPerf/OneWeb/epochs \
+--ip-version 6 \
+--node-type-to-route satellite,gateway \
+--node-type-to-install satellite \
+--routing-metric hops \
+--report \
+--redundancy \ 
+--drain-before-break-offset 2
 ```
 
 ### 5.1 Patch first two epoch timestamps
@@ -133,13 +141,10 @@ Inject ping/iperf commands at the desired time during the run.
 Use a `300s` offset so handover agents can finish route/link setup:
 
 ```bash
-./nsb.py run-inject -c examples/StarPerf/OneWeb/sat-config-or-hops-ex.json --offset-seconds 300 --node-type-list user --command-list '/app/ping_to_csv.sh default 1200'
-```
-
-Alternative config variant:
-
-```bash
-./nsb.py run-inject -c examples/StarPerf/OneWeb/sat-config-or-del-ex.json --offset-seconds 300 --node-type-list user --command-list '/app/ping_to_csv.sh default 1200'
+./nsb.py run-inject -c examples/StarPerf/OneWeb/sat-config-or-hops-ex.json \
+--offset-seconds 300 \
+--node-type-list user \
+--command-list '/app/ping_to_csv.sh default 1200'
 ```
 
 #### Run emulation

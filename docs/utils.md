@@ -1,7 +1,7 @@
 <div align="center">
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
-# NetSatBench Utility Scripts
+# Utility CLI
 
 </div>
 
@@ -14,14 +14,12 @@
 - [Inspect Node Status](#inspect-node-status)
 - [Statistics](#statistics)
 - [Inject Run Commands](#inject-run-commands)
-- [Filter Epoch Run Entries](#filter-epoch-run-entries)
-- [Oracle Routing](#oracle-routing-module)
 
 ## Overview
-This document describes the utility scripts provided with NetSatBench for managing and inspecting the emulated satellite network system. These scripts are intended to be executed from the control host and interact with the emulation environment by reading from and writing to the central **Etcd** datastore.
+This document describes the utility commands provided with NetSatBench for managing and inspecting the emulated satellite network system. These commands are intended to be executed from the control host and interact with the emulation environment by reading from and writing to the central **Etcd** datastore.
 
 ## ▶️ Command execution
-`utils/nsb-exec.py` or `nsb.py exec`
+`nsb.py exec`
 
 This utility script allows executing commands on emulated satellite nodes by connecting to their respective containers via SSH. The syntax is similar to `docker exec`.
 
@@ -45,7 +43,7 @@ python3 nsb.py exec -it usr1 bash
 ---
 
 ## ▶️ Command execution by type
-`utils/nsb-exectype.py` or `nsb.py exectype`
+`nsb.py exectype`
 
 This utility executes the same command on all nodes matching a given node type (for example `satellite`, `gateway`, `user`) by delegating each execution to `nsb-exec`.
 
@@ -78,7 +76,7 @@ python3 nsb.py exectype --help
 
 ## 💾 File Copy
 
-`utils/nsb-cp.py` or `nsb.py cp`
+`nsb.py cp`
 
 This utility script allows copying files and directories between the local host and an emulated node by transparently accessing the containers running on remote workers.
 Its syntax and behavior closely mimic `docker cp`, while resolving node placement via Etcd and handling remote execution internally.
@@ -129,7 +127,7 @@ python3 nsb.py cp -r ./configs sat1:/opt/app/configs
 
 ## 💾 File Copy by Type
 
-`utils/nsb-cptype.py` or `nsb.py cptype`
+`nsb.py cptype`
 
 This utility copies files between the local host and all nodes of a given type (for example `satellite`, `gateway`, `user`) by delegating each per-node copy to `nsb-cp`.
 
@@ -167,7 +165,7 @@ python3 nsb.py cptype --help
 
 ## 🖨️ Dump System Status
 
-`utils/nsb-status.py` or `nsb.py status`
+`nsb.py status`
 This utility script retrieves and displays the current status of the emulated satellite system by reading configuration and state information from Etcd. It provides insights into worker, node deployment status, and link connectivity.
  
 ### Usage
@@ -178,7 +176,7 @@ All parameters are optional since necessary information are retrieved from the d
 
 ---
 ## 🖨️ Inspect Node Status
-`utils/nsb-inspect.py` or `nsb.py inspect`
+`nsb.py inspect`
 This utility script allows inspecting the status of a specific node in the emulated satellite system by retrieving detailed information from Etcd and the corresponding container. It provides insights into node configuration, resource usage, and network connectivity.
 
 ### Usage
@@ -190,7 +188,7 @@ Run with `--help` to see the full list of available options.
 ---
 
 ## 📊 Statistics
-`utils/nsb-stats.py` or `nsb.py stats`
+`nsb.py stats`
 
 This utility script collects and displays statistics from the emulated satellite system.
 It retrieves data from Etcd and epoch files and can generate reports on various performance metrics.
@@ -204,16 +202,16 @@ python3 nsb.py stats [options]
 ---
 
 ## 📌 Inject Run Commands
-`utils/nsb-run-inject.py`
+`nsb.py run-inject`
 
-This utility injects runtime shell commands into the `run` section of the epoch file selected by time. It can target either a single node or node types, using the same `run` structure consumed later by `control/nsb-run.py`.
+This utility injects runtime shell commands into the `run` section of the epoch file selected by time. It can target either a single node or node types, using the same `run` structure consumed later by `nsb.py run`.
 
 The selected epoch is the first epoch file whose `time` is greater than or equal to the requested target time. The target time can be provided explicitly with `--target-time`, or derived from the first epoch time plus `--offset-seconds`.
 
 ### Usage
 
 ```bash
-python3 utils/nsb-run-inject.py -c <sat-config.json> [--target-time <iso-time> | --offset-seconds <seconds>] [--node <node-name> | --node-type-list <type1,type2,...>] --command-list <command1,command2>
+python3 nsb.py run-inject -c <sat-config.json> [--target-time <iso-time> | --offset-seconds <seconds>] [--node <node-name> | --node-type-list <type1,type2,...>] --command-list <command1,command2>
 ```
 
 ### Examples
@@ -221,7 +219,7 @@ python3 utils/nsb-run-inject.py -c <sat-config.json> [--target-time <iso-time> |
 Inject a command after `2024-06-01T12:00:35Z` for a specific node:
 
 ```bash
-python3 utils/nsb-run-inject.py \
+python3 nsb.py run-inject \
   -c examples/10nodes/sat-config.json \
   --target-time 2024-06-01T12:00:35Z \
   --node grd1 \
@@ -231,7 +229,7 @@ python3 utils/nsb-run-inject.py \
 Inject commands after 120 seconds from the first epoch, mapping each command to a node type:
 
 ```bash
-python3 utils/nsb-run-inject.py \
+python3 nsb.py run-inject \
   -c examples/10nodes/sat-config.json \
   --offset-seconds 120 \
   --node-type-list "usr1,grd1" \
@@ -247,7 +245,7 @@ python3 utils/nsb-run-inject.py \
 Example:
 
 ```bash
-python3 utils/nsb-run-inject.py \
+python3 nsb.py run-inject \
   -c examples/10nodes/sat-config.json \
   --target-time 2024-06-01T12:00:35Z \
   --node sat1 \
@@ -255,142 +253,3 @@ python3 utils/nsb-run-inject.py \
 ```
 ---
 
-## 🧹 Filter Epoch Run Entries
-`utils/filter_epoch_runs.py`
-
-This utility copies a directory of epoch JSON files into a new output directory and removes selected node entries from each epoch's `run` section.
-
-It is useful when you want to reuse an epoch trace but exclude runtime commands for a subset of nodes, for example removing `run.grd1` and `run.grd2` from oracle-routing-generated epochs.
-
-### Usage
-
-```bash
-python3 utils/filter_epoch_runs.py --epochs-dir <epochs-dir> --output-dir <output-dir> --nodes <node1,node2,...>
-```
-
-### Examples
-
-Remove `grd1` and `grd2` from the `run` sections of the OneWeb delayed-routing epochs and write the filtered copy into a new directory:
-
-```bash
-python3 utils/filter_epoch_runs.py \
-  --epochs-dir examples/StarPerf/OneWeb/epochs-or-del \
-  --output-dir examples/StarPerf/OneWeb/epochs-or-del-filtered \
-  --nodes grd1,grd2
-```
-
-### Notes
-
-- Only entries under the top-level `run` object are removed. Other references to the same node names, such as `links-add`, `links-del`, or command strings, are preserved.
-- If removing the requested nodes leaves an epoch with an empty `run` object, the `run` section is removed entirely from that epoch file.
-- Non-JSON files in the source directory are copied to the output directory unchanged.
-
----
-
-## 🌍 Oracle Routing Module
-`utils/oracle-routing.py`
-
-This module provides a reference **oracle-style routing implementation** for the satellite network emulator. Both IPv4 and IPv6 versions are available, and the desired IP version can be selected via the `--ip-version` command-line parameter.
-
-It demonstrates how routing strategies can be evaluated by injecting explicit routing commands into **epoch files** via `run` sections.
-
-### Key Features
-
-- **Epoch-driven routing control** -
-  Routing updates are expressed as `run` commands embedded in epoch files, enabling precise control over when routes are installed or removed relative to link creation and deletion events.
-
-- **Shortest-path routing** -
-  Computes hop-count shortest paths from the dynamic network connectivity described in epoch files.
-
-- **Primary and secondary next hops** -
-  For each destination, the module installs:
-  - a **primary route** with the lowest metric
-  - an optional best **secondary route** with a different first hop, when available
-
-- **Drain-before-break support**
-  Proactively removes routes that depend on links scheduled for deletion, allowing interface buffers to drain and reducing packet loss during topology changes.
-
-
-### Architecture and Operation
-
-1. Network topology changes are loaded from epoch JSON files.
-2. A dynamic adjacency matrix representing node connectivity is maintained.
-3. For each epoch:
-   - The adjacency matrix is updated based on link additions and deletions.
-   - Dijkstra’s algorithm is executed using the current topology.
-   - Primary and secondary next hops are selected per destination.
-   - A new epoch file is generated whose timestamp is shifted forward by `--link-creation-offset` seconds.
-     This file contains `ip route replace` commands in its `run` section to update routing tables accordingly, after link creation.
-   - Optionally, additional *drain-before-break* epoch files are generated prior to link deletion events.
-
-### Drain-Before-Break Behavior
-When the `--drain-before-break-offset` parameter is greater than zero:
-
-- Routes that rely on links scheduled for deletion are removed **before** the corresponding link-deletion epoch.
-- This is achieved by running Dijkstra on a topology where the soon-to-be-deleted links are already excluded.
-- A new epoch file is generated with its timestamp shifted **backward** by the specified offset (in seconds).
-- This behavior allows interface queues to drain before teardown, thereby reducing packet loss.
-
-> Note: If no alternative path exists, this approach may temporarily introduce network partitions. Its effectiveness therefore depends on path redundancy in the underlying topology.
-
-
-### Usage Example
-
-#### 1. Emulation Initialization
-
-Upload the satellite system configuration into Etcd and schedule workers.
-In the provided example, the epoch directory is set to `epochs-or` in `sat-config-or.json`.
-
-```bash
-python3 control/nsb-init.py -c examples/10nodes/sat-config-or.json
-```
-
-#### 2. Node Deployment
-
-Deploy the nodes of the satellite system. Each node registers its overlay IP address in Etcd under `/config/etchosts`.
-These addresses are later used by the oracle routing module to generate IP routing commands.
-
-```bash
-python3 /home/azureuser/NetSatBench/control/nsb-deploy.py
-```
-
-#### 3. Oracle Routing Module Execution
-
-Run the oracle routing module to process epoch files from
-`examples/10nodes/epochs` and generate new epoch files with routing commands in
-`examples/10nodes/epochs-or`.
-
-In the example below:
-- both drain-before-break and link-creation offsets are set to 2 seconds;
-- routing rules are generated only for nodes of type `grounds` and `users`.
-
-```bash
-python3 utils/oracle-routing.py \
-    --epoch-dir examples/10nodes/epochs \
-    --out-epoch-dir examples/10nodes/epochs-or \
-    --drain-before-break-offset 2 \
-    --link-creation-offset 2 \
-    --node-type-to-route grounds,users \
-    --ip-version 4
-```
-
-Full command-line help is available via:
-```bash
-python3 utils/oracle-routing.py --help
-```
-
-#### 4. Execution of events
-
-Run the satellite system emulation using the newly generated epoch files that include routing commands.
-The `--loop-delay` option restarts the emulation after 60 seconds, enabling continuous operation.
-```bash
-python3 nsb.py run --loop-delay 60
-```
-
-### Testing and Validation
-To validate the oracle routing module, ping tests can be performed between ground stations and user terminals during the satellite system run.
-For example, to ping from user node `usr1` to ground station `grd1`:
-```bash
-python3 nsb.py exec usr1 ping grd1
-[... ping output ...]
-```

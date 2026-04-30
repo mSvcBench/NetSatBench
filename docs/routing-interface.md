@@ -2,7 +2,7 @@
 
 <img src="images/netsatbench_logo.png" alt="NetSatBench Logo" width="200"/>
 
-# Routing Module Interface Specification for NetSatBench
+# Routing Plug-ins
 
 </div>
 
@@ -11,24 +11,24 @@
 
 NetSatBench supports pluggable routing modules that are invoked by the `sat-agent` in response to node lifecycle events and topology changes.
 
-A routing module is a Python script that is usually located in the `sat-container/extra/routing/` directory and implements a well-defined interface.  
-sat-agent is responsible for when its functions are called, while the routing module defines how routing is configured and updated after those calls.
+A routing plug-in is a Python script that is usually located in the `sat-container/extra/routing/` directory and implements a well-defined interface.  
+`sat-agent` is responsible to call the plug-in at container initialization and link events, while the routing plug-in defines how routing is configured and updated after those calls.
 
-Any node-controlled routing solution can be integrated into NetSatBench as long as it respects this interface.
+Any *node-controlled* routing solution can be integrated into NetSatBench as long as it respects this interface. Other ruouting approaches based on the injection of routing update as scheduled commands in epoch files are also possible. See [oracle-routing](docs/oracle-routing.md) for an example of the latter approach.
 
 ---
 
 ## Execution Model
 
-The routing module reacts to three types of events:
+The routing plug-in reacts to three types of events:
 
 1. Node initialization  
 2. Link addition  
 3. Link removal  
 
-For each event, sat-agent invokes a corresponding function in the routing module.
+For each event, sat-agent invokes a corresponding function in the routing plug-in.
 
-The routing module:
+The routing plug-in:
 - Must not assume control over event timing
 - Must not manage link creation or deletion
 - Must only apply routing-related actions
@@ -41,7 +41,7 @@ A routing module compatible with NetSatBench must expose exactly the following f
 
 ---
 
-### 1. `init(etcd_client, node_name) -> tuple[str, bool]`
+### `init(etcd_client, node_name) -> tuple[str, bool]`
 
 #### Invocation Time
 - Called once during node startup
@@ -73,7 +73,7 @@ Typical actions include:
 
 ---
 
-### 2. `link_add(etcd_client, node_name, interface) -> tuple[str, bool]`
+### `link_add(etcd_client, node_name, interface) -> tuple[str, bool]`
 
 #### Invocation Time
 - Called whenever a new network link becomes available
@@ -103,7 +103,7 @@ Typical actions include:
 
 ---
 
-### 3. `link_del(etcd_client, node_name, interface) -> tuple[str, bool]`
+### `link_del(etcd_client, node_name, interface) -> tuple[str, bool]`
 
 #### Invocation Time
 - Called whenever a network link is removed

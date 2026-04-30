@@ -78,7 +78,7 @@ Supported execution styles:
 
 Main docs:
 
-- [CLI Emulation Control](docs/cli.md)
+- [CLI Emulation Control](docs/contro-commands.md)
 - [CLI Utilities](docs/utils.md)
 - [Configuration and Epoch Files](docs/configuration.md)
 - [Etcd Key-Value Store](docs/etcd.md)
@@ -167,7 +167,7 @@ python3 ./nsb.py deploy -t 8
 ### 7. Run epoch-driven emulation
 
 ```bash
-python3 ./nsb.py run --loop-delay 60
+python3 ./nsb.py run
 ```
 
 ---
@@ -177,19 +177,24 @@ python3 ./nsb.py run --loop-delay 60
 Run commands on nodes:
 
 ```bash
+# Connect to node terminal
 python3 ./nsb.py exec -it usr1 bash
+# Check routing table
 python3 ./nsb.py exec usr1 ip route show
+# Run iperf3 test from usr1 to grd1 for 30 seconds with 2 second intervals
 python3 ./nsb.py exec usr1 iperf3 -c grd1 -t 30 -i 2
 ```
 
 Upload files:
 
 ```bash
+# Upload llocal dir to usr1:/app
 python3 ./nsb.py cp mydir/ usr1:/app
-python3 ./nsb.py cptype mydir/ satellite:/app
+# Upload local dir to all user nodes
+python3 ./nsb.py cptype mydir/ user:/app
 ```
 
-See all commands in [CLI documentation](docs/cli.md).
+See all commands in [CLI documentation](docs/contro-commands.md).
 
 ---
 
