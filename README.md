@@ -216,4 +216,4 @@ python3 ./nsb.py system-cleanup-docker
 
 ## Reference
 
-- *NetSatBench: A Distributed LEO Constellation Emulator with an SRv6 Case Study* (https://arxiv.org). Code used for the paper is available in the [`/test/handover`](/test/handover`) directory.
+- *NetSatBench: A Distributed LEO Constellation Emulator with an SRv6 Case Study* ([https://arxiv.org](https://arxiv.org/abs/2604.27854)). Code used for the paper is available in the [`/test/handover`](/test/handover`) directory.
