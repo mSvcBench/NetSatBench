@@ -1,0 +1,50 @@
+{
+  "time": "2023-10-01T00:43:55Z",
+  "links-del": [
+    {
+      "endpoint1": "sat9",
+      "endpoint2": "usr2",
+      "rate": 0,
+      "loss": 0,
+      "delay": 0
+    }
+  ],
+  "links-update": [
+    {
+      "endpoint1": "sat1",
+      "endpoint2": "sat12",
+      "rate": "400.0mbit",
+      "loss": "0.0",
+      "delay": "12.0ms"
+    },
+    {
+      "endpoint1": "sat12",
+      "endpoint2": "sat23",
+      "rate": "400.0mbit",
+      "loss": "0.0",
+      "delay": "12.0ms"
+    },
+    {
+      "endpoint1": "sat23",
+      "endpoint2": "sat34",
+      "rate": "400.0mbit",
+      "loss": "0.0",
+      "delay": "12.0ms"
+    },
+    {
+      "endpoint1": "sat34",
+      "endpoint2": "sat45",
+      "rate": "400.0mbit",
+      "loss": "0.0",
+      "delay": "12.0ms"
+    },
+    {
+      "endpoint1": "sat45",
+      "endpoint2": "sat56",
+      "rate": "400.0mbit",
+      "loss": "0.0",
+      "delay": "12.0ms"
+    }
+  ],
+  "links-add": []
+}

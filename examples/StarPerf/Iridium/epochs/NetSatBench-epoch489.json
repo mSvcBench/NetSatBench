@@ -1,0 +1,14 @@
+{
+  "time": "2023-10-01T00:40:40Z",
+  "links-del": [
+    {
+      "endpoint1": "sat9",
+      "endpoint2": "usr4",
+      "rate": 0,
+      "loss": 0,
+      "delay": 0
+    }
+  ],
+  "links-update": [],
+  "links-add": []
+}

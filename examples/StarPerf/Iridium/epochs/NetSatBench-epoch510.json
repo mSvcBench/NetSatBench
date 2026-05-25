@@ -1,0 +1,22 @@
+{
+  "time": "2023-10-01T00:42:25Z",
+  "links-del": [
+    {
+      "endpoint1": "sat32",
+      "endpoint2": "grd2",
+      "rate": 0,
+      "loss": 0,
+      "delay": 0
+    }
+  ],
+  "links-update": [
+    {
+      "endpoint1": "sat20",
+      "endpoint2": "usr2",
+      "rate": "50.0mbit",
+      "loss": "0.0",
+      "delay": "5.0ms"
+    }
+  ],
+  "links-add": []
+}
