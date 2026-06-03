@@ -21,18 +21,20 @@
 This document describes the control commands provided with NetSatBench for managing and running satellite network emulations.
 The script should be executed from the control host. It is usefull to define the `ETCD_HOST` environment variables to point to the Etcd server used by the control host.
 ```bash
-export ETCD_HOST=<etcd-server-ip>
+export ETCD_HOST=<etcd-server-external-ip>
 ```
 If the Etcd server uses a non-default port (other than `2379`), you can also define the `ETCD_PORT` environment variable:
 ```bash
-export ETCD_PORT=<etcd-server-port>
+export ETCD_PORT=<etcd-server-external-port>
 ```
 
 Optionally, if containers emulating nodes of the satellite system should use a different addressing for the Etcd server, you can define the `NODE_ETCD_HOST` and `NODE_ETCD_PORT` environment variables:
 ```bash
-export NODE_ETCD_HOST=<etcd-server-ip-for-nodes>
-export NODE_ETCD_PORT=<etcd-server-port-for-nodes>
+export NODE_ETCD_HOST=<etcd-server-internal-ip>
+export NODE_ETCD_PORT=<etcd-server-internal-port>
 ```
+
+For instance, in cloud environments, the control host may access the Etcd server through a public IP address, while worker nodes and containers may need to access it through a private IP address.
 
 
 ## Worker Initialization  

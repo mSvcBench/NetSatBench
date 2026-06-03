@@ -124,8 +124,9 @@ python3 -m pip install -r requirements.txt
 ### 2. Set Etcd environment
 
 ```bash
-export ETCD_HOST="10.0.1.215"
+export ETCD_HOST="<etcd_host_external_ip>" # IP address of Etcd server reachable from control host
 export ETCD_PORT="2379"
+export NODE_ETCD_HOST="<etcd_host_internal_ip>"  # IP address of Etcd server reachable from worker nodes (if different from control host)
 ```
 
 Optional (if auth/TLS is enabled):
