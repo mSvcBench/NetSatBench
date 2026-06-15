@@ -83,6 +83,8 @@ python3 nsb.py system-init-docker \
 
 Run with `--help` to see the full list of available options.
 
+> WARNING: Some OS distribution (e.g., Ubuntu) can clean routing and iptables rules due to unexpected update or upgrade. In this case, any constellation should be removed, and the `system-init-docker` script should be re-run to restore the worker configuration. Disable unexpected update or upgrade on the worker hosts to avoid this issue.
+
 
 ## Worker Cleaning 
 `nsb.py system-clean-docker`
