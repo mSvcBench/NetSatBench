@@ -1,0 +1,12 @@
+{
+  "time": "2024-06-01T12:00:45Z",
+  "links-add": [
+    { "endpoint1": "sat1", "endpoint2": "sat2", "rate": "10mbit", "loss": 0, "delay": "1ms" },
+    { "endpoint1": "sat1", "endpoint2": "sat5", "rate": "10mbit", "loss": 0, "delay": "1ms" }
+  ],
+  "links-del": [
+    { "endpoint1": "usr1", "endpoint2": "sat1", "rate": "10mbit", "loss": 0, "delay": "1ms" }
+  ],
+  "links-update": [],
+  "run": {}
+}

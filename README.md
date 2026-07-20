@@ -129,6 +129,11 @@ export ETCD_PORT="2379"
 export NODE_ETCD_HOST="<etcd_host_internal_ip>"  # IP address of Etcd server reachable from worker nodes (if different from control host)
 ```
 
+`NODE_ETCD_HOST` must be reachable from inside every node container. Do not use
+`127.0.0.1` for deployed containers unless Etcd is running inside each container.
+For a single Docker bridge host this may be the bridge gateway, for example
+`172.20.0.1`; for multiple workers use the Etcd server's private/routable IP.
+
 Optional (if auth/TLS is enabled):
 
 ```bash
@@ -162,7 +167,9 @@ This phase validates scenario inputs, assigns resources/IPs (if auto-assignment 
 ### 6. Deploy node containers
 
 ```bash
-python3 ./nsb.py deploy -t 8
+python3 ./nsb.py deploy -t 8 \
+  --etcd-host "$ETCD_HOST" \
+  --node-etcd-host "$NODE_ETCD_HOST"
 ```
 
 ### 7. Run epoch-driven emulation

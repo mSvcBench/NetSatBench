@@ -1,0 +1,53 @@
+# ================================
+# NetSatBench satellite container with ION-DTN runtime
+# ================================
+FROM python:3.11-slim
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ETCD_ENDPOINT=127.0.0.1:2379 \
+    NODE_NAME="sat" \
+    PATH="/usr/local/bin:${PATH}" \
+    LD_LIBRARY_PATH="/usr/local/lib"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl gnupg lsb-release ca-certificates && \
+    curl -s https://deb.frrouting.org/frr/keys.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/frr.gpg && \
+    echo "deb https://deb.frrouting.org/frr $(lsb_release -cs) frr-stable" > /etc/apt/sources.list.d/frr.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      iputils-ping iproute2 net-tools tcpdump \
+      iperf3 jq iptables traceroute \
+      frr frr-pythontools screen procps vim && \
+    pip3 install --no-cache-dir protobuf==3.20.* etcd3==0.12.0 && \
+    mkdir -p /var/log/frr /usr/local/bin /usr/local/lib /ion && \
+    chown frr:frr /var/log/frr || true && \
+    rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log
+
+# ION-DTN runtime staged from a host-side ION build.
+# Generate this directory with ./stage-ion-runtime.sh before docker build.
+COPY ion-runtime/bin/ /usr/local/bin/
+COPY ion-runtime/lib/ /usr/local/lib/
+
+RUN chmod +x /usr/local/bin/* && \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/ion.conf && \
+    ldconfig && \
+    ionadmin -h >/dev/null 2>&1 || true && \
+    bpadmin -h >/dev/null 2>&1 || true
+
+RUN mkdir -p /app
+WORKDIR /app
+
+COPY start-sat-agent.sh /app/start-sat-agent.sh
+COPY sat-agent.py /app/sat-agent.py
+COPY extra /app/extra
+COPY etc/frr /etc/frr
+
+RUN chmod +x /app/start-sat-agent.sh
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=5 CMD \
+  bash -lc 'pgrep -f "/app/sat-agent.py" >/dev/null 2>&1 || exit 1'
+
+CMD ["/app/start-sat-agent.sh"]
+# ================================
