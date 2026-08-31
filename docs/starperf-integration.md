@@ -26,9 +26,9 @@ StarPerf_Simulator is included in `generators/StarPerf_Simulator/` within the Ne
 
 ## Workflow
 1. Define the satellite constellation using StarPerf_Simulator XML input format and store it in `generators/StarPerf_Simulator/config/XML_constellation/<constellation_name>.xml`.
-For example, the OneWeb constellation is defined in [generators/StarPerf_Simulator/config/XML_constellation/OneWeb.xml](generators/StarPerf_Simulator/config/XML_constellation/OneWeb.xml).
+For example, the OneWeb constellation is defined in [generators/StarPerf_Simulator/config/XML_constellation/OneWeb.xml](../generators/StarPerf_Simulator/config/XML_constellation/OneWeb.xml).
 2. Define users and ground stations using StarPerf_Simulator XML format and store them in `generators/StarPerf_Simulator/config/users/<constellation_name>.xml` and `generators/StarPerf_Simulator/config/ground_stations/<constellation_name>.xml`.
-For example, OneWeb users and ground stations are defined in [generators/StarPerf_Simulator/config/users/OneWeb.xml](generators/StarPerf_Simulator/config/users/OneWeb.xml) and [generators/StarPerf_Simulator/config/ground_stations/OneWeb.xml](generators/StarPerf_Simulator/config/ground_stations/OneWeb.xml).
+For example, OneWeb users and ground stations are defined in [generators/StarPerf_Simulator/config/users/OneWeb.xml](../generators/StarPerf_Simulator/config/users/OneWeb.xml) and [generators/StarPerf_Simulator/config/ground_stations/OneWeb.xml](../generators/StarPerf_Simulator/config/ground_stations/OneWeb.xml).
 3. Run `python3 nsb.py starperf-generate ...` from the NetSatBench repository root to generate an extended H5 file containing system snapshots with delay, rate, and loss values for all links. The output is stored under `generators/StarPerf_Simulator/data/XML_constellation/` with suffix `_ext.h5` (original StarPerf output does not use `_ext`).
 4. Use the generated extended H5 file to create NetSatBench configuration and epoch files with `python3 nsb.py starperf-export ...`.
 5. Optionally generate static Cesium output with `python3 nsb.py starperf-visualize ...` or launch the MATLAB desktop visualizer with `python3 nsb.py starperf-matlab-visualize ...`.
@@ -70,7 +70,7 @@ Ground-station and user link existence is managed by `python3 nsb.py starperf-ge
 
 Rate and loss values for each link are computed using the physical-layer rate and loss plug-ins selected for `python3 nsb.py starperf-generate`.
 
-Extended plug-ins are located in [ext_connectivity_plugin](generators/StarPerf_Simulator/kits/NetSatBench/ext_connectivity_plugin). For details, refer to the docstrings in the dummy plug-ins `pass_antenna`, `pass_loss`, and `pass_rate`.
+Extended plug-ins are located in [ext_connectivity_plugin](../generators/StarPerf_Simulator/kits/NetSatBench/ext_connectivity_plugin). For details, refer to the docstrings in the dummy plug-ins `pass_antenna`, `pass_loss`, and `pass_rate`.
 
 Refer to `python3 nsb.py starperf-generate --help` for complete argument documentation.
 
@@ -83,7 +83,7 @@ Refer to `python3 nsb.py starperf-export --help` for complete argument documenta
 
 ## Example
 ### Constellation Definition
-OneWeb constellation XML file [OneWeb.xml](generators/StarPerf_Simulator/config/XML_constellation/OneWeb.xml):
+OneWeb constellation XML file [OneWeb.xml](../generators/StarPerf_Simulator/config/XML_constellation/OneWeb.xml):
 ```xml
 <constellation>
     <number_of_shells>1</number_of_shells>
@@ -100,7 +100,7 @@ OneWeb constellation XML file [OneWeb.xml](generators/StarPerf_Simulator/config/
 This XML file describes a constellation with 1 shell at 1200 km altitude, 6556-second orbit cycle, 87.9-degree inclination, no phase shift, 12 orbits, and 49 satellites per orbit.
 
 ### Ground Stations Definition
-OneWeb ground-station XML file [OneWeb.xml](generators/StarPerf_Simulator/config/ground_stations/OneWeb.xml):
+OneWeb ground-station XML file [OneWeb.xml](../generators/StarPerf_Simulator/config/ground_stations/OneWeb.xml):
 ```xml
 <GSs>
   <GS1>
@@ -153,7 +153,7 @@ OneWeb ground-station XML file [OneWeb.xml](generators/StarPerf_Simulator/config
 This XML file defines 5 ground stations: Scanzano (Italy), Öjebyn (Sweden), Plana (Bulgaria), Svalbard (Norway), and Fucino (Italy), including latitude/longitude, description, antenna count, frequency, and uplink/downlink GHz values.
 
 ### Users Definition
-OneWeb user XML file [OneWeb.xml](generators/StarPerf_Simulator/config/users/OneWeb.xml):
+OneWeb user XML file [OneWeb.xml](../generators/StarPerf_Simulator/config/users/OneWeb.xml):
 ```xml
 <USRs>
   <USR1>

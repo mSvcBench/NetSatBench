@@ -1,0 +1,42 @@
+{
+  "experiment": "cgr-dtn-contact-plan-10nodes",
+  "description": "ION-DTN CGR node registry for the NetSatBench 10-node example. Contacts are derived from NetSatBench epoch files at runtime.",
+  "netsatbench_node_config": "../sat-config.json",
+  "udp_port": 1113,
+  "default_contact_rate_bytes_per_second": 1250000,
+  "owlt_seconds": 1,
+  "default_source": "usr1",
+  "default_destination": "grd1",
+  "nodes": {
+    "usr1": {
+      "ion_node_number": 101
+    },
+    "sat1": {
+      "ion_node_number": 102
+    },
+    "sat2": {
+      "ion_node_number": 103
+    },
+    "sat3": {
+      "ion_node_number": 104
+    },
+    "sat4": {
+      "ion_node_number": 105
+    },
+    "sat5": {
+      "ion_node_number": 106
+    },
+    "sat6": {
+      "ion_node_number": 107
+    },
+    "sat7": {
+      "ion_node_number": 108
+    },
+    "sat8": {
+      "ion_node_number": 109
+    },
+    "grd1": {
+      "ion_node_number": 110
+    }
+  }
+}

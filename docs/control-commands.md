@@ -283,7 +283,7 @@ python3 nsb.py ion-prepare \
   --jobs 8
 
 python3 nsb.py run \
-  --epoch-dir examples/10nodes/epochs-ion-dtn-demo/02-cloudy-ground \
+  --epoch-dir examples/10nodes-ion-dtn/epochs/02-cloudy-ground \
   --file-pattern 'NetSatBench-epoch*.json' \
   --absolute-start-time "$T0"
 ```

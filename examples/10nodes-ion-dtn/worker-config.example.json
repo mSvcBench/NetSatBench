@@ -1,0 +1,16 @@
+{
+  "workers-common": {
+    "ssh-user": "__SSH_USER__",
+    "ssh-key": "__SSH_KEY__",
+    "sat-vnet": "sat-vnet",
+    "sat-vnet-super-cidr": "172.20.0.0/16"
+  },
+  "workers": {
+    "host-1": {
+      "ip": "__HOST_IP__",
+      "sat-vnet-cidr": "172.20.0.0/24",
+      "cpu": "4",
+      "mem": "8GiB"
+    }
+  }
+}

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 import ipaddress
-import os
 import json
-import time
 import logging
-import subprocess
-import etcd3
-import threading
-import sys
+import os
 import re
-import hashlib
+import subprocess
+import sys
+import threading
+import time
+
+import etcd3
 
 # ----------------------------
 #   CONFIGURATION
@@ -19,6 +19,7 @@ ETCD_USER = os.getenv("ETCD_USER", None)
 ETCD_PASSWORD = os.getenv("ETCD_PASSWORD", None)
 ETCD_CA_CERT = os.getenv("ETCD_CA_CERT", None)
 LINK_RECONCILE_INTERVAL = int(os.getenv("NSB_LINK_RECONCILE_INTERVAL", "5"))
+COMMAND_TIMEOUT_SECONDS = 10
 
 if ":" in ETCD_ENDPOINT:
     h, p = ETCD_ENDPOINT.split(":", 1)
@@ -59,7 +60,8 @@ def get_etcd_client():
             etcd_client.status()  # Test connection, if fail will raise
             log.info(f" ✅ Connected to Etcd at {ETCD_HOST}:{ETCD_PORT}.")
             return etcd_client
-        except:
+        except Exception:
+            log.warning("Etcd is not ready; retrying in 5 seconds.")
             time.sleep(5)
 
 def get_remote_ip(etcd_client, node_name):
@@ -86,7 +88,20 @@ def get_node_overlay_ip(etcd_client, node_name, family=4):
         return None
 
 def run(cmd, log_errors=True):
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        result = subprocess.CompletedProcess(
+            cmd,
+            124,
+            stdout=exc.stdout or "",
+            stderr=f"command timed out after {COMMAND_TIMEOUT_SECONDS}s",
+        )
     if result.returncode != 0 and log_errors:
         log.warning(f"⚠️ Command failed: {' '.join(cmd)}")
         log.warning(result.stderr.strip())
@@ -186,7 +201,7 @@ def list_vxlan_links():
     return links
 
 
-def apply_link_value(etcd_client, value, meta):
+def apply_link_value(etcd_client, value, meta, refresh_existing=True):
     try:
         l = json.loads(value.decode())
         ep1, ep2 = l.get("endpoint1"), l.get("endpoint2")
@@ -197,6 +212,22 @@ def apply_link_value(etcd_client, value, meta):
 
         key_str = meta.key.decode()
         vxlan_if = key_str.split('/')[-1]
+
+        vni = str(l.get("vni", "0"))
+        if vni == "0":
+            log.warning(f"⚠️  Skipping link {ep1}<->{ep2} due to missing VNI.")
+            return None
+
+        netem_opts = build_netem_opts(l)
+        peer_node = ep2 if ep1 == node_name else ep1
+        peer_overlay_ip = get_node_overlay_ip(etcd_client, peer_node, family=4)
+
+        if not refresh_existing and link_operational(
+            vxlan_if,
+            peer_overlay_ip=peer_overlay_ip,
+            netem_opts=netem_opts,
+        ):
+            return vxlan_if
 
         ip1 = ip2 = None
         counter = 0
@@ -211,23 +242,12 @@ def apply_link_value(etcd_client, value, meta):
             log.warning(f"⚠️  Skipping link {ep1}<->{ep2} due to missing IPs.")
             return None
 
-        vni = str(l.get("vni", "0"))
-        if vni == "0":
-            log.warning(f"⚠️  Skipping link {ep1}<->{ep2} due to missing VNI.")
-            return None
-
-        netem_opts = build_netem_opts(l)
-
         if ep1 == node_name:
             remote_ip = ip2
             local_ip = ip1
-            peer_node = ep2
         else:
             remote_ip = ip1
             local_ip = ip2
-            peer_node = ep1
-
-        peer_overlay_ip = get_node_overlay_ip(etcd_client, peer_node, family=4)
 
         threading.Thread(
             target=create_vxlan_link,
@@ -247,20 +267,32 @@ def apply_link_value(etcd_client, value, meta):
         return None
 
 
-def reconcile_links(etcd_client, remove_stale=True):
+def reconcile_links(etcd_client, remove_stale=True, refresh_existing=True):
     """
-    Rebuild local VXLAN state from /config/links/<node>/.
+    Reconcile local VXLAN state from /config/links/<node>/.
 
     Etcd watches can disconnect and miss events. This makes the local container
-    converge back to the authoritative link state stored in etcd.
+    converge back to the authoritative link state stored in etcd. Periodic
+    checks can skip existing links to avoid reapplying traffic control state.
     """
     log.info("🔁 Reconciling local VXLAN links from Etcd ...")
     desired_links = set()
 
     for value, meta in etcd_client.get_prefix(KEY_LINKS_PREFIX):
-        vxlan_if = apply_link_value(etcd_client, value, meta)
-        if vxlan_if:
-            desired_links.add(vxlan_if)
+        key_str = meta.key.decode(errors="replace")
+        vxlan_if = key_str.rsplit("/", 1)[-1]
+        if not vxlan_if.startswith("vl_"):
+            log.error(f"❌ Invalid VXLAN interface key in Etcd: {key_str!r}")
+            continue
+        # Presence in Etcd makes the interface desired even if a transient
+        # dependency (for example peer container metadata) blocks this repair.
+        desired_links.add(vxlan_if)
+        apply_link_value(
+            etcd_client,
+            value,
+            meta,
+            refresh_existing=refresh_existing,
+        )
 
     if remove_stale:
         for ifname in sorted(list_vxlan_links() - desired_links):
@@ -319,11 +351,41 @@ def process_initial_topology(etcd_client):
 #   Link Management & Runtime Commands
 # ----------------------------
 def link_exists(ifname):
-    return subprocess.run(
-        ["ip", "link", "show", ifname],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode == 0
+    return run(["ip", "link", "show", ifname], log_errors=False).returncode == 0
+
+
+def link_operational(vxlan_if, peer_overlay_ip=None, netem_opts=None):
+    """Check the local state required to use an existing VXLAN link."""
+    link = run(["ip", "-o", "link", "show", "dev", vxlan_if], log_errors=False)
+    if link.returncode != 0:
+        return False
+
+    flags = re.search(r"<([^>]*)>", link.stdout)
+    if not flags or "UP" not in flags.group(1).split(","):
+        return False
+
+    l3_cfg = my_config.get("L3-config", {}) if isinstance(my_config, dict) else {}
+    v4_ip = pick_last_usable_ip(_parse_cidr(l3_cfg.get("cidr", "")))
+    if v4_ip:
+        addresses = run(
+            ["ip", "-o", "-4", "addr", "show", "dev", vxlan_if],
+            log_errors=False,
+        )
+        if addresses.returncode != 0 or f"{v4_ip}/32" not in addresses.stdout:
+            return False
+
+    if peer_overlay_ip:
+        route = run(["ip", "route", "get", peer_overlay_ip], log_errors=False)
+        if route.returncode != 0 or f"dev {vxlan_if}" not in route.stdout:
+            return False
+
+    netem_enabled = not isinstance(l3_flags, dict) or l3_flags.get("enable-netem", True)
+    if netem_enabled and netem_opts:
+        qdisc = run(["tc", "qdisc", "show", "dev", vxlan_if], log_errors=False)
+        if qdisc.returncode != 0 or "netem" not in qdisc.stdout:
+            return False
+
+    return True
 
 def ensure_direct_neighbor_route(vxlan_if, peer_overlay_ip):
     if not peer_overlay_ip:
@@ -361,6 +423,12 @@ def create_vxlan_link(
     # ⛔ If already exists, do nothing
     if link_exists(vxlan_if):
         log.info(f"♻️ Link {vxlan_if} already exists, updating...")
+        run(["ip", "link", "set", vxlan_if, "mtu", str(vxlan_link_mtu)])
+        run(["ip", "link", "set", "dev", vxlan_if, "up"])
+        l3_cfg = my_config.get("L3-config", {})
+        v4_ip = pick_last_usable_ip(_parse_cidr(l3_cfg.get("cidr", "")))
+        if v4_ip:
+            run(["ip", "addr", "replace", f"{v4_ip}/32", "dev", vxlan_if])
         ensure_direct_neighbor_route(vxlan_if, peer_overlay_ip)
         if l3_flags.get("enable-netem", True):
             if netem_opts:
@@ -380,6 +448,9 @@ def create_vxlan_link(
         "dev", "eth0",
         "dstport", "4789",
     ])
+    if not link_exists(vxlan_if):
+        log.error(f"❌ Could not create VXLAN link {vxlan_if}.")
+        return
 
     run(["ip", "link", "set", vxlan_if, "mtu", str(vxlan_link_mtu)])
     run(["ip", "link", "set", "dev", vxlan_if, "up"])
@@ -395,7 +466,7 @@ def create_vxlan_link(
     if v4_ip:
         # ipv4 need IP address assigned to the interface. So we assign the same IP as the loopback (last usable) but with /32 mask that is not advertized by the rule in ISIS template.
         v4_addr = f"{v4_ip}/32"
-        run(["ip", "addr", "add", v4_addr, "dev", vxlan_if])
+        run(["ip", "addr", "replace", v4_addr, "dev", vxlan_if])
         log.info(f" ✅ VXLAN {vxlan_if} IPv4 set to {v4_addr}.")
         ensure_direct_neighbor_route(vxlan_if, peer_overlay_ip)
 
@@ -582,7 +653,11 @@ def periodic_link_reconcile_loop():
     while True:
         time.sleep(LINK_RECONCILE_INTERVAL)
         try:
-            reconcile_links(etcd_client, remove_stale=True)
+            reconcile_links(
+                etcd_client,
+                remove_stale=True,
+                refresh_existing=False,
+            )
         except Exception:
             log.exception("❌ Periodic VXLAN reconciliation failed.")
 
@@ -753,7 +828,7 @@ def execute_commands(commands_raw_str: str) -> None:
 # ----------------------------
 def register_my_underlay_ip(etcd_client):
     try:
-        cmd = "ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1"
+        cmd = r"ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1"
         my_ip = subprocess.check_output(cmd, shell=True).decode().strip()
         if not my_ip or my_ip.endswith(".0"): return False
         

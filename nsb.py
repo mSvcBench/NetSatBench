@@ -26,6 +26,9 @@ COMMANDS = {
     "status": {"script": "utils/nsb-status.py"},
     "run-inject": {"script": "utils/nsb-run-inject.py"},
     "ion-generate-configs": {"script": "utils/nsb-ion-generate-configs.py"},
+    "ion-generate-demo-scenarios": {
+        "script": "utils/nsb-ion-generate-demo-scenarios.py"
+    },
     "starperf-generate": {
         "script": "generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchGenerate.py",
         "cwd": "generators/StarPerf_Simulator",

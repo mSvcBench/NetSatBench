@@ -1,0 +1,14 @@
+{
+  "time": "2024-06-01T12:01:11Z",
+  "links-del": [
+    {
+      "endpoint1": "grd1",
+      "endpoint2": "sat8",
+      "rate": "10mbit",
+      "loss": 0,
+      "delay": "1ms"
+    }
+  ],
+  "links-update": [],
+  "links-add": []
+}

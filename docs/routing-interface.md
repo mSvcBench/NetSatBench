@@ -14,7 +14,7 @@ NetSatBench supports pluggable routing modules that are invoked by the `sat-agen
 A routing plug-in is a Python script that is usually located in the `sat-container/extra/routing/` directory and implements a well-defined interface.  
 `sat-agent` is responsible to call the plug-in at container initialization and link events, while the routing plug-in defines how routing is configured and updated after those calls.
 
-Any *node-controlled* routing solution can be integrated into NetSatBench as long as it respects this interface. Other ruouting approaches based on the injection of routing update as scheduled commands in epoch files are also possible. See [oracle-routing](docs/oracle-routing.md) for an example of the latter approach.
+Any *node-controlled* routing solution can be integrated into NetSatBench as long as it respects this interface. Other routing approaches based on the injection of routing updates as scheduled commands in epoch files are also possible. See [oracle-routing](oracle-routing.md) for an example of the latter approach.
 
 ---
 
