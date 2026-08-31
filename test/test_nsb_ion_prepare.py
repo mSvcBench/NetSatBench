@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -15,6 +16,13 @@ MODULE_SPEC.loader.exec_module(prepare)
 
 
 class IonPrepareTests(unittest.TestCase):
+    def test_fractional_guard_and_timestamp_helpers_preserve_milliseconds(self):
+        self.assertEqual(prepare.parse_millisecond_seconds("0.863"), 0.863)
+        timestamp = datetime(
+            2030, 1, 1, 0, 0, 3, 742000, tzinfo=timezone.utc
+        )
+        self.assertEqual(prepare.format_iso_z(timestamp), "2030-01-01T00:00:03.742Z")
+
     def test_node_names_are_restricted_before_remote_shell_use(self):
         self.assertEqual(prepare.validate_node_name("sat-12.example"), "sat-12.example")
         for invalid in ("sat1;id", "sat 1", "", "../sat1"):

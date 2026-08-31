@@ -2,6 +2,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -351,6 +352,52 @@ class IonContactRateTests(unittest.TestCase):
             [(contact["start"], contact["end"]) for contact in contacts],
             [(4, 44)],
         )
+
+    def test_fractional_guards_are_preserved_in_absolute_ion_contacts(self):
+        with tempfile.TemporaryDirectory() as epoch_dir:
+            self.write_epoch(
+                epoch_dir,
+                0,
+                0,
+                links_add=[
+                    {"endpoint1": "sat1", "endpoint2": "sat2", "rate": "1mbit"}
+                ],
+            )
+            self.write_epoch(
+                epoch_dir,
+                1,
+                45,
+                links_del=[{"endpoint1": "sat1", "endpoint2": "sat2"}],
+            )
+            contacts = generator.derive_contacts_from_epochs(
+                self.registry,
+                epoch_dir,
+                "NetSatBench-epoch*.json",
+                epoch_duration=45,
+                contact_start_guard=3.742,
+                contact_end_guard=0.863,
+            )
+
+        registry = {
+            **self.registry,
+            "contacts": contacts,
+            "_absolute_start_time": datetime(
+                2030, 1, 1, tzinfo=timezone.utc
+            ),
+        }
+        rendered = generator.render_global_ionrc(registry)
+        self.assertEqual(contacts[0]["start"], 3.742)
+        self.assertEqual(contacts[0]["end"], 44.137)
+        self.assertIn(
+            "a contact 2030/01/01-00:00:03.742 "
+            "2030/01/01-00:00:44.137 1 2 125000",
+            rendered,
+        )
+
+    def test_guard_parser_rejects_sub_millisecond_precision(self):
+        self.assertEqual(generator.parse_millisecond_seconds("3.742"), 3.742)
+        with self.assertRaisesRegex(Exception, "three decimal places"):
+            generator.parse_millisecond_seconds("3.7421")
 
     def test_update_before_guard_changes_initial_contact_segment(self):
         with tempfile.TemporaryDirectory() as epoch_dir:

@@ -38,7 +38,7 @@ class ActiveContactWindow:
 
     endpoint1: str
     endpoint2: str
-    start_seconds: int
+    start_seconds: float
     rate_bytes_per_second: int
     ion_owlt_seconds: int
     source_epoch: str
@@ -220,11 +220,34 @@ def parse_utc_datetime(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
 
-    return parsed.astimezone(timezone.utc).replace(microsecond=0)
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed.microsecond % 1000:
+        raise ValueError("ION contact timestamps support millisecond precision")
+    return parsed
+
+
+def parse_millisecond_seconds(value):
+    """Parse a non-negative duration with at most millisecond precision."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("expected a duration in seconds") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("duration must be non-negative and finite")
+    rounded = round(parsed, 3)
+    if not math.isclose(parsed, rounded, abs_tol=1e-9):
+        raise argparse.ArgumentTypeError(
+            "duration supports at most three decimal places (milliseconds)"
+        )
+    return rounded
 
 
 def format_ion_time(value):
-    return value.astimezone(timezone.utc).strftime("%Y/%m/%d-%H:%M:%S")
+    value = value.astimezone(timezone.utc)
+    rendered = value.strftime("%Y/%m/%d-%H:%M:%S")
+    if value.microsecond:
+        rendered += f".{value.microsecond // 1000:03d}"
+    return rendered
 
 
 def epoch_sort_key(path):
@@ -561,7 +584,7 @@ def contact_nodes(contact):
 
 def contact_window(registry, contact):
     if isinstance(contact, dict):
-        return int(contact["start"]), int(contact["end"])
+        return float(contact["start"]), float(contact["end"])
 
     return 0, int(registry["contact_duration_seconds"])
 
@@ -569,9 +592,9 @@ def contact_window(registry, contact):
 def render_contact_time(registry, offset_seconds):
     start_time = registry.get("_absolute_start_time")
     if start_time is None:
-        return f"+{int(offset_seconds)}"
+        return f"+{float(offset_seconds):.3f}".rstrip("0").rstrip(".")
 
-    return format_ion_time(start_time + timedelta(seconds=int(offset_seconds)))
+    return format_ion_time(start_time + timedelta(seconds=float(offset_seconds)))
 
 
 def contact_source(contact):
@@ -935,7 +958,7 @@ def main():
     )
     parser.add_argument(
         "--contact-start-guard",
-        type=int,
+        type=parse_millisecond_seconds,
         default=4,
         help=(
             "Seconds between a physical links-add event and the corresponding "
@@ -944,7 +967,7 @@ def main():
     )
     parser.add_argument(
         "--contact-end-guard",
-        type=int,
+        type=parse_millisecond_seconds,
         default=1,
         help=(
             "Seconds between an ION contact end and the physical links-del "

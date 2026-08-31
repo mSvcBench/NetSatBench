@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
+import math
 
 import etcd3
 
@@ -69,11 +70,34 @@ def parse_utc_datetime(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
 
-    return parsed.astimezone(timezone.utc).replace(microsecond=0)
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed.microsecond % 1000:
+        raise ValueError("ION contact timestamps support millisecond precision")
+    return parsed
 
 
 def format_iso_z(value):
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    value = value.astimezone(timezone.utc)
+    rendered = value.strftime("%Y-%m-%dT%H:%M:%S")
+    if value.microsecond:
+        rendered += f".{value.microsecond // 1000:03d}"
+    return rendered + "Z"
+
+
+def parse_millisecond_seconds(value):
+    """Argparse type for non-negative durations with millisecond precision."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("expected a duration in seconds") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("duration must be non-negative and finite")
+    rounded = round(parsed, 3)
+    if not math.isclose(parsed, rounded, abs_tol=1e-9):
+        raise argparse.ArgumentTypeError(
+            "duration supports at most three decimal places (milliseconds)"
+        )
+    return rounded
 
 
 def repo_root_from_script():
@@ -436,7 +460,7 @@ def main():
     )
     parser.add_argument(
         "--contact-start-guard",
-        type=int,
+        type=parse_millisecond_seconds,
         default=4,
         help=(
             "Delay each ION contact after its physical links-add event by this "
@@ -445,7 +469,7 @@ def main():
     )
     parser.add_argument(
         "--contact-end-guard",
-        type=int,
+        type=parse_millisecond_seconds,
         default=1,
         help=(
             "Close each ION contact this many seconds before physical link "
