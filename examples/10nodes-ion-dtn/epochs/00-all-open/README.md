@@ -12,6 +12,16 @@ If bundle forwarding fails here, debug VXLAN, direct-neighbor routes, or ION
 configuration before testing store-carry-forward epochs. Multi-hop IP routing
 is intentionally disabled; CGR forwards the bundle hop by hop.
 
+The subsecond development variant uses a deterministic `5ms` one-way delay on
+every hop.  The epoch timestamp includes `.125Z` to exercise millisecond input
+parsing, and the generated ION plan must retain every range as `0.005s` under
+the `ceil-millisecond` policy.  This is a protocol baseline, not a claim that
+all real satellite links have the same propagation delay.
+
+The pilot installs a `4.000s` start guard and a `1.500s` end guard.  It rejects
+containers that do not use `netsatbench-sat-container-ion:subsecond` and saves
+the installed `global.ionrc` as evidence before sending a bundle.
+
 Run it from the NetSatBench repository root:
 
 ```bash

@@ -4,7 +4,8 @@
   "netsatbench_node_config": "../sat-config.json",
   "udp_port": 1113,
   "default_contact_rate_bytes_per_second": 1250000,
-  "owlt_seconds": 1,
+  "owlt_seconds": 0.005,
+  "ion_subsecond_owlt_policy": "ceil-millisecond",
   "default_source": "usr1",
   "default_destination": "grd1",
   "nodes": {

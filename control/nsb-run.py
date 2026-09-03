@@ -9,12 +9,12 @@ Producer side (this script):
 """
 
 import argparse
-import calendar
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
 import glob
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -73,14 +73,37 @@ def parse_utc_datetime(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
 
-    return parsed.astimezone(timezone.utc).replace(microsecond=0)
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed.microsecond % 1000:
+        raise ValueError("epoch timestamps support millisecond precision")
+    return parsed
 
 
 def format_iso_z(value: datetime) -> str:
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    value = value.astimezone(timezone.utc)
+    rendered = value.strftime("%Y-%m-%dT%H:%M:%S")
+    if value.microsecond:
+        rendered += f".{value.microsecond // 1000:03d}"
+    return rendered + "Z"
 
 
-def smart_wait(target_virtual_time_str, filename: str, fixed_wait: int = -1) -> None:
+def parse_millisecond_seconds(value: str) -> float:
+    """Parse a non-negative duration with at most millisecond precision."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("expected a duration in seconds") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("duration must be non-negative and finite")
+    rounded = round(parsed, 3)
+    if not math.isclose(parsed, rounded, abs_tol=1e-9):
+        raise argparse.ArgumentTypeError(
+            "duration supports at most three decimal places (milliseconds)"
+        )
+    return rounded
+
+
+def smart_wait(target_virtual_time_str, filename: str, fixed_wait: float = -1) -> None:
     """
     Sleeps according to delta between consecutive epoch times (virtual time),
     unless fixed_wait is set (>=0), in which case it sleeps fixed_wait seconds.
@@ -213,18 +236,22 @@ def convert_time_epoch_to_timestamp(time_str: str) -> float:
     to a Unix timestamp (seconds since epoch).
     """
     try:
-        struct_time = time.strptime(time_str, "%Y-%m-%dT%H:%M:%SZ")
-        return calendar.timegm(struct_time)  # UTC-safe
-    except ValueError:
+        return parse_utc_datetime(time_str).timestamp()
+    except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"❌ Invalid time format: {time_str}. Expected 'YYYY-MM-DDTHH:MM:SSZ'."
-        )
+            f"❌ Invalid time format: {time_str}. Expected an ISO-8601 UTC timestamp."
+        ) from exc
 
 
 def epoch_timestamp(epoch_dict: Dict) -> float:
     epoch_time = epoch_dict.get("epoch-time")
     if epoch_time not in (None, ""):
-        return float(epoch_time)
+        value = float(epoch_time)
+        if not math.isfinite(value) or not math.isclose(
+            value, round(value, 3), abs_tol=1e-6
+        ):
+            raise ValueError("epoch-time must have at most millisecond precision")
+        return round(value, 3)
 
     return convert_time_epoch_to_timestamp(epoch_dict.get("time"))
 
@@ -319,6 +346,7 @@ def process_epoch_from_queue(json_path: str) -> None:
 
     allowed_keys = [
         "time",
+        "epoch-time",
         "links-add",
         "links-del",
         "links-update",
@@ -337,7 +365,7 @@ def process_epoch_from_queue(json_path: str) -> None:
                 f"❌ [{os.path.basename(json_path)}] Unexpected key '{key}' found in epoch file, skipping..."
             )
             continue
-        if key == "time":
+        if key in {"time", "epoch-time"}:
             epoc_config["epoch-time"] = value
     
     epoc_config["epoch-file"] = json_path.split("/")[-1]
@@ -443,7 +471,7 @@ def process_epoch_from_queue(json_path: str) -> None:
 def process_epoch_from_file(
     json_path: str,
     queue_path: str,
-    fixed_wait: int = -1,
+    fixed_wait: float = -1,
     first_epoch_time: Optional[float] = None,
     absolute_start_time: Optional[datetime] = None,
 ) -> None:
@@ -483,8 +511,8 @@ def run_all_epochs(
     epoch_dir: str,
     file_pattern: str,
     queue_path: str,
-    fixed_wait: int = -1,
-    loop_delay: Optional[int] = None,
+    fixed_wait: float = -1,
+    loop_delay: Optional[float] = None,
     resume: bool = False,
     absolute_start_time: Optional[datetime] = None,
 ) -> int:
@@ -579,7 +607,7 @@ def main() -> int:
     parser.add_argument(
         "--fixed-wait",
         default=-1,
-        type=int,
+        type=parse_millisecond_seconds,
         help="Disable virtual-time synchronization (do constant sleep on epoch-time). "
              "If set to N>=0, sleep N seconds between epochs.",
     )
@@ -592,7 +620,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--start-delay",
-        type=int,
+        type=parse_millisecond_seconds,
         help=(
             "Compute absolute experiment T0 as current UTC time plus this many "
             "seconds. Ignored if --absolute-start-time is set."
@@ -601,7 +629,7 @@ def main() -> int:
     parser.add_argument(
         "--loop-delay",
         default=None,
-        type=int,
+        type=parse_millisecond_seconds,
         help="Enable loop repeat with a fixed delay between last and first epochs (in seconds).",
     )
     parser.add_argument(

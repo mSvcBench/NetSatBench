@@ -444,7 +444,7 @@ def main():
     )
     parser.add_argument(
         "--epoch-duration",
-        type=int,
+        type=parse_millisecond_seconds,
         default=45,
         help=(
             "Seconds used to close contacts that remain active after the last "
@@ -478,7 +478,7 @@ def main():
     )
     parser.add_argument(
         "--start-delay",
-        type=int,
+        type=parse_millisecond_seconds,
         help=(
             "Compute absolute experiment T0 as current UTC time plus this many "
             "seconds. Ignored if --absolute-start-time is set."

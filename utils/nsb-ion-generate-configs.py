@@ -40,7 +40,7 @@ class ActiveContactWindow:
     endpoint2: str
     start_seconds: float
     rate_bytes_per_second: int
-    ion_owlt_seconds: int
+    ion_owlt_seconds: float
     source_epoch: str
 
 
@@ -272,15 +272,15 @@ def epoch_timestamp(epoch, epoch_path):
 
 def epoch_offset_seconds(timestamp, first_timestamp, epoch_path):
     offset = timestamp - first_timestamp
-    rounded = round(offset)
+    rounded = round(offset, 3)
     if rounded < 0:
         raise ValueError(f"epoch time moves backwards: {epoch_path}")
-    if abs(offset - rounded) > 0.001:
+    if not math.isclose(offset, rounded, abs_tol=1e-6):
         raise ValueError(
-            f"epoch offset is not an integer number of seconds: {epoch_path}"
+            f"epoch offset supports at most millisecond precision: {epoch_path}"
         )
 
-    return int(rounded)
+    return rounded
 
 
 def link_nodes(link):
@@ -362,11 +362,19 @@ def parse_delay_seconds(value):
 
 
 def quantize_ion_owlt_seconds(delay_seconds, subsecond_policy="ceil-positive"):
-    """Map physical delay to stock ION's whole-second OWLT representation."""
-    if subsecond_policy not in {"ceil-positive", "zero"}:
+    """Map physical delay to the selected ION OWLT representation.
+
+    ``ceil-millisecond`` is intended only for the subsecond ION fork.  It
+    preserves physical propagation delay at the finest precision accepted by
+    that fork while conservatively avoiding an underestimated OWLT.
+    """
+    if subsecond_policy not in {"ceil-positive", "zero", "ceil-millisecond"}:
         raise ValueError(
-            "ion_subsecond_owlt_policy must be 'ceil-positive' or 'zero'"
+            "ion_subsecond_owlt_policy must be 'ceil-positive', 'zero', "
+            "or 'ceil-millisecond'"
         )
+    if subsecond_policy == "ceil-millisecond":
+        return math.ceil(delay_seconds * 1000.0 - 1e-12) / 1000.0
     if delay_seconds < 1.0 and subsecond_policy == "zero":
         # This is an explicit modelling policy, not mathematical rounding.
         # Linux/NetEm retains the physical subsecond propagation delay; only
@@ -586,7 +594,7 @@ def contact_window(registry, contact):
     if isinstance(contact, dict):
         return float(contact["start"]), float(contact["end"])
 
-    return 0, int(registry["contact_duration_seconds"])
+    return 0, float(registry["contact_duration_seconds"])
 
 
 def render_contact_time(registry, offset_seconds):
@@ -617,7 +625,7 @@ def contact_segment_rate(registry, contact):
 
 def contact_segment_owlt(registry, contact):
     if isinstance(contact, dict):
-        return int(
+        return float(
             contact.get(
                 "ion_owlt_seconds",
                 quantize_ion_owlt_seconds(
@@ -630,6 +638,16 @@ def contact_segment_owlt(registry, contact):
         float(registry["owlt_seconds"]),
         registry.get("ion_subsecond_owlt_policy", "ceil-positive"),
     )
+
+
+def render_ion_owlt(value):
+    """Render an OWLT using ION's optional three-digit fractional syntax."""
+    value = float(value)
+    if value < 0 or not math.isfinite(value):
+        raise ValueError(f"ION OWLT must be non-negative and finite: {value!r}")
+    if math.isclose(value, round(value), abs_tol=1e-12):
+        return str(int(round(value)))
+    return f"{value:.3f}"
 
 
 def validate_ion_node_registry(registry):
@@ -672,13 +690,13 @@ def validate_ion_node_registry(registry):
             for key in ["from", "to", "start", "end"]:
                 if key not in contact:
                     raise ValueError(f"contact is missing required key {key}: {contact}")
-            if int(contact["start"]) < 0:
+            if float(contact["start"]) < 0:
                 raise ValueError(f"contact start must be non-negative: {contact}")
-            if int(contact["end"]) <= int(contact["start"]):
+            if float(contact["end"]) <= float(contact["start"]):
                 raise ValueError(f"contact end must be greater than start: {contact}")
             if int(contact.get("rate_bytes_per_second", 1)) <= 0:
                 raise ValueError(f"contact rate must be positive: {contact}")
-            if int(contact.get("ion_owlt_seconds", 0)) < 0:
+            if float(contact.get("ion_owlt_seconds", 0)) < 0:
                 raise ValueError(f"contact OWLT must be non-negative: {contact}")
         elif not isinstance(contact, (list, tuple)) or len(contact) != 2:
             raise ValueError(f"contact must contain exactly two nodes: {contact}")
@@ -729,12 +747,16 @@ def validate_ion_node_registry(registry):
     subsecond_policy = registry.get(
         "ion_subsecond_owlt_policy", "ceil-positive"
     )
-    if subsecond_policy not in {"ceil-positive", "zero"}:
+    if subsecond_policy not in {"ceil-positive", "zero", "ceil-millisecond"}:
         raise ValueError(
-            "ion_subsecond_owlt_policy must be 'ceil-positive' or 'zero'"
+            "ion_subsecond_owlt_policy must be 'ceil-positive', 'zero', "
+            "or 'ceil-millisecond'"
         )
 
-    if int(registry.get("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)) <= 0:
+    contact_duration = float(
+        registry.get("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)
+    )
+    if not math.isfinite(contact_duration) or contact_duration <= 0:
         raise ValueError("contact_duration_seconds must be positive when set")
 
 
@@ -783,7 +805,7 @@ def render_global_ionrc(registry):
         end_text = render_contact_time(registry, end)
         a = ipn_node_number(registry, left)
         b = ipn_node_number(registry, right)
-        owlt_seconds = contact_segment_owlt(registry, contact)
+        owlt_seconds = render_ion_owlt(contact_segment_owlt(registry, contact))
         source = contact_source(contact)
         if source:
             lines.append(f"# {source}: {left} <-> {right}")
@@ -896,7 +918,7 @@ def render_node_ionconfig(registry, node_name):
 
 def render_node_ionrc(registry, node_name):
     ion_id = ipn_node_number(registry, node_name)
-    horizon = int(registry["contact_duration_seconds"])
+    horizon = math.ceil(float(registry["contact_duration_seconds"]))
 
     lines = [
         f"# Generated ION startup script for NetSatBench node {node_name}.",
@@ -943,7 +965,7 @@ def main():
     )
     parser.add_argument(
         "--epoch-duration",
-        type=int,
+        type=parse_millisecond_seconds,
         help=(
             "Seconds used to close contacts that remain active after the last "
             "epoch. Contact start times come from epoch timestamps."
@@ -1005,7 +1027,7 @@ def main():
             args.contact_end_guard,
         )
         registry["contact_duration_seconds"] = max(
-            int(registry.get("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)),
+            float(registry.get("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)),
             max(contact["end"] for contact in registry["contacts"]) + args.epoch_duration,
         )
 

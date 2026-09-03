@@ -52,7 +52,111 @@ class IonContactRateTests(unittest.TestCase):
         self.assertEqual(
             generator.quantize_ion_owlt_seconds(0.0047, "zero"), 0
         )
+        self.assertEqual(
+            generator.quantize_ion_owlt_seconds(
+                0.0047, "ceil-millisecond"
+            ),
+            0.005,
+        )
+        self.assertEqual(
+            generator.quantize_ion_owlt_seconds(
+                0.000415, "ceil-millisecond"
+            ),
+            0.001,
+        )
         self.assertEqual(generator.quantize_ion_owlt_seconds(1.2), 2)
+
+    def test_subsecond_fork_policy_renders_physics_owlt_in_milliseconds(self):
+        registry = {
+            **self.registry,
+            "owlt_seconds": 0.001,
+            "ion_subsecond_owlt_policy": "ceil-millisecond",
+        }
+        with tempfile.TemporaryDirectory() as epoch_dir:
+            self.write_epoch(
+                epoch_dir,
+                0,
+                0,
+                links_add=[{
+                    "endpoint1": "sat1",
+                    "endpoint2": "sat2",
+                    "rate": "1mbit",
+                    "delay": "4.902477ms",
+                }],
+            )
+            self.write_epoch(epoch_dir, 1, 10)
+            contacts = generator.derive_contacts_from_epochs(
+                registry,
+                epoch_dir,
+                "NetSatBench-epoch*.json",
+                epoch_duration=10,
+            )
+
+        self.assertEqual(contacts[0]["ion_owlt_seconds"], 0.005)
+        rendered = generator.render_global_ionrc(
+            {**registry, "contacts": contacts}
+        )
+        self.assertIn("a range +0 +20 1 2 0.005", rendered)
+        self.assertNotIn("a range +0 +20 1 2 1\n", rendered)
+
+    def test_fractional_physical_epochs_create_fractional_contacts(self):
+        with tempfile.TemporaryDirectory() as epoch_dir:
+            self.write_epoch(
+                epoch_dir,
+                0,
+                10.000,
+                links_add=[{
+                    "endpoint1": "sat1",
+                    "endpoint2": "sat2",
+                    "rate": "1mbit",
+                    "delay": "4.2ms",
+                }],
+            )
+            self.write_epoch(
+                epoch_dir,
+                1,
+                11.500,
+                links_del=[{"endpoint1": "sat1", "endpoint2": "sat2"}],
+            )
+            contacts = generator.derive_contacts_from_epochs(
+                {
+                    **self.registry,
+                    "ion_subsecond_owlt_policy": "ceil-millisecond",
+                },
+                epoch_dir,
+                "NetSatBench-epoch*.json",
+                epoch_duration=1.5,
+                contact_start_guard=0.375,
+                contact_end_guard=0.125,
+            )
+
+        self.assertEqual(contacts[0]["start"], 0.375)
+        self.assertEqual(contacts[0]["end"], 1.375)
+        rendered = generator.render_global_ionrc({
+            **self.registry,
+            "ion_subsecond_owlt_policy": "ceil-millisecond",
+            "contacts": contacts,
+        })
+        self.assertIn("a contact +0.375 +1.375 1 2", rendered)
+        self.assertIn("a range +0.375 +1.375 1 2 0.005", rendered)
+
+    def test_epoch_offset_rejects_submillisecond_precision(self):
+        with self.assertRaisesRegex(ValueError, "millisecond precision"):
+            generator.epoch_offset_seconds(10.3755, 10.0, Path("epoch.json"))
+
+    def test_registry_accepts_a_contact_shorter_than_one_second(self):
+        registry = {
+            **self.registry,
+            "contacts": [{
+                "from": "sat1",
+                "to": "sat2",
+                "start": 0.1,
+                "end": 0.9,
+                "rate_bytes_per_second": 1000,
+                "ion_owlt_seconds": 0.005,
+            }],
+        }
+        generator.validate_ion_node_registry(registry)
 
     def test_physics_policy_sets_ion_owlt_to_zero_without_changing_delay(self):
         registry = {**self.registry, "ion_subsecond_owlt_policy": "zero"}

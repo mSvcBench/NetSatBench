@@ -8,8 +8,8 @@ from pathlib import Path
 
 BASE_TIME = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
 DEFAULT_RATE = "10mbit"
-# Keep NetEm's one-way delay aligned with the whole-second OWLT rendered into
-# the ION range plan for these deterministic demonstration scenarios.
+# Most legacy deterministic scenarios retain their original 1 s delay.  The
+# subsecond 00-all-open baseline overrides this with 5 ms explicitly.
 DEFAULT_DELAY = "1s"
 MULTI_BUNDLE_DELAY = "100ms"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -54,8 +54,11 @@ def build_link_descriptor(
 def build_epoch(elapsed_seconds, *, links_add=(), links_update=(), links_del=()):
     """Build an epoch at a deterministic offset from the demo time base."""
     timestamp = BASE_TIME + timedelta(seconds=elapsed_seconds)
+    rendered = timestamp.isoformat(
+        timespec="milliseconds" if timestamp.microsecond else "seconds"
+    ).replace("+00:00", "Z")
     return {
-        "time": timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "time": rendered,
         "links-del": list(links_del),
         "links-update": list(links_update),
         "links-add": list(links_add),
@@ -281,10 +284,93 @@ def build_handover_overlap_epochs():
     return epochs
 
 
+def build_millisecond_scale_epochs():
+    """Compress 05-short-contact-capacity by 33 onto a millisecond timeline.
+
+    The rate profile and the ordering of events are preserved exactly; only the
+    time axis and the propagation delay are divided by 33. Link rates are held
+    constant so that the emulated data plane is not asked for bandwidth it
+    cannot deliver, which means the transferable volume scales down with time.
+    The resulting contacts are 180-300 ms long, comfortably above the ~14 ms
+    worst-case dispatch error measured for a 10 ms rfxclock poll interval.
+    """
+    path_links = [("usr1", "sat1"), ("sat1", "sat2"), ("sat2", "grd1")]
+    delay = "30ms"
+    bottleneck = ("sat1", "sat2")
+
+    def descriptor(endpoints, rate=DEFAULT_RATE):
+        return build_link_descriptor(*endpoints, rate=rate, delay=delay)
+
+    return [
+        build_epoch(
+            0.0,
+            links_add=[descriptor(link) for link in path_links],
+        ),
+        build_epoch(
+            0.3, links_update=[descriptor(bottleneck, rate="1mbit")]
+        ),
+        build_epoch(
+            0.6, links_update=[descriptor(bottleneck, rate="100kbit")]
+        ),
+        build_epoch(0.9, links_update=[descriptor(bottleneck)]),
+        build_epoch(
+            1.2,
+            links_del=[
+                {"endpoint1": endpoint1, "endpoint2": endpoint2}
+                for endpoint1, endpoint2 in path_links
+            ],
+        ),
+    ]
+
+
+def build_millisecond_precision_epochs():
+    """Keep the proven second-scale timing, but land events off the second.
+
+    This is the conservative counterpart to 07-millisecond-scale. Contact
+    lengths, rates and guards stay in the range the campaigns already
+    validated, so the only variable under test is whether a boundary that
+    falls between two seconds survives generation, storage and dispatch. The
+    offsets mirror a measured pass whose usable window ran from 08:40:54.803
+    to 08:41:15.773, and the one-way light time is expressed in milliseconds
+    rather than rounded up to a whole second.
+    """
+    path_links = [("usr1", "sat1"), ("sat1", "sat2"), ("sat2", "grd1")]
+    delay = "6ms"
+    bottleneck = ("sat1", "sat2")
+
+    def descriptor(endpoints, rate=DEFAULT_RATE):
+        return build_link_descriptor(*endpoints, rate=rate, delay=delay)
+
+    return [
+        build_epoch(
+            0.0,
+            links_add=[descriptor(link) for link in path_links],
+        ),
+        build_epoch(
+            10.237, links_update=[descriptor(bottleneck, rate="1mbit")]
+        ),
+        build_epoch(
+            20.481, links_update=[descriptor(bottleneck, rate="100kbit")]
+        ),
+        build_epoch(30.719, links_update=[descriptor(bottleneck)]),
+        build_epoch(
+            40.953,
+            links_del=[
+                {"endpoint1": endpoint1, "endpoint2": endpoint2}
+                for endpoint1, endpoint2 in path_links
+            ],
+        ),
+    ]
+
+
 def build_demo_scenarios():
     """Return the complete reproducible 10-node ION demonstration suite."""
     all_chain_links = [
         build_link_descriptor(endpoint1, endpoint2)
+        for endpoint1, endpoint2 in CHAIN_LINKS
+    ]
+    subsecond_all_open_links = [
+        build_link_descriptor(endpoint1, endpoint2, delay="5ms")
         for endpoint1, endpoint2 in CHAIN_LINKS
     ]
 
@@ -325,7 +411,9 @@ def build_demo_scenarios():
     ]
 
     return {
-        "00-all-open": [build_epoch(0, links_add=all_chain_links)],
+        "00-all-open": [
+            build_epoch(0.125, links_add=subsecond_all_open_links)
+        ],
         "01-store-carry-forward": build_sequential_chain_epochs(),
         "02-cloudy-ground": build_cloudy_ground_epochs(),
         "03-alternate-path": [
@@ -390,6 +478,8 @@ def build_demo_scenarios():
         "04-multi-bundle-queue": build_multi_bundle_epochs(),
         "05-short-contact-capacity": dynamic_capacity_epochs,
         "06-handover-overlap": build_handover_overlap_epochs(),
+        "07-millisecond-scale": build_millisecond_scale_epochs(),
+        "08-millisecond-precision": build_millisecond_precision_epochs(),
     }
 
 
