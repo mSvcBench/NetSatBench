@@ -23,12 +23,12 @@ RUN apt-get update && \
 # Generate this directory with ./stage-ion-runtime.sh before docker build.
 COPY ion-runtime/bin/ /usr/local/bin/
 COPY ion-runtime/lib/ /usr/local/lib/
+COPY verify-ion-runtime.sh /app/verify-ion-runtime.sh
 
 RUN chmod +x /usr/local/bin/* && \
     echo "/usr/local/lib" > /etc/ld.so.conf.d/ion.conf && \
     ldconfig && \
-    ionadmin -h >/dev/null 2>&1 || true && \
-    bpadmin -h >/dev/null 2>&1 || true
+    bash /app/verify-ion-runtime.sh
 
 RUN mkdir -p /app
 WORKDIR /app

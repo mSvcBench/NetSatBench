@@ -5,6 +5,7 @@ import gzip
 import json
 import logging
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,9 @@ logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger("nsb-load-image")
 
 
+# ==========================================
+# COMMAND HELPERS
+# ==========================================
 def run(cmd, *, check=True, stdin=None, stdout=None, timeout=None):
     result = subprocess.run(
         cmd,
@@ -48,6 +52,9 @@ def merge_common(worker_config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return merged
 
 
+# ==========================================
+# WORKER SELECTION
+# ==========================================
 def workers_from_etcd(args) -> Dict[str, Dict[str, Any]]:
     client = (
         etcd3.client(
@@ -86,6 +93,9 @@ def selected_workers(workers: Dict[str, Dict[str, Any]], names: Iterable[str] | 
     return selected
 
 
+# ==========================================
+# IMAGE DISTRIBUTION
+# ==========================================
 def ensure_local_image(image: str) -> None:
     run(["docker", "image", "inspect", image], check=True, stdout=subprocess.DEVNULL)
 
@@ -127,9 +137,9 @@ def run_ssh(ssh_user: str, ssh_host: str, ssh_key: str, remote_args: list[str], 
         "StrictHostKeyChecking=accept-new",
         "-o",
         f"ConnectTimeout={timeout}",
-        f"{ssh_user}@{ssh_host}",
         "--",
-        *remote_args,
+        f"{ssh_user}@{ssh_host}",
+        shlex.join(remote_args),
     ]
     return run(cmd, check=True, timeout=timeout + 30)
 
@@ -165,17 +175,20 @@ def load_on_worker(
         copy_archive(archive_path, ssh_user, ssh_host, ssh_key, remote_path, timeout)
 
         log.info(f"🐳 {name}: loading image into Docker")
-        remote_cmd = f"gunzip -c {remote_path} | docker load"
-        run_ssh(ssh_user, ssh_host, ssh_key, ["sh", "-lc", remote_cmd], timeout)
+        # Docker accepts gzip archives directly; avoid masking pipeline errors.
+        run_ssh(ssh_user, ssh_host, ssh_key, ["docker", "load", "--input", remote_path], timeout)
 
         if not keep_remote:
-            run_ssh(ssh_user, ssh_host, ssh_key, ["sh", "-lc", f"test -f {remote_path} && rm {remote_path} || true"], timeout)
+            run_ssh(ssh_user, ssh_host, ssh_key, ["rm", "-f", "--", remote_path], timeout)
 
         return name, True, "loaded"
     except Exception as exc:
         return name, False, str(exc)
 
 
+# ==========================================
+# MAIN
+# ==========================================
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Copy a local Docker image to all NetSatBench workers and load it there."

@@ -22,6 +22,9 @@ DEFAULT_COMMAND_TIMEOUT = 60
 NODE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
+# ==========================================
+# COMMAND HELPERS
+# ==========================================
 def run(cmd, *, check=True, capture_output=False, timeout=DEFAULT_COMMAND_TIMEOUT):
     result = subprocess.run(
         cmd,
@@ -84,6 +87,9 @@ def default_ion_dir(repo_root):
     return repo_root / "examples/10nodes-ion-dtn/ion"
 
 
+# ==========================================
+# SCENARIO CONFIGURATION
+# ==========================================
 def scenario_nodes(registry, scenario_dir):
     nodes = set(registry.get("path", []))
     for key in ["default_source", "default_destination"]:
@@ -130,6 +136,9 @@ def local_container_exists(node):
     return result.returncode == 0
 
 
+# ==========================================
+# ETCD AND WORKER ACCESS
+# ==========================================
 def connect_etcd(args):
     if args.etcd_user and args.etcd_password:
         client = etcd3.client(
@@ -226,6 +235,9 @@ def build_node_archive(node, generated_dir, ion_nodes_text, archive_path):
         archive.add(node_dir, arcname=node)
 
 
+# ==========================================
+# ION NODE LIFECYCLE
+# ==========================================
 def reset_container_ion_dir(node):
     script = (
         "import os, shutil\n"
@@ -267,15 +279,20 @@ def stop_ion(node):
     run(["docker", "exec", node, "sh", "-lc", cmd], check=False)
 
 
-def start_ion(node):
-    cmd = (
+def ion_start_commands(node):
+    validate_node_name(node)
+    return (
+        "set -e\n"
         "export ION_NODE_LIST_DIR=/ion\n"
         f"cd /ion/{node}\n"
         "ionadmin node.ionrc > ion.log 2>&1\n"
         "ionsecadmin node.ionsecrc >> ion.log 2>&1\n"
         "bpadmin node.bprc >> ion.log 2>&1\n"
     )
-    run(["docker", "exec", node, "sh", "-lc", cmd])
+
+
+def start_ion(node):
+    run(["docker", "exec", node, "sh", "-lc", ion_start_commands(node)])
 
 
 def prepare_node(node, generated_dir, ion_nodes_text, args):
@@ -320,13 +337,7 @@ def prepare_remote_node(node, worker, archive_path, args):
 
         start_commands = ""
         if not args.no_start:
-            start_commands = (
-                "export ION_NODE_LIST_DIR=/ion; "
-                f"cd /ion/{node}; "
-                "ionadmin node.ionrc > ion.log 2>&1; "
-                "ionsecadmin node.ionsecrc >> ion.log 2>&1; "
-                "bpadmin node.bprc >> ion.log 2>&1; "
-            )
+            start_commands = ion_start_commands(node)
 
         remote_command = (
             f"docker inspect {node} >/dev/null 2>&1 && "
@@ -336,7 +347,7 @@ def prepare_remote_node(node, worker, archive_path, args):
             "shutil.rmtree('/ion',ignore_errors=True); os.makedirs('/ion'); "
             f"tarfile.open('{container_archive}','r:gz').extractall('/ion'); "
             f"os.remove('{container_archive}')\" && "
-            f"docker exec {node} sh -lc '{start_commands}'"
+            f"docker exec {node} sh -lc {shlex.quote(start_commands)}"
         )
 
         run_worker_ssh(worker, remote_command, args.ssh_timeout)
@@ -392,6 +403,9 @@ def default_scenario_base(repo_root):
     return repo_root / "examples/10nodes-ion-dtn/epochs"
 
 
+# ==========================================
+# MAIN
+# ==========================================
 def main():
     repo_root = repo_root_from_script()
     ion_dir = default_ion_dir(repo_root)

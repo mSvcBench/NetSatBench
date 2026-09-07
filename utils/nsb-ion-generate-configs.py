@@ -44,6 +44,9 @@ class ActiveContactWindow:
     source_epoch: str
 
 
+# ==========================================
+# NODE REGISTRY
+# ==========================================
 def load_ion_node_registry(registry_path):
     """Load the ION registry and derive UDP CLA addresses from NetSatBench."""
     with open(registry_path, "r", encoding="utf-8") as registry_file:
@@ -199,6 +202,9 @@ def populate_udp_cla_addresses(ion_registry, registry_path):
     return ion_registry
 
 
+# ==========================================
+# TIME AND LINK HELPERS
+# ==========================================
 def load_json(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -380,6 +386,9 @@ def append_contact_segment(contacts, active_contact, end_seconds, source_end):
     )
 
 
+# ==========================================
+# CONTACT PLAN GENERATION
+# ==========================================
 def derive_contacts_from_epochs(
     registry,
     epoch_dir,
@@ -609,6 +618,9 @@ def contact_segment_owlt(registry, contact):
     )
 
 
+# ==========================================
+# REGISTRY VALIDATION
+# ==========================================
 def validate_ion_node_registry(registry):
     required = [
         "experiment",
@@ -715,6 +727,9 @@ def validate_ion_node_registry(registry):
         raise ValueError("contact_duration_seconds must be positive when set")
 
 
+# ==========================================
+# ION CONFIGURATION RENDERING
+# ==========================================
 def direct_neighbors(registry, node_name):
     neighbors = []
     for contact in registry["contacts"]:
@@ -893,6 +908,9 @@ def render_node_ionsecrc(registry, node_name):
     return ""
 
 
+# ==========================================
+# MAIN
+# ==========================================
 def main():
     parser = argparse.ArgumentParser(
         description="Generate ION config files from a NetSatBench DTN node registry."

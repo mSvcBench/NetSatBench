@@ -30,6 +30,9 @@ CHAIN_NODES = [
 CHAIN_LINKS = list(zip(CHAIN_NODES, CHAIN_NODES[1:]))
 
 
+# ==========================================
+# EPOCH HELPERS
+# ==========================================
 def build_link_descriptor(
     endpoint1,
     endpoint2,
@@ -62,6 +65,9 @@ def build_epoch(elapsed_seconds, *, links_add=(), links_update=(), links_del=())
     }
 
 
+# ==========================================
+# SCENARIO DEFINITIONS
+# ==========================================
 def build_sequential_chain_epochs():
     """Open each next hop 6 s before closing the preceding hop."""
     epochs = [
@@ -393,6 +399,9 @@ def build_demo_scenarios():
     }
 
 
+# ==========================================
+# SCENARIO FILES AND VALIDATION
+# ==========================================
 def expected_epoch_files():
     """Return each generated epoch path and its canonical JSON content."""
     expected_files = {}
@@ -441,6 +450,9 @@ def write_scenarios():
     print(f"wrote {len(expected_files)} epoch files")
 
 
+# ==========================================
+# MAIN
+# ==========================================
 def main():
     parser = argparse.ArgumentParser(
         description="Generate the reproducible 10-node ION-DTN scenario suite."
