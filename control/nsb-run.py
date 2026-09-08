@@ -564,6 +564,24 @@ def main() -> int:
 
     epoch_queue_dir = os.path.join(epoch_dir, "epoch-queue")
     os.makedirs(epoch_queue_dir, exist_ok=True)
+    # check not empty
+    if not os.listdir(epoch_queue_dir):
+        log.info(f"📂 Epoch queue directory is empty: {epoch_queue_dir}. Ready to enqueue epochs.")
+    else:
+        log.warning(f"⚠️ Epoch queue directory is not empty: {epoch_queue_dir}. Existing files may be processed.")
+        # Ask to remove all files
+        response = input("Do you want to clear the epoch-queue directory before starting? (y/N): ").strip().lower()
+        if response == 'y':
+            for f in os.listdir(epoch_queue_dir):
+                file_path = os.path.join(epoch_queue_dir, f)
+                try:
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                        log.info(f"🗑️  Removed existing file from epoch-queue: {file_path}")
+                except Exception as e:
+                    log.error(f"❌ Failed to remove {file_path}: {e}")
+        else:
+            log.info("ℹ️  Proceeding without clearing the epoch-queue directory.")
 
     # Start watcher
     queue_observer = start_queue_watcher(Path(epoch_queue_dir))
