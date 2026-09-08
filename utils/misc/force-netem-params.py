@@ -35,14 +35,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--node-regex1",
         type=str,
-        default="^sat\d+$",
-        help="First node type to consider (default: ^sat\d+$, match any node that starts with 'sat' followed by digits)",
+        default=r"^sat\d+$",
+        help=r"First node type to consider (default: ^sat\d+$, match any node that starts with 'sat' followed by digits)",
     )
     parser.add_argument(
         "--node-regex2",
         type=str,
-        default="^grd\d+$",
-        help="Second node type to consider (default: ^grd\d+$, match any node that starts with 'grd' followed by digits)",
+        default=r"^grd\d+$",
+        help=r"Second node type to consider (default: ^grd\d+$, match any node that starts with 'grd' followed by digits)",
     )
     parser.add_argument(
         "--delay",

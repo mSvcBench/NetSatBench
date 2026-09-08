@@ -12,6 +12,7 @@ COMMANDS = {
     "init": {"script": "control/nsb-init.py"},
     "deploy": {"script": "control/nsb-deploy.py"},
     "run": {"script": "control/nsb-run.py"},
+    "ion-prepare": {"script": "control/nsb-ion-prepare.py"},
     "node-restart": {"script": "control/nsb-node-restart.py"},
     "rm": {"script": "control/nsb-rm.py"},
     "stats": {"script": "utils/nsb-stats.py"},
@@ -19,10 +20,15 @@ COMMANDS = {
     "exectype": {"script": "utils/nsb-exectype.py"},
     "cp": {"script": "utils/nsb-cp.py"},
     "cptype": {"script": "utils/nsb-cptype.py"},
+    "load-image": {"script": "utils/nsb-load-image.py"},
     "reset": {"script": "control/nsb-reset.py"},
     "inspect": {"script": "utils/nsb-inspect.py"},
     "status": {"script": "utils/nsb-status.py"},
     "run-inject": {"script": "utils/nsb-run-inject.py"},
+    "ion-generate-configs": {"script": "utils/nsb-ion-generate-configs.py"},
+    "ion-generate-demo-scenarios": {
+        "script": "utils/nsb-ion-generate-demo-scenarios.py"
+    },
     "starperf-generate": {
         "script": "generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchGenerate.py",
         "cwd": "generators/StarPerf_Simulator",

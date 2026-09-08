@@ -72,6 +72,8 @@ Supported execution styles:
 - `sat-container/`: container image and `sat-agent` code
 - `generators/`: scenario and epoch generation tools
 - `examples/`: sample scenarios and configurations
+- `examples/10nodes/`: standard IPv4, IPv6, and oracle-routing example
+- `examples/10nodes-ion-dtn/`: self-contained 10-node ION-DTN example
 - `utils/`: utility scripts
 - `docs/`: command and configuration documentation
 - `test/`: experiments using NetSatBench
@@ -84,6 +86,7 @@ Main docs:
 - [Etcd Key-Value Store](docs/etcd.md)
 - [Scenario generation and Physical-Layer Plug-ins](docs/starperf-integration.md)
 - [Routing Plug-ins](docs/routing-interface.md)
+- [ION-DTN Installation and Experiment Guide](docs/ion-dtn-integration-guide.md)
 - [Cloud Deployment Notes](docs/cloud-notes.md)
 
 
@@ -129,6 +132,11 @@ export ETCD_PORT="2379"
 export NODE_ETCD_HOST="<etcd_host_internal_ip>"  # IP address of Etcd server reachable from worker nodes (if different from control host)
 ```
 
+`NODE_ETCD_HOST` must be reachable from inside every node container. Do not use
+`127.0.0.1` for deployed containers unless Etcd is running inside each container.
+For a single Docker bridge host this may be the bridge gateway, for example
+`172.20.0.1`; for multiple workers use the Etcd server's private/routable IP.
+
 Optional (if auth/TLS is enabled):
 
 ```bash
@@ -141,14 +149,14 @@ export ETCD_CA_CERT="/path/to/ca.crt"
 
 Update:
 
-- `examples/10nodes/workers-config.json`
+- `examples/10nodes/worker-config.json`
 
 Set worker IPs, SSH user/key, and worker resource/network fields.
 
 ### 4. Initialize worker environment
 
 ```bash
-python3 ./nsb.py system-init-docker --config ./examples/10nodes/workers-config.json
+python3 ./nsb.py system-init-docker --config ./examples/10nodes/worker-config.json
 ```
 
 ### 5. Initialize scenario state
@@ -162,7 +170,9 @@ This phase validates scenario inputs, assigns resources/IPs (if auto-assignment 
 ### 6. Deploy node containers
 
 ```bash
-python3 ./nsb.py deploy -t 8
+python3 ./nsb.py deploy -t 8 \
+  --etcd-host "$ETCD_HOST" \
+  --node-etcd-host "$NODE_ETCD_HOST"
 ```
 
 ### 7. Run epoch-driven emulation
@@ -195,7 +205,7 @@ python3 ./nsb.py cp mydir/ usr1:/app
 python3 ./nsb.py cptype mydir/ user:/app
 ```
 
-See all commands in [CLI documentation](docs/contro-commands.md).
+See all commands in [CLI documentation](docs/control-commands.md).
 
 ---
 
@@ -217,4 +227,4 @@ python3 ./nsb.py system-cleanup-docker
 
 ## Reference
 
-- *NetSatBench: A Distributed LEO Constellation Emulator with an SRv6 Case Study* ([https://arxiv.org](https://arxiv.org/abs/2604.27854)). Code used for the paper is available in the [`/test/handover`](/test/handover`) directory.
+- *NetSatBench: A Distributed LEO Constellation Emulator with an SRv6 Case Study* ([https://arxiv.org](https://arxiv.org/abs/2604.27854)). Code used for the paper is available in the [`test/handover`](test/handover) directory.

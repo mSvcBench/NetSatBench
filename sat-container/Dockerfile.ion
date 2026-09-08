@@ -1,0 +1,46 @@
+# ================================
+# NetSatBench satellite container with ION-DTN runtime
+# ================================
+FROM python:3.11-slim
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ETCD_ENDPOINT=127.0.0.1:2379 \
+    NODE_NAME="sat" \
+    PATH="/usr/local/bin:${PATH}" \
+    LD_LIBRARY_PATH="/usr/local/lib"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      iputils-ping iproute2 net-tools tcpdump \
+      iperf3 jq iptables traceroute \
+      screen procps vim && \
+    pip3 install --no-cache-dir protobuf==3.20.* etcd3==0.12.0 && \
+    mkdir -p /usr/local/bin /usr/local/lib /ion && \
+    rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log
+
+# ION-DTN runtime staged from a host-side ION build.
+# Generate this directory with ./stage-ion-runtime.sh before docker build.
+COPY ion-runtime/bin/ /usr/local/bin/
+COPY ion-runtime/lib/ /usr/local/lib/
+COPY verify-ion-runtime.sh /app/verify-ion-runtime.sh
+
+RUN chmod +x /usr/local/bin/* && \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/ion.conf && \
+    ldconfig && \
+    bash /app/verify-ion-runtime.sh
+
+RUN mkdir -p /app
+WORKDIR /app
+
+COPY start-sat-agent.sh /app/start-sat-agent.sh
+COPY sat-agent.py /app/sat-agent.py
+COPY extra /app/extra
+
+RUN chmod +x /app/start-sat-agent.sh
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=5 CMD \
+  bash -lc 'pgrep -f "/app/sat-agent.py" >/dev/null 2>&1 || exit 1'
+
+CMD ["/app/start-sat-agent.sh"]
+# ================================

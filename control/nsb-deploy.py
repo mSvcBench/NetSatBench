@@ -9,6 +9,7 @@ import subprocess
 import json
 import os
 import sys
+import ipaddress
 from typing import Dict, Any, Tuple
 from scheduler import parse_cpu, parse_mem
 
@@ -43,6 +44,15 @@ def get_prefix_data(etcd, prefix: str) -> Dict[str, Any]:
         except json.JSONDecodeError:
             log.warning(f"⚠️ Warning: Could not parse JSON for key {key} under {prefix}")
     return data
+
+
+def is_loopback_host(host: str) -> bool:
+    if host in {"localhost", "ip6-localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class SshError(RuntimeError):
@@ -112,6 +122,7 @@ def recreate_and_run_container(
     ssh_key_path: str,
     worker_bridge: str,
     container_image: str,
+    image_pull_policy: str,
     cpu_requested: float,
     mem_requested: str,
     cpu_limit: float,
@@ -153,7 +164,7 @@ def recreate_and_run_container(
                 "--hostname", node_name,
                 "--net", worker_bridge,
                 "--privileged",
-                "--pull=always",
+                f"--pull={image_pull_policy}",
                 "-e", f"NODE_NAME={node_name}",
                 "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}"
         ]
@@ -251,6 +262,9 @@ def create_one_node(
     ssh_key = worker_info.get('ssh-key', '~/.ssh/id_rsa')
     worker_bridge = worker_info.get('sat-vnet', 'sat-vnet')
     image = node.get('image', 'msvcbench/sat-container:latest')
+    image_pull_policy = node.get('image-pull-policy', 'always')
+    if image_pull_policy not in {"always", "missing", "never"}:
+        return name, False, f"❌ Invalid image-pull-policy '{image_pull_policy}'"
     cpu_requested = float(parse_cpu(node.get('cpu-request', 0.0)))
     mem_requested = f"{parse_mem(node.get('mem-request', '0MiB'))*1024}MiB"
     cpu_limit = float(parse_cpu(node.get('cpu-limit', 0.0)))
@@ -264,6 +278,7 @@ def create_one_node(
             ssh_key_path=ssh_key,
             worker_bridge=worker_bridge,
             container_image=image,
+            image_pull_policy=image_pull_policy,
             cpu_requested=cpu_requested,
             mem_requested=mem_requested,
             cpu_limit=cpu_limit,
@@ -348,6 +363,14 @@ def main() -> int:
     if args.threads < 1:
         log.error("❌ --threads must be >= 1")
         return 2
+
+    if is_loopback_host(args.node_etcd_host):
+        log.warning(
+            "⚠️ --node-etcd-host is loopback (%s). Inside a node container this "
+            "points to the container itself, not the Etcd server. Use an Etcd "
+            "address reachable from every worker/container.",
+            args.node_etcd_host,
+        )
 
     etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
 

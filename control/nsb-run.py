@@ -11,6 +11,7 @@ Producer side (this script):
 import argparse
 import calendar
 import concurrent.futures
+from datetime import datetime, timedelta, timezone
 import glob
 import json
 import logging
@@ -56,6 +57,29 @@ def calculate_vni(ep1, ant1, ep2, ant2) -> int:
     return (checksum % 16777215) + 1
 
 
+def parse_utc_datetime(value: str) -> datetime:
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid UTC timestamp {value!r}; expected ISO-8601 like "
+            "2026-07-20T10:30:00Z"
+        ) from exc
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def format_iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def smart_wait(target_virtual_time_str, filename: str, fixed_wait: int = -1) -> None:
     """
     Sleeps according to delta between consecutive epoch times (virtual time),
@@ -88,6 +112,31 @@ def smart_wait(target_virtual_time_str, filename: str, fixed_wait: int = -1) -> 
 
     except ValueError:
         log.warning(f"⚠️ [{filename}] Invalid time format: {target_virtual_time_str}")
+
+
+def wait_until_epoch_time(
+    epoch_time: float,
+    first_epoch_time: float,
+    absolute_start_time: datetime,
+    filename: str,
+) -> None:
+    offset = epoch_time - first_epoch_time
+    if offset < 0:
+        raise ValueError(f"{filename} is earlier than the first epoch")
+
+    target_time = absolute_start_time + timedelta(seconds=offset)
+    delay = target_time.timestamp() - time.time()
+    if delay > 0:
+        log.info(
+            f"⏳ [{filename}] Waiting {delay:.3f}s for scheduled time "
+            f"{format_iso_z(target_time)}"
+        )
+        time.sleep(delay)
+    else:
+        log.warning(
+            f"⚠️ [{filename}] Scheduled time {format_iso_z(target_time)} "
+            f"is {-delay:.3f}s in the past; applying now."
+        )
 
 
 def connect_etcd(
@@ -170,6 +219,14 @@ def convert_time_epoch_to_timestamp(time_str: str) -> float:
         raise ValueError(
             f"❌ Invalid time format: {time_str}. Expected 'YYYY-MM-DDTHH:MM:SSZ'."
         )
+
+
+def epoch_timestamp(epoch_dict: Dict) -> float:
+    epoch_time = epoch_dict.get("epoch-time")
+    if epoch_time not in (None, ""):
+        return float(epoch_time)
+
+    return convert_time_epoch_to_timestamp(epoch_dict.get("time"))
 
 
 def atomic_enqueue(src_path: str, queue_dir: str) -> str:
@@ -383,7 +440,13 @@ def process_epoch_from_queue(json_path: str) -> None:
     log.info(f"✅ [{os.path.basename(json_path)}] Epoch applied successfully.")
 
 
-def process_epoch_from_file(json_path: str, queue_path: str, fixed_wait: int = -1) -> None:
+def process_epoch_from_file(
+    json_path: str,
+    queue_path: str,
+    fixed_wait: int = -1,
+    first_epoch_time: Optional[float] = None,
+    absolute_start_time: Optional[datetime] = None,
+) -> None:
     """
     Reads an epoch file from epoch_dir, waits according to epoch time, then enqueues it
     into epoch-queue using atomic publish.
@@ -394,12 +457,18 @@ def process_epoch_from_file(json_path: str, queue_path: str, fixed_wait: int = -
             config = json.load(f)
 
         # WAIT FOR SCHEDULED TIME (virtual -> real time sync)
-        epoch_time = config.get("epoch-time")
-        if not epoch_time:
-            # fallback to ISO time
-            epoch_time = convert_time_epoch_to_timestamp(config.get("time"))
-
-        smart_wait(epoch_time, filename, fixed_wait=fixed_wait)
+        epoch_time = epoch_timestamp(config)
+        if absolute_start_time is not None:
+            if first_epoch_time is None:
+                raise ValueError("first_epoch_time is required for absolute scheduling")
+            wait_until_epoch_time(
+                epoch_time=epoch_time,
+                first_epoch_time=first_epoch_time,
+                absolute_start_time=absolute_start_time,
+                filename=filename,
+            )
+        else:
+            smart_wait(epoch_time, filename, fixed_wait=fixed_wait)
 
         log.info(f"🚩 Applying epoch configuration {filename}...")
 
@@ -417,8 +486,10 @@ def run_all_epochs(
     fixed_wait: int = -1,
     loop_delay: Optional[int] = None,
     resume: bool = False,
+    absolute_start_time: Optional[datetime] = None,
 ) -> int:
     global TIME_OFFSET
+    TIME_OFFSET = None
 
     files = list_epoch_files(epoch_dir, file_pattern)
     if not files:
@@ -440,9 +511,21 @@ def run_all_epochs(
             else:
                 log.warning(f"⚠️ Last applied epoch {last_epoch} not found in current epoch list. Restarting from the beginning.")
                 exit(1)
+    first_epoch_time = None
+    if absolute_start_time is not None:
+        with open(files[0], "r", encoding="utf-8") as f:
+            first_epoch_time = epoch_timestamp(json.load(f))
+        log.info(f"🕒 Absolute epoch schedule T0: {format_iso_z(absolute_start_time)}")
+
     while True:
         for f in files:
-            process_epoch_from_file(json_path=f, queue_path=queue_path, fixed_wait=fixed_wait)
+            process_epoch_from_file(
+                json_path=f,
+                queue_path=queue_path,
+                fixed_wait=fixed_wait,
+                first_epoch_time=first_epoch_time,
+                absolute_start_time=absolute_start_time,
+            )
 
         if loop_delay is not None:
             log.info(f"🔄 Looping emulation after {loop_delay} seconds...")
@@ -501,6 +584,21 @@ def main() -> int:
              "If set to N>=0, sleep N seconds between epochs.",
     )
     parser.add_argument(
+        "--absolute-start-time",
+        help=(
+            "UTC experiment T0 for absolute epoch replay, for example "
+            "2026-07-20T10:30:00Z. Epoch offsets are derived from epoch timestamps."
+        ),
+    )
+    parser.add_argument(
+        "--start-delay",
+        type=int,
+        help=(
+            "Compute absolute experiment T0 as current UTC time plus this many "
+            "seconds. Ignored if --absolute-start-time is set."
+        ),
+    )
+    parser.add_argument(
         "--loop-delay",
         default=None,
         type=int,
@@ -532,6 +630,21 @@ def main() -> int:
     args = parser.parse_args()
     log.setLevel(args.log_level.upper())
     PARALLEL_WORKERS = max(1, args.parallel_workers)
+
+    absolute_start_time = None
+    if args.absolute_start_time:
+        absolute_start_time = parse_utc_datetime(args.absolute_start_time)
+    elif args.start_delay is not None:
+        if args.start_delay <= 0:
+            log.error("❌ --start-delay must be positive.")
+            return 1
+        absolute_start_time = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+            seconds=args.start_delay
+        )
+
+    if absolute_start_time is not None and args.fixed_wait != -1:
+        log.error("❌ Use either absolute scheduling or --fixed-wait, not both.")
+        return 1
 
     etcd_client = connect_etcd(
         etcd_host=args.etcd_host,
@@ -581,6 +694,7 @@ def main() -> int:
                 fixed_wait=args.fixed_wait,
                 loop_delay=args.loop_delay,
                 resume=args.resume,
+                absolute_start_time=absolute_start_time,
             )
     finally:
         queue_observer.stop()

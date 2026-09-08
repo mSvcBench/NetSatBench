@@ -1,0 +1,48 @@
+diff --git a/bpv7/daemon/bpclm.c b/bpv7/daemon/bpclm.c
+index 5711366..67c8c27 100644
+--- a/bpv7/daemon/bpclm.c
++++ b/bpv7/daemon/bpclm.c
+@@ -499,6 +499,7 @@ static int	run_bpclm(char *nodeName)
+ 	Bundle		secondBundle;
+ 	Object		secondBundleObj;
+ 	Object		queue;
++	Object		fragmentedPlanXmitElt;
+ 
+ 	if (!nodeName)
+ 	{
+@@ -592,6 +593,7 @@ static int	run_bpclm(char *nodeName)
+ #endif
+ 	while (running)
+ 	{
++		fragmentedPlanXmitElt = 0;
+ 		if (sdr_begin_xn(sdr) == 0)
+ 		{
+ 			putErrmsg("bpclm can't begin transaction.", nodeName);
+@@ -744,6 +746,7 @@ static int	run_bpclm(char *nodeName)
+ 
+ 			/*	Okay to fragment.			*/
+ 
++			fragmentedPlanXmitElt = bundle.planXmitElt;
+ 			queue = sdr_list_list(sdr, bundle.planXmitElt);
+ 			if (bpFragment(&bundle, bundleObj,
+ 					&(bundle.planXmitElt), maxPayloadLength,
+@@ -780,6 +783,19 @@ static int	run_bpclm(char *nodeName)
+ 		 *	queue.						*/
+ 
+ 		sdr_stage(sdr, (char *) &plan, planObj, sizeof(BpPlan));
++		if (fragmentedPlanXmitElt
++		&& bundle.priority == BP_EXPEDITED_PRIORITY)
++		{
++			OrdinalState	*ordinal;
++
++			ordinal = &(plan.ordinals[bundle.ordinal]);
++			if (ordinal->lastForOrdinal == fragmentedPlanXmitElt)
++			{
++				ordinal->lastForOrdinal =
++						secondBundle.planXmitElt;
++			}
++		}
++
+ 		removeBundleFromQueue(&bundle, &plan);
+ 		sdr_write(sdr, planObj, (char *) &plan, sizeof(BpPlan));
+ 

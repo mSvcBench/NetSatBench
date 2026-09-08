@@ -1,5 +1,5 @@
 # Scenarios
-This directory contains sample satellite system configurations and epoch files for validation and benchmarking. Configurations are specified in JSON format as described in the [Configuration Manual](docs/configuration.md).
+This directory contains sample satellite system configurations and epoch files for validation and benchmarking. Configurations are specified in JSON format as described in the [Configuration Manual](../../docs/configuration.md).
 All files refers to a sample satellite system configuration file defining a constellation of 10 nodes, including 8 satellites of a single theoretical orbit sequentially connected, 1 ground station, and 1 user terminal. Ground station and user terminal are dynamically connected with two links to the satellite constellation.
 Different IP versions and routing configurations are available for testing different scenarios:
 

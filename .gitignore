@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+
+screenshots/
+sat-container/ion-runtime/
+.local/ion/
+third_party/ION-DTN/
+
+examples/10nodes-ion-dtn/ion/generated/
+examples/10nodes-ion-dtn/worker-config.local.json
+
+# Expanded snapshots produced by `nsb init --write-full-config`.
+examples/**/*-full.json

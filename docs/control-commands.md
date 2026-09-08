@@ -14,6 +14,7 @@
 - [Reset links and run configurations](#reset-links-and-run-configurations)
 - [Restart one or more nodes](#restart-one-or-more-nodes)
 - [Execution of the events](#execution-of-the-events)
+- [ION-DTN preparation](#ion-dtn-preparation)
 - [Removal of the emulated satellite system](#removal-of-the-emulated-satellite-system)
 
 
@@ -35,6 +36,12 @@ export NODE_ETCD_PORT=<etcd-server-internal-port>
 ```
 
 For instance, in cloud environments, the control host may access the Etcd server through a public IP address, while worker nodes and containers may need to access it through a private IP address.
+
+`NODE_ETCD_HOST` must be reachable from inside every emulated node container.
+Avoid `127.0.0.1` for deployed containers: it refers to the container itself,
+not to the Etcd server. In a single-host Docker bridge setup this can be the
+bridge gateway address, while multi-worker deployments should use the Etcd
+server's private/routable address.
 
 
 ## Worker Initialization  
@@ -142,7 +149,7 @@ python3 nsb.py init \
 
 Run with `--help` to see the full list of available options.
 
-## Deployment of the nodes  
+## Deployment of the nodes
 `nsb.py deploy`
 
 This Python script deploys the satellite system by creating and starting the necessary Docker containers on the worker hosts, based on the system configuration stored in Etcd. It is intended to be executed after the satellite system has been initialized using `nsb.py init`.
@@ -161,6 +168,30 @@ python3 nsb.py deploy
 ```
 
 Run with `--help` to see the full list of available options.
+
+### Loading Local Images On Workers <!-- omit in toc -->
+`nsb.py load-image`
+
+If a node configuration uses a local image with `image-pull-policy: never`, the
+image must exist on every worker before deployment. This is useful for custom
+images such as the ION-enabled satellite container.
+
+Load an image onto workers listed in a worker config file:
+
+```bash
+python3 nsb.py load-image \
+  --image netsatbench-sat-container-ion:prototype \
+  --worker-config examples/10nodes/worker-config.json \
+  -t 4
+```
+
+After `system-init-docker`, the command can also read workers from Etcd:
+
+```bash
+python3 nsb.py load-image \
+  --image netsatbench-sat-container-ion:prototype \
+  --etcd-host "$ETCD_HOST"
+```
 
 ## Reset links and run configurations
 `nsb.py reset`
@@ -232,6 +263,33 @@ Example invocation:
 python3 nsb.py run
 ```
 Run with `--help` to see the full list of available options.
+
+## ION-DTN preparation
+`nsb.py ion-prepare`
+
+This command prepares ION-DTN runtime state inside already deployed node
+containers. It generates temporary ION configuration files, copies each node's
+files into `/ion/<node>`, writes `/ion/ion_nodes`, and starts ION.
+
+Use one absolute start time for both ION and epoch replay when testing CGR:
+
+```bash
+T0="$(date -u -d '+3 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
+
+python3 nsb.py ion-prepare \
+  --scenario 02-cloudy-ground \
+  --epoch-duration 45 \
+  --absolute-start-time "$T0" \
+  --jobs 8
+
+python3 nsb.py run \
+  --epoch-dir examples/10nodes-ion-dtn/epochs/02-cloudy-ground \
+  --file-pattern 'NetSatBench-epoch*.json' \
+  --absolute-start-time "$T0"
+```
+
+`nsb.py ion-generate-configs` is also available when you only need to generate
+ION files without copying them into containers.
 
 ## Removal of the emulated satellite system
 `nsb.py rm`

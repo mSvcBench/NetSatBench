@@ -1,0 +1,49 @@
+diff --git a/bpv7/udp/libudpcla.c b/bpv7/udp/libudpcla.c
+index ddf69507..c2a03e8b 100644
+--- a/bpv7/udp/libudpcla.c
++++ b/bpv7/udp/libudpcla.c
+@@ -15,6 +15,12 @@
+ 
+ #include "ion_atomic.h"
+ 
++#define UDPCLA_RECEIVE_BUFFER_SIZE (4 * 1024 * 1024)
++
++#if defined(__linux__) && !defined(SO_RCVBUFFORCE)
++#define SO_RCVBUFFORCE 33
++#endif
++
+ /*	*	*	Sender functions	*	*	*	*/
+ 
+ static int openUdpSocket(int *sock)
+@@ -224,6 +226,7 @@ int initUdpClaSocket(const char *endpoint, UdpClaSocket *claSock)
+ {
+ 	IonNetworkAddress bind_addr;
+ 	socklen_t         addr_len;
++	int               receiveBufferResult = -1;
+ 
+ 	if (!endpoint || !claSock)
+ 	{
+@@ -250,6 +253,23 @@ int initUdpClaSocket(const char *endpoint, UdpClaSocket *claSock)
+ 		return -1;
+ 	}
+ 
++	/* Keep a burst of MTU-safe BP fragments from overrunning the CLI. */
++#ifdef SO_RCVBUFFORCE
++	receiveBufferResult = setsockopt(claSock->main_socket, SOL_SOCKET,
++			SO_RCVBUFFORCE, &(int){UDPCLA_RECEIVE_BUFFER_SIZE},
++			sizeof(int));
++#endif
++	if (receiveBufferResult < 0)
++	{
++		receiveBufferResult = setsockopt(claSock->main_socket, SOL_SOCKET,
++				SO_RCVBUF, &(int){UDPCLA_RECEIVE_BUFFER_SIZE},
++				sizeof(int));
++	}
++	if (receiveBufferResult < 0)
++	{
++		writeMemo("[?] Can't enlarge UDP CLA receive buffer.");
++	}
++
+ 	/* Get actual bound address using getsockname() */
+ 	addr_len = sizeof(claSock->local_addr.addr);
+ 	if (getsockname(claSock->main_socket,
