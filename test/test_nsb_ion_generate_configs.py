@@ -200,6 +200,75 @@ class IonContactRateTests(unittest.TestCase):
         )
         self.assertIn("a range +0 +20 1 2 0", rendered)
 
+    def test_clock_error_absent_keeps_ion_default(self):
+        """No clockerr line means ION keeps its own whole-second default.
+
+        Emitting one unconditionally would silently change the timing of every
+        existing scenario, so the generator only writes it when asked.
+        """
+        registry = {**self.registry, "contact_duration_seconds": 300}
+        rendered = generator.render_node_ionrc(registry, "sat1")
+        self.assertNotIn("clockerr", rendered)
+
+    def test_clock_error_is_written_before_the_contact_plan(self):
+        """ION folds maxClockError into startXmit as each contact is inserted.
+
+        Setting it after the plan is read would leave the already-inserted
+        contacts protected by the old value, so ordering is the whole point.
+        """
+        registry = {
+            **self.registry,
+            "contact_duration_seconds": 300,
+            "clock_error_seconds": 0.05,
+        }
+        rendered = generator.render_node_ionrc(registry, "sat1")
+        self.assertIn("m clockerr 0.050", rendered)
+        self.assertLess(
+            rendered.index("m clockerr"), rendered.index("global.ionrc")
+        )
+
+    def test_clock_error_rejects_values_that_close_the_contact(self):
+        """The protection applies at both ends, so 2x it must fit the window.
+
+        The binding window is the shortest contact in the plan rather than the
+        horizon the plan spans; checking against the horizon would accept a
+        clock error larger than every actual contact.
+        """
+        registry = {
+            **self.registry,
+            "contact_duration_seconds": 600,
+            "clock_error_seconds": 100,
+            "contacts": [
+                {
+                    "from": "sat1",
+                    "to": "sat2",
+                    "start": 0,
+                    "end": 150,
+                    "rate_bytes_per_second": 1_250_000,
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "shortest contact"):
+            generator.validate_ion_node_registry(registry)
+
+    def test_clock_error_rejects_negative_values(self):
+        registry = {
+            **self.registry,
+            "contact_duration_seconds": 300,
+            "clock_error_seconds": -1,
+            "contacts": [
+                {
+                    "from": "sat1",
+                    "to": "sat2",
+                    "start": 0,
+                    "end": 150,
+                    "rate_bytes_per_second": 1_250_000,
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "clock_error_seconds"):
+            generator.validate_ion_node_registry(registry)
+
     def test_invalid_subsecond_policy_is_rejected(self):
         registry = {
             **self.registry,

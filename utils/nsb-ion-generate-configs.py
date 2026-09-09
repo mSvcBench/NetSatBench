@@ -640,14 +640,19 @@ def contact_segment_owlt(registry, contact):
     )
 
 
-def render_ion_owlt(value):
-    """Render an OWLT using ION's optional three-digit fractional syntax."""
+def render_ion_seconds(value, label):
+    """Render a duration using ION's optional three-digit fractional syntax."""
     value = float(value)
     if value < 0 or not math.isfinite(value):
-        raise ValueError(f"ION OWLT must be non-negative and finite: {value!r}")
+        raise ValueError(f"ION {label} must be non-negative and finite: {value!r}")
     if math.isclose(value, round(value), abs_tol=1e-12):
         return str(int(round(value)))
     return f"{value:.3f}"
+
+
+def render_ion_owlt(value):
+    """Render an OWLT using ION's optional three-digit fractional syntax."""
+    return render_ion_seconds(value, "OWLT")
 
 
 def validate_ion_node_registry(registry):
@@ -758,6 +763,26 @@ def validate_ion_node_registry(registry):
     )
     if not math.isfinite(contact_duration) or contact_duration <= 0:
         raise ValueError("contact_duration_seconds must be positive when set")
+
+    if "clock_error_seconds" in registry:
+        # ION subtracts this from both ends of every contact, so a whole-second
+        # default costs two seconds of every window.  Millisecond contact plans
+        # need it expressed at the same resolution as the contacts themselves.
+        clock_error = float(registry["clock_error_seconds"])
+        if not math.isfinite(clock_error) or clock_error < 0:
+            raise ValueError("clock_error_seconds must be non-negative when set")
+        # The protection applies per contact, so the binding constraint is the
+        # shortest window in the plan, not the horizon the plan spans.
+        windows = [
+            float(contact["end"]) - float(contact["start"])
+            for contact in registry.get("contacts", [])
+        ]
+        shortest = min(windows) if windows else contact_duration
+        if 2 * clock_error >= shortest:
+            raise ValueError(
+                "clock_error_seconds leaves no transmit window within the "
+                f"shortest contact ({shortest:g} s)"
+            )
 
 
 def direct_neighbors(registry, node_name):
@@ -928,8 +953,17 @@ def render_node_ionrc(registry, node_name):
         f"1 {ion_id} node.ionconfig",
         "s",
         f"m horizon +{horizon}",
-        "r 'ionadmin ../global.ionrc'",
     ]
+
+    if "clock_error_seconds" in registry:
+        # ION folds maxClockError into startXmit/stopXmit as each contact is
+        # inserted, so it has to be set before the contact plan is read.
+        lines.append(
+            "m clockerr "
+            + render_ion_seconds(registry["clock_error_seconds"], "clock error")
+        )
+
+    lines.append("r 'ionadmin ../global.ionrc'")
 
     return "\n".join(lines) + "\n"
 
@@ -938,7 +972,7 @@ def render_node_ionsecrc(registry, node_name):
     return ""
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate ION config files from a NetSatBench DTN node registry."
     )
@@ -979,6 +1013,17 @@ def main():
         ),
     )
     parser.add_argument(
+        "--clock-error",
+        type=parse_millisecond_seconds,
+        help=(
+            "Maximum clock error in seconds, with optional millisecond "
+            "precision. ION protects both ends of every contact by this "
+            "amount and defaults to a whole second, which consumes two "
+            "seconds of every contact window. Left unset ION keeps that "
+            "default."
+        ),
+    )
+    parser.add_argument(
         "--contact-start-guard",
         type=parse_millisecond_seconds,
         default=4,
@@ -1001,37 +1046,45 @@ def main():
     registry_path = Path(args.registry_path)
     output_dir = Path(args.output)
 
-    registry = load_ion_node_registry(registry_path)
-    registry.setdefault("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)
-    if args.absolute_start_time:
-        registry["_absolute_start_time"] = parse_utc_datetime(args.absolute_start_time)
+    # The registry helpers raise so that callers and tests can inspect the
+    # failure; on the command line it is reported and turned into an exit code.
+    try:
+        registry = load_ion_node_registry(registry_path)
+        registry.setdefault("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)
+        if args.clock_error is not None:
+            registry["clock_error_seconds"] = args.clock_error
+        if args.absolute_start_time:
+            registry["_absolute_start_time"] = parse_utc_datetime(args.absolute_start_time)
 
-    if args.epoch_dir:
-        if args.epoch_duration is None:
-            raise ValueError("--epoch-duration is required when --epoch-dir is set")
-        if args.epoch_duration <= 0:
-            raise ValueError("--epoch-duration must be positive")
-        if args.contact_start_guard < 0 or args.contact_end_guard < 0:
-            raise ValueError("contact guards must be non-negative")
-        if args.contact_start_guard + args.contact_end_guard >= args.epoch_duration:
-            raise ValueError(
-                "contact guards must leave a positive window within one epoch"
+        if args.epoch_dir:
+            if args.epoch_duration is None:
+                raise ValueError("--epoch-duration is required when --epoch-dir is set")
+            if args.epoch_duration <= 0:
+                raise ValueError("--epoch-duration must be positive")
+            if args.contact_start_guard < 0 or args.contact_end_guard < 0:
+                raise ValueError("contact guards must be non-negative")
+            if args.contact_start_guard + args.contact_end_guard >= args.epoch_duration:
+                raise ValueError(
+                    "contact guards must leave a positive window within one epoch"
+                )
+
+            registry["contacts"] = derive_contacts_from_epochs(
+                registry,
+                args.epoch_dir,
+                args.file_pattern,
+                args.epoch_duration,
+                args.contact_start_guard,
+                args.contact_end_guard,
+            )
+            registry["contact_duration_seconds"] = max(
+                float(registry.get("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)),
+                max(contact["end"] for contact in registry["contacts"]) + args.epoch_duration,
             )
 
-        registry["contacts"] = derive_contacts_from_epochs(
-            registry,
-            args.epoch_dir,
-            args.file_pattern,
-            args.epoch_duration,
-            args.contact_start_guard,
-            args.contact_end_guard,
-        )
-        registry["contact_duration_seconds"] = max(
-            float(registry.get("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)),
-            max(contact["end"] for contact in registry["contacts"]) + args.epoch_duration,
-        )
-
-    validate_ion_node_registry(registry)
+        validate_ion_node_registry(registry)
+    except (ValueError, FileNotFoundError, KeyError) as e:
+        log.error(f"❌ {e}")
+        return 1
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1063,6 +1116,8 @@ def main():
         (node_dir / "node.ionsecrc").write_text(node_ionsecrc, encoding="utf-8")
         log.info(f"📝 wrote {node_dir / 'node.ionsecrc'}")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
