@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
+import math
 
 import etcd3
 
@@ -72,11 +73,34 @@ def parse_utc_datetime(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
 
-    return parsed.astimezone(timezone.utc).replace(microsecond=0)
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed.microsecond % 1000:
+        raise ValueError("ION contact timestamps support millisecond precision")
+    return parsed
 
 
 def format_iso_z(value):
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    value = value.astimezone(timezone.utc)
+    rendered = value.strftime("%Y-%m-%dT%H:%M:%S")
+    if value.microsecond:
+        rendered += f".{value.microsecond // 1000:03d}"
+    return rendered + "Z"
+
+
+def parse_millisecond_seconds(value):
+    """Argparse type for non-negative durations with millisecond precision."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("expected a duration in seconds") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("duration must be non-negative and finite")
+    rounded = round(parsed, 3)
+    if not math.isclose(parsed, rounded, abs_tol=1e-9):
+        raise argparse.ArgumentTypeError(
+            "duration supports at most three decimal places (milliseconds)"
+        )
+    return rounded
 
 
 def repo_root_from_script():
@@ -434,7 +458,7 @@ def main():
     )
     parser.add_argument(
         "--epoch-duration",
-        type=int,
+        type=parse_millisecond_seconds,
         default=45,
         help=(
             "Seconds used to close contacts that remain active after the last "
@@ -449,8 +473,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--clock-error",
+        type=parse_millisecond_seconds,
+        help=(
+            "Maximum clock error in seconds, with optional millisecond "
+            "precision. ION protects both ends of every contact by this amount "
+            "and defaults to a whole second, so a subsecond contact plan needs "
+            "it set at the same resolution."
+        ),
+    )
+    parser.add_argument(
         "--contact-start-guard",
-        type=int,
+        type=parse_millisecond_seconds,
         default=4,
         help=(
             "Delay each ION contact after its physical links-add event by this "
@@ -459,7 +493,7 @@ def main():
     )
     parser.add_argument(
         "--contact-end-guard",
-        type=int,
+        type=parse_millisecond_seconds,
         default=1,
         help=(
             "Close each ION contact this many seconds before physical link "
@@ -468,7 +502,7 @@ def main():
     )
     parser.add_argument(
         "--start-delay",
-        type=int,
+        type=parse_millisecond_seconds,
         help=(
             "Compute absolute experiment T0 as current UTC time plus this many "
             "seconds. Ignored if --absolute-start-time is set."
@@ -540,48 +574,54 @@ def main():
             print(scenario)
         return 0
 
-    registry_path = Path(args.registry_path).resolve()
-    registry = load_json(registry_path)
+    # Argument and registry problems are the operator's to fix, so they are
+    # reported like every other nsb command failure instead of as a traceback.
+    try:
+        registry_path = Path(args.registry_path).resolve()
+        registry = load_json(registry_path)
 
-    scenario_dir = (
-        Path(args.scenario_dir).resolve()
-        if args.scenario_dir
-        else default_scenario_base(repo_root) / args.scenario
-    )
-    if not scenario_dir.is_dir():
-        raise RuntimeError(f"scenario directory not found: {scenario_dir}")
-
-    nodes = args.nodes if args.nodes else scenario_nodes(registry, scenario_dir)
-    if not nodes:
-        raise RuntimeError("no target nodes selected")
-    nodes = [validate_node_name(node) for node in nodes]
-    if len(nodes) != len(set(nodes)):
-        raise RuntimeError("target node list contains duplicates")
-    if args.jobs <= 0:
-        raise RuntimeError("--jobs must be positive")
-    if args.ssh_timeout <= 0:
-        raise RuntimeError("--ssh-timeout must be positive")
-    if args.contact_start_guard < 0 or args.contact_end_guard < 0:
-        raise RuntimeError("contact guards must be non-negative")
-    if args.contact_start_guard + args.contact_end_guard >= args.epoch_duration:
-        raise RuntimeError(
-            "contact guards must leave a positive window within one epoch"
+        scenario_dir = (
+            Path(args.scenario_dir).resolve()
+            if args.scenario_dir
+            else default_scenario_base(repo_root) / args.scenario
         )
-    if args.contact_start_guard == 0 and args.contact_end_guard == 0:
-        log.warning(
-            "ION contacts share physical link boundaries; use contact guards "
-            "when link setup or teardown is not instantaneous"
-        )
+        if not scenario_dir.is_dir():
+            raise RuntimeError(f"scenario directory not found: {scenario_dir}")
 
-    generator = repo_root / "utils/nsb-ion-generate-configs.py"
-    ion_nodes_text = write_ion_nodes_file(registry, nodes)
-    absolute_start_time = None
-    if args.absolute_start_time:
-        absolute_start_time = parse_utc_datetime(args.absolute_start_time)
-    elif args.start_delay is not None:
-        if args.start_delay <= 0:
-            raise RuntimeError("--start-delay must be positive")
-        absolute_start_time = utc_now() + timedelta(seconds=args.start_delay)
+        nodes = args.nodes if args.nodes else scenario_nodes(registry, scenario_dir)
+        if not nodes:
+            raise RuntimeError("no target nodes selected")
+        nodes = [validate_node_name(node) for node in nodes]
+        if len(nodes) != len(set(nodes)):
+            raise RuntimeError("target node list contains duplicates")
+        if args.jobs <= 0:
+            raise RuntimeError("--jobs must be positive")
+        if args.ssh_timeout <= 0:
+            raise RuntimeError("--ssh-timeout must be positive")
+        if args.contact_start_guard < 0 or args.contact_end_guard < 0:
+            raise RuntimeError("contact guards must be non-negative")
+        if args.contact_start_guard + args.contact_end_guard >= args.epoch_duration:
+            raise RuntimeError(
+                "contact guards must leave a positive window within one epoch"
+            )
+        if args.contact_start_guard == 0 and args.contact_end_guard == 0:
+            log.warning(
+                "ION contacts share physical link boundaries; use contact guards "
+                "when link setup or teardown is not instantaneous"
+            )
+
+        generator = repo_root / "utils/nsb-ion-generate-configs.py"
+        ion_nodes_text = write_ion_nodes_file(registry, nodes)
+        absolute_start_time = None
+        if args.absolute_start_time:
+            absolute_start_time = parse_utc_datetime(args.absolute_start_time)
+        elif args.start_delay is not None:
+            if args.start_delay <= 0:
+                raise RuntimeError("--start-delay must be positive")
+            absolute_start_time = utc_now() + timedelta(seconds=args.start_delay)
+    except (RuntimeError, ValueError, FileNotFoundError, KeyError) as e:
+        log.error(f"❌ {e}")
+        return 1
 
     log.info(f"🛰️ ION scenario: {scenario_dir}")
     log.info(f"🧩 ION nodes: {' '.join(nodes)}")
@@ -608,6 +648,8 @@ def main():
             "--contact-end-guard",
             str(args.contact_end_guard),
         ]
+        if args.clock_error is not None:
+            generator_cmd += ["--clock-error", str(args.clock_error)]
         if absolute_start_time:
             generator_cmd.extend([
                 "--absolute-start-time",

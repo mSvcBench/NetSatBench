@@ -132,6 +132,7 @@ def recreate_and_run_container(
     etcd_user: str = None,
     etcd_password: str = None,
     etcd_ca_cert: str = None,
+    extra_env: dict = None,
 ) -> None:
 
     try:
@@ -174,6 +175,9 @@ def recreate_and_run_container(
                 "-e", f"ETCD_PASSWORD={etcd_password}",
                 "-e", f"ETCD_CA_CERT=/app/etcd-ca.crt",
             ])
+        # Node-scoped environment from sat-config, e.g. ION_RFXCLOCK_POLL_MSEC.
+        for env_name, env_value in (extra_env or {}).items():
+            run_cmd.extend(["-e", f"{env_name}={env_value}"])
         if cpu_requested > 0:
             run_cmd.extend(["--cpu-shares", str(int(cpu_requested*1024))])  # convert CPU to CPU shares (1024 = 1 CPU)
         else:
@@ -269,6 +273,9 @@ def create_one_node(
     mem_requested = f"{parse_mem(node.get('mem-request', '0MiB'))*1024}MiB"
     cpu_limit = float(parse_cpu(node.get('cpu-limit', 0.0)))
     mem_limit = f"{parse_mem(node.get('mem-limit', '0MiB'))*1024}MiB"
+    extra_env = node.get('env', {})
+    if not isinstance(extra_env, dict):
+        return name, False, "❌ 'env' must be an object of NAME: value pairs"
 
     try:
         cmd = recreate_and_run_container(
@@ -283,6 +290,7 @@ def create_one_node(
             mem_requested=mem_requested,
             cpu_limit=cpu_limit,
             mem_limit=mem_limit,
+            extra_env=extra_env,
             etcd_host=etcd_host,
             etcd_port=etcd_port,
             etcd_user=etcd_user,

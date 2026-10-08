@@ -148,7 +148,7 @@ class IonDemoScenarioTests(unittest.TestCase):
                     self.assertEqual(actual_epoch, expected_epoch)
 
     def test_epoch_delays_quantize_to_registry_owlt(self):
-        expected_owlt = int(self.registry["owlt_seconds"])
+        policy = self.registry.get("ion_subsecond_owlt_policy", "ceil-positive")
         for scenario_name in DEMO_SCENARIO_NAMES:
             for epoch_path in self.epoch_paths(scenario_name):
                 epoch_data = json.loads(epoch_path.read_text(encoding="utf-8"))
@@ -164,7 +164,9 @@ class IonDemoScenarioTests(unittest.TestCase):
                                 self.registry,
                                 link_descriptor,
                             ),
-                            expected_owlt,
+                            generator.quantize_ion_owlt_seconds(
+                                generator.parse_delay_seconds(delay), policy
+                            ),
                             f"{scenario_name}/{epoch_path.name}/{action}",
                         )
 

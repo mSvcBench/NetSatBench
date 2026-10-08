@@ -25,14 +25,17 @@ of the NetSatBench code changes.
 The README in each scenario directory records its timeline and expected result.
 
 The deterministic demo epochs use a `1s` NetEm one-way delay, matching the
-registry's whole-second `owlt_seconds: 1` ION range value. This keeps the
-emulated link and ION planning models consistent; it is not intended to model
-a physical LEO propagation delay.
+registry's `owlt_seconds: 1` ION range value. This keeps those controlled demo
+links and ION planning consistent; it is not intended to model physical LEO
+propagation delay.
 
 When an epoch link supplies `delay`, the ION generator derives that contact
 segment's OWLT from the epoch instead of the registry fallback. The bundled
-ION version accepts only positive whole-second OWLT values, so delays are
-rounded up (`4.7ms` becomes `1s`, `1.2s` becomes `2s`).
+OWLT policy is selected by the registry. `ceil-positive` retains the legacy
+whole-second behavior. Physics-derived scenarios using the subsecond ION image
+select `ceil-millisecond`, so a geometry-derived `4.902ms` NetEm delay is
+represented in the ION range plan as `0.005s`. The ceiling prevents CGR from
+underestimating propagation delay; the quantization error is below `1ms`.
 
 Regenerate the checked-in scenarios after changing their declarative source:
 

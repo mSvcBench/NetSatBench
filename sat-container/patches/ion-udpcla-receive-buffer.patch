@@ -1,8 +1,8 @@
 diff --git a/bpv7/udp/libudpcla.c b/bpv7/udp/libudpcla.c
-index ddf69507..c2a03e8b 100644
+index 8d9f95436..2635f0d0f 100644
 --- a/bpv7/udp/libudpcla.c
 +++ b/bpv7/udp/libudpcla.c
-@@ -15,6 +15,12 @@
+@@ -17,6 +17,12 @@
  
  #include "ion_atomic.h"
  
@@ -15,15 +15,15 @@ index ddf69507..c2a03e8b 100644
  /*	*	*	Sender functions	*	*	*	*/
  
  static int openUdpSocket(int *sock)
-@@ -224,6 +226,7 @@ int initUdpClaSocket(const char *endpoint, UdpClaSocket *claSock)
- {
+@@ -189,6 +195,7 @@ int initUdpClaSocket(const char *endpoint, UdpClaSocket *claSock)
  	IonNetworkAddress bind_addr;
  	socklen_t         addr_len;
+ 	int               sockFlags;
 +	int               receiveBufferResult = -1;
  
  	if (!endpoint || !claSock)
  	{
-@@ -250,6 +253,23 @@ int initUdpClaSocket(const char *endpoint, UdpClaSocket *claSock)
+@@ -222,6 +229,23 @@ int initUdpClaSocket(const char *endpoint, UdpClaSocket *claSock)
  		return -1;
  	}
  

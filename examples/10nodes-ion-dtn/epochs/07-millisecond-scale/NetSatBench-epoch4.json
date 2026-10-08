@@ -1,0 +1,19 @@
+{
+  "time": "2024-06-01T12:00:01.200Z",
+  "links-del": [
+    {
+      "endpoint1": "usr1",
+      "endpoint2": "sat1"
+    },
+    {
+      "endpoint1": "sat1",
+      "endpoint2": "sat2"
+    },
+    {
+      "endpoint1": "sat2",
+      "endpoint2": "grd1"
+    }
+  ],
+  "links-update": [],
+  "links-add": []
+}

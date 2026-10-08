@@ -1,16 +1,16 @@
 diff --git a/bpv7/daemon/bpclm.c b/bpv7/daemon/bpclm.c
-index 5711366..67c8c27 100644
+index 9a4cd5cf9..f72331342 100644
 --- a/bpv7/daemon/bpclm.c
 +++ b/bpv7/daemon/bpclm.c
-@@ -499,6 +499,7 @@ static int	run_bpclm(char *nodeName)
+@@ -487,6 +487,7 @@ int	main(int argc, char *argv[])
  	Bundle		secondBundle;
- 	Object		secondBundleObj;
- 	Object		queue;
-+	Object		fragmentedPlanXmitElt;
+ 	SdrObject	secondBundleObj;
+ 	SdrObject	queue;
++	SdrObject	fragmentedPlanXmitElt;
  
  	if (!nodeName)
  	{
-@@ -592,6 +593,7 @@ static int	run_bpclm(char *nodeName)
+@@ -580,6 +581,7 @@ int	main(int argc, char *argv[])
  #endif
  	while (running)
  	{
@@ -18,7 +18,7 @@ index 5711366..67c8c27 100644
  		if (sdr_begin_xn(sdr) == 0)
  		{
  			putErrmsg("bpclm can't begin transaction.", nodeName);
-@@ -744,6 +746,7 @@ static int	run_bpclm(char *nodeName)
+@@ -732,6 +734,7 @@ int	main(int argc, char *argv[])
  
  			/*	Okay to fragment.			*/
  
@@ -26,7 +26,7 @@ index 5711366..67c8c27 100644
  			queue = sdr_list_list(sdr, bundle.planXmitElt);
  			if (bpFragment(&bundle, bundleObj,
  					&(bundle.planXmitElt), maxPayloadLength,
-@@ -780,6 +783,19 @@ static int	run_bpclm(char *nodeName)
+@@ -768,6 +771,19 @@ int	main(int argc, char *argv[])
  		 *	queue.						*/
  
  		sdr_stage(sdr, (char *) &plan, planObj, sizeof(BpPlan));

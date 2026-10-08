@@ -47,6 +47,15 @@ a contact plan generated from the same epoch files to send, store, and forward
 bundles. During a CGR experiment, NetSatBench and ION must therefore use the
 same absolute start time (`T0`).
 
+The subsecond development line preserves epoch timestamps and numeric
+`epoch-time` offsets to millisecond precision.  For example, a physical link
+event at `T0+10.375s` is replayed at that offset rather than rounded to
+`T0+10s`.  Fractional `--epoch-duration`, guard, start-delay, fixed-wait, and
+loop-delay values are accepted to three decimal places.  The same line can
+derive an ION range such as `0.005s` from a `4.902ms` NetEm delay by selecting
+the `ceil-millisecond` OWLT policy.  Whole-second epoch files and the legacy
+`ceil-positive` OWLT policy remain valid.
+
 The initial application path is:
 
 ```text

@@ -2,6 +2,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -51,7 +52,111 @@ class IonContactRateTests(unittest.TestCase):
         self.assertEqual(
             generator.quantize_ion_owlt_seconds(0.0047, "zero"), 0
         )
+        self.assertEqual(
+            generator.quantize_ion_owlt_seconds(
+                0.0047, "ceil-millisecond"
+            ),
+            0.005,
+        )
+        self.assertEqual(
+            generator.quantize_ion_owlt_seconds(
+                0.000415, "ceil-millisecond"
+            ),
+            0.001,
+        )
         self.assertEqual(generator.quantize_ion_owlt_seconds(1.2), 2)
+
+    def test_subsecond_fork_policy_renders_physics_owlt_in_milliseconds(self):
+        registry = {
+            **self.registry,
+            "owlt_seconds": 0.001,
+            "ion_subsecond_owlt_policy": "ceil-millisecond",
+        }
+        with tempfile.TemporaryDirectory() as epoch_dir:
+            self.write_epoch(
+                epoch_dir,
+                0,
+                0,
+                links_add=[{
+                    "endpoint1": "sat1",
+                    "endpoint2": "sat2",
+                    "rate": "1mbit",
+                    "delay": "4.902477ms",
+                }],
+            )
+            self.write_epoch(epoch_dir, 1, 10)
+            contacts = generator.derive_contacts_from_epochs(
+                registry,
+                epoch_dir,
+                "NetSatBench-epoch*.json",
+                epoch_duration=10,
+            )
+
+        self.assertEqual(contacts[0]["ion_owlt_seconds"], 0.005)
+        rendered = generator.render_global_ionrc(
+            {**registry, "contacts": contacts}
+        )
+        self.assertIn("a range +0 +20 1 2 0.005", rendered)
+        self.assertNotIn("a range +0 +20 1 2 1\n", rendered)
+
+    def test_fractional_physical_epochs_create_fractional_contacts(self):
+        with tempfile.TemporaryDirectory() as epoch_dir:
+            self.write_epoch(
+                epoch_dir,
+                0,
+                10.000,
+                links_add=[{
+                    "endpoint1": "sat1",
+                    "endpoint2": "sat2",
+                    "rate": "1mbit",
+                    "delay": "4.2ms",
+                }],
+            )
+            self.write_epoch(
+                epoch_dir,
+                1,
+                11.500,
+                links_del=[{"endpoint1": "sat1", "endpoint2": "sat2"}],
+            )
+            contacts = generator.derive_contacts_from_epochs(
+                {
+                    **self.registry,
+                    "ion_subsecond_owlt_policy": "ceil-millisecond",
+                },
+                epoch_dir,
+                "NetSatBench-epoch*.json",
+                epoch_duration=1.5,
+                contact_start_guard=0.375,
+                contact_end_guard=0.125,
+            )
+
+        self.assertEqual(contacts[0]["start"], 0.375)
+        self.assertEqual(contacts[0]["end"], 1.375)
+        rendered = generator.render_global_ionrc({
+            **self.registry,
+            "ion_subsecond_owlt_policy": "ceil-millisecond",
+            "contacts": contacts,
+        })
+        self.assertIn("a contact +0.375 +1.375 1 2", rendered)
+        self.assertIn("a range +0.375 +1.375 1 2 0.005", rendered)
+
+    def test_epoch_offset_rejects_submillisecond_precision(self):
+        with self.assertRaisesRegex(ValueError, "millisecond precision"):
+            generator.epoch_offset_seconds(10.3755, 10.0, Path("epoch.json"))
+
+    def test_registry_accepts_a_contact_shorter_than_one_second(self):
+        registry = {
+            **self.registry,
+            "contacts": [{
+                "from": "sat1",
+                "to": "sat2",
+                "start": 0.1,
+                "end": 0.9,
+                "rate_bytes_per_second": 1000,
+                "ion_owlt_seconds": 0.005,
+            }],
+        }
+        generator.validate_ion_node_registry(registry)
 
     def test_physics_policy_sets_ion_owlt_to_zero_without_changing_delay(self):
         registry = {**self.registry, "ion_subsecond_owlt_policy": "zero"}
@@ -94,6 +199,75 @@ class IonContactRateTests(unittest.TestCase):
             {**registry, "contacts": contacts}
         )
         self.assertIn("a range +0 +20 1 2 0", rendered)
+
+    def test_clock_error_absent_keeps_ion_default(self):
+        """No clockerr line means ION keeps its own whole-second default.
+
+        Emitting one unconditionally would silently change the timing of every
+        existing scenario, so the generator only writes it when asked.
+        """
+        registry = {**self.registry, "contact_duration_seconds": 300}
+        rendered = generator.render_node_ionrc(registry, "sat1")
+        self.assertNotIn("clockerr", rendered)
+
+    def test_clock_error_is_written_before_the_contact_plan(self):
+        """ION folds maxClockError into startXmit as each contact is inserted.
+
+        Setting it after the plan is read would leave the already-inserted
+        contacts protected by the old value, so ordering is the whole point.
+        """
+        registry = {
+            **self.registry,
+            "contact_duration_seconds": 300,
+            "clock_error_seconds": 0.05,
+        }
+        rendered = generator.render_node_ionrc(registry, "sat1")
+        self.assertIn("m clockerr 0.050", rendered)
+        self.assertLess(
+            rendered.index("m clockerr"), rendered.index("global.ionrc")
+        )
+
+    def test_clock_error_rejects_values_that_close_the_contact(self):
+        """The protection applies at both ends, so 2x it must fit the window.
+
+        The binding window is the shortest contact in the plan rather than the
+        horizon the plan spans; checking against the horizon would accept a
+        clock error larger than every actual contact.
+        """
+        registry = {
+            **self.registry,
+            "contact_duration_seconds": 600,
+            "clock_error_seconds": 100,
+            "contacts": [
+                {
+                    "from": "sat1",
+                    "to": "sat2",
+                    "start": 0,
+                    "end": 150,
+                    "rate_bytes_per_second": 1_250_000,
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "shortest contact"):
+            generator.validate_ion_node_registry(registry)
+
+    def test_clock_error_rejects_negative_values(self):
+        registry = {
+            **self.registry,
+            "contact_duration_seconds": 300,
+            "clock_error_seconds": -1,
+            "contacts": [
+                {
+                    "from": "sat1",
+                    "to": "sat2",
+                    "start": 0,
+                    "end": 150,
+                    "rate_bytes_per_second": 1_250_000,
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "clock_error_seconds"):
+            generator.validate_ion_node_registry(registry)
 
     def test_invalid_subsecond_policy_is_rejected(self):
         registry = {
@@ -351,6 +525,52 @@ class IonContactRateTests(unittest.TestCase):
             [(contact["start"], contact["end"]) for contact in contacts],
             [(4, 44)],
         )
+
+    def test_fractional_guards_are_preserved_in_absolute_ion_contacts(self):
+        with tempfile.TemporaryDirectory() as epoch_dir:
+            self.write_epoch(
+                epoch_dir,
+                0,
+                0,
+                links_add=[
+                    {"endpoint1": "sat1", "endpoint2": "sat2", "rate": "1mbit"}
+                ],
+            )
+            self.write_epoch(
+                epoch_dir,
+                1,
+                45,
+                links_del=[{"endpoint1": "sat1", "endpoint2": "sat2"}],
+            )
+            contacts = generator.derive_contacts_from_epochs(
+                self.registry,
+                epoch_dir,
+                "NetSatBench-epoch*.json",
+                epoch_duration=45,
+                contact_start_guard=3.742,
+                contact_end_guard=0.863,
+            )
+
+        registry = {
+            **self.registry,
+            "contacts": contacts,
+            "_absolute_start_time": datetime(
+                2030, 1, 1, tzinfo=timezone.utc
+            ),
+        }
+        rendered = generator.render_global_ionrc(registry)
+        self.assertEqual(contacts[0]["start"], 3.742)
+        self.assertEqual(contacts[0]["end"], 44.137)
+        self.assertIn(
+            "a contact 2030/01/01-00:00:03.742 "
+            "2030/01/01-00:00:44.137 1 2 125000",
+            rendered,
+        )
+
+    def test_guard_parser_rejects_sub_millisecond_precision(self):
+        self.assertEqual(generator.parse_millisecond_seconds("3.742"), 3.742)
+        with self.assertRaisesRegex(Exception, "three decimal places"):
+            generator.parse_millisecond_seconds("3.7421")
 
     def test_update_before_guard_changes_initial_contact_segment(self):
         with tempfile.TemporaryDirectory() as epoch_dir:

@@ -1,0 +1,14 @@
+{
+  "time": "2024-06-01T12:00:00.300Z",
+  "links-del": [],
+  "links-update": [
+    {
+      "endpoint1": "sat1",
+      "endpoint2": "sat2",
+      "rate": "1mbit",
+      "loss": 0,
+      "delay": "30ms"
+    }
+  ],
+  "links-add": []
+}
