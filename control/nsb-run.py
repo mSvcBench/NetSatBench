@@ -57,6 +57,23 @@ def calculate_vni(ep1, ant1, ep2, ant2) -> int:
     return (checksum % 16777215) + 1
 
 
+def link_antennas(link: Dict) -> Tuple[int, int]:
+    """Return validated endpoint antenna identifiers, defaulting to antenna 1."""
+    antennas = []
+    for field in ("endpoint1_antenna", "endpoint2_antenna"):
+        value = link.get(field, 1)
+        if isinstance(value, bool):
+            raise ValueError(f"{field} must be a positive integer")
+        try:
+            antenna = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} must be a positive integer") from exc
+        if antenna < 1 or antenna != value:
+            raise ValueError(f"{field} must be a positive integer")
+        antennas.append(antenna)
+    return antennas[0], antennas[1]
+
+
 def parse_utc_datetime(value: str) -> datetime:
     normalized = value.strip()
     if normalized.endswith("Z"):
@@ -171,22 +188,35 @@ def connect_etcd(
 ):
     try:
         log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
+        client_args = {"host": etcd_host, "port": etcd_port}
         if etcd_user and etcd_password:
-            client = etcd3.client(
-                host=etcd_host,
-                port=etcd_port,
-                user=etcd_user,
-                password=etcd_password,
-                ca_cert=etcd_ca_cert,
-            )
-        else:
-            client = etcd3.client(host=etcd_host, port=etcd_port)
+            client_args.update(user=etcd_user, password=etcd_password)
+        if etcd_ca_cert:
+            client_args["ca_cert"] = etcd_ca_cert
+        client = etcd3.client(**client_args)
 
         client.status()  # Test connection
         return client
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
+
+
+def validate_schedule_options(
+    absolute_start_time: Optional[datetime],
+    fixed_wait: float,
+    loop_delay: Optional[float],
+    resume: bool,
+) -> None:
+    """Reject timing modes whose clocks do not share a safe reference."""
+    if absolute_start_time is None:
+        return
+    if fixed_wait != -1:
+        raise ValueError("use either absolute scheduling or --fixed-wait, not both")
+    if resume:
+        raise ValueError("absolute scheduling cannot be combined with --resume")
+    if loop_delay is not None:
+        raise ValueError("absolute scheduling cannot be combined with --loop-delay")
 
 
 def load_epoch_dir_and_pattern_from_etcd() -> Tuple[str, str]:
@@ -377,8 +407,7 @@ def process_epoch_from_queue(json_path: str) -> None:
     update = epoch_dict.get("links-update", [])
 
     def apply_link_add(l: Dict) -> None:
-        ep2_antenna = 1
-        ep1_antenna = 1
+        ep1_antenna, ep2_antenna = link_antennas(l)
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
         vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
         etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
@@ -395,8 +424,7 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_client.put(etcd_key2, json.dumps(l))
 
     def apply_link_delete(l: Dict) -> None:
-        ep2_antenna = 1
-        ep1_antenna = 1
+        ep1_antenna, ep2_antenna = link_antennas(l)
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
         vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
         etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
@@ -412,8 +440,7 @@ def process_epoch_from_queue(json_path: str) -> None:
         etcd_client.delete(etcd_key2)
 
     def apply_link_update(l: Dict) -> None:
-        ep2_antenna = 1
-        ep1_antenna = 1
+        ep1_antenna, ep2_antenna = link_antennas(l)
         vxlan_iface_name1 = f"vl_{l['endpoint2']}_{ep2_antenna}"
         vxlan_iface_name2 = f"vl_{l['endpoint1']}_{ep1_antenna}"
         etcd_key1 = f"/config/links/{l['endpoint1']}/{vxlan_iface_name1}"
@@ -430,14 +457,15 @@ def process_epoch_from_queue(json_path: str) -> None:
             return
 
         vni = calculate_vni(l["endpoint1"], ep1_antenna, l["endpoint2"], ep2_antenna)
-        l["vni"] = vni
+        updated_value1 = {**json.loads(etcd_value1.decode("utf-8")), **l, "vni": vni}
+        updated_value2 = {**json.loads(etcd_value2.decode("utf-8")), **l, "vni": vni}
 
         log.debug(
             f"♻️  [{os.path.basename(json_path)}] Syncing link-update "
             f"{l['endpoint1']} - {l['endpoint2']} (VNI {vni})"
         )
-        etcd_client.put(etcd_key1, json.dumps(l))
-        etcd_client.put(etcd_key2, json.dumps(l))
+        etcd_client.put(etcd_key1, json.dumps(updated_value1))
+        etcd_client.put(etcd_key2, json.dumps(updated_value2))
 
     def apply_run_cmd(node_and_cmds: Tuple[str, List]) -> None:
         node, cmds = node_and_cmds
@@ -670,8 +698,15 @@ def main() -> int:
             seconds=args.start_delay
         )
 
-    if absolute_start_time is not None and args.fixed_wait != -1:
-        log.error("❌ Use either absolute scheduling or --fixed-wait, not both.")
+    try:
+        validate_schedule_options(
+            absolute_start_time,
+            args.fixed_wait,
+            args.loop_delay,
+            args.resume,
+        )
+    except ValueError as exc:
+        log.error(f"❌ {exc}")
         return 1
 
     etcd_client = connect_etcd(
@@ -679,6 +714,7 @@ def main() -> int:
         etcd_port=args.etcd_port,
         etcd_user=args.etcd_user,
         etcd_password=args.etcd_password,
+        etcd_ca_cert=args.etcd_ca_cert,
     )
 
     # Prelimiary check nodes exists. Any /config/nodes/* key is a json file that should contain the key "eth0_ip"" 

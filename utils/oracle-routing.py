@@ -20,9 +20,7 @@ Assumptions (same as original):
 - Etcd stores node IPs under a prefix that maps node_name -> ip string.
 """
 
-import calendar
 import math
-import time
 from typing import Any, Dict, List, Tuple
 import os
 import re
@@ -30,8 +28,7 @@ import json
 import shutil
 import argparse
 from glob import glob
-from datetime import datetime, timedelta
-import sys
+from datetime import datetime, timedelta, timezone
 import logging
 
 import etcd3
@@ -86,7 +83,26 @@ def is_ipv6(addr: str) -> bool:
     return ":" in addr
 
 def parse_epoch_time(epoch_time: str) -> datetime:
-    return datetime.fromisoformat(epoch_time.replace("Z", "+00:00"))
+    value = datetime.fromisoformat(epoch_time.replace("Z", "+00:00"))
+    if value.microsecond % 1000:
+        raise ValueError("epoch time must use millisecond precision")
+    return value
+
+def format_epoch_time(value: datetime) -> str:
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc)
+    base = value.strftime("%Y-%m-%dT%H:%M:%S")
+    if value.microsecond:
+        return f"{base}.{value.microsecond // 1000:03d}Z"
+    return f"{base}Z"
+
+def parse_millisecond_offset(value: str) -> float:
+    offset = float(value)
+    if not math.isfinite(offset) or offset < 0:
+        raise argparse.ArgumentTypeError("offset must be a finite, non-negative number")
+    if not math.isclose(offset * 1000, round(offset * 1000), abs_tol=1e-9):
+        raise argparse.ArgumentTypeError("offset must use millisecond precision")
+    return offset
 
 def join_route_commands_with_sleep(
     commands: List[str],
@@ -187,7 +203,7 @@ def compute_routes_single_epoch(
     node_to_install: list,
     previous_next_hops: Dict[int, Dict[int, list]],
     drain_before_break: bool,
-    offset_seconds: int,
+    offset_seconds: float,
     num_nodes: int,
     inv_node_map: dict,
     ip_map: dict,
@@ -377,7 +393,7 @@ def compute_routes_single_epoch(
     try:
         t = parse_epoch_time(new_epoch_data["time"])
         t_new = t - timedelta(seconds=offset_seconds)
-        new_epoch_data["time"] = t_new.strftime("%Y-%m-%dT%H:%M:%SZ")
+        new_epoch_data["time"] = format_epoch_time(t_new)
         new_epoch_data["run"] = {}
         for src_name, commands in route_commands.items():
             combined_cmd = join_route_commands_with_sleep(
@@ -400,8 +416,8 @@ def compute_routes(
     node_type_to_route: list,
     node_type_to_install: list,
     node_type_to_process: list,
-    drain_before_break_offset: int,
-    link_creation_offset: int,
+    drain_before_break_offset: float,
+    link_creation_offset: float,
     ip_version: int,
     etcd_etchosts_prefix: str,
     redundancy: bool,
@@ -616,8 +632,8 @@ def main() -> int:
     parser.add_argument("--node-type-to-install", default="", help="Comma-separated node types to install routes on (default: --node-type). Matches against node 'type' in config. Use 'any' to install on all nodes.")
     parser.add_argument("--node-type", default="any", help="Comma-separated node types to include in the Dijkstra graph (default: any). Matches against node 'type' in config. Use 'any' to install on all nodes.")
     parser.add_argument("--node-type-no-forward", default="user", help="Comma-separated node types to treat as hosts not suporting IP forwarding (default: user). Matches against node 'type' in config.")
-    parser.add_argument("--drain-before-break-offset", type=int, default=0, help="Seconds offset for drain-before-break epoch. If 0, no separate drain-before-break epoch is emitted.")
-    parser.add_argument("--link-creation-offset", type=int, default=1, help="Seconds offset for route replacement after link creation. Default: 1 second after link creation.")
+    parser.add_argument("--drain-before-break-offset", type=parse_millisecond_offset, default=0.0, help="Seconds offset (millisecond precision) for the drain-before-break epoch. If 0, no separate drain-before-break epoch is emitted.")
+    parser.add_argument("--link-creation-offset", type=parse_millisecond_offset, default=1.0, help="Seconds offset (millisecond precision) for route replacement after link creation. Default: 1 second.")
     parser.add_argument("--redundancy", action="store_true", help="Whether to compute secondary next hops for redundancy (default: False).")
     parser.add_argument("--ip-version", type=int, choices=[4, 6], default=4, help="Generate IPv4 or IPv6 route commands. Default: 4 (IPv4).")
     parser.add_argument("--routing-metrics", choices=["hops","delay"], default="hops", help="Whether to use hop count or delay as routing metric (default: hops)")

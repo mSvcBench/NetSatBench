@@ -16,18 +16,16 @@ Resource values are used only for fit checks and worker assignment.
 """
 
 import argparse
-import copy
 import json
 import logging
 import re
 import os
 import sys
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 import pymetis
 import scheduler as base_scheduler
 from scheduler import parse_cpu, parse_mem
-import json
 from glob import glob
 
 log = logging.getLogger("nsb-metis-scheduler")

@@ -5,7 +5,7 @@ ION_SOURCE_DIR="${1:?Usage: apply-ion-patches.sh <ION source directory>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PATCH_DIR="$SCRIPT_DIR/patches"
 
-test -d "$ION_SOURCE_DIR/.git" || {
+git -C "$ION_SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   echo "ION source is not a Git checkout: $ION_SOURCE_DIR" >&2
   exit 1
 }

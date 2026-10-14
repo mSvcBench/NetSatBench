@@ -9,6 +9,9 @@
         "metadata": {},
         "image": "netsatbench-sat-container-ion:subsecond",
         "image-pull-policy": "never",
+      "env": {
+        "ION_RFXCLOCK_POLL_MSEC": "10"
+      },
         "sidecars": [],
         "cpu-request": "100m",
         "mem-request": "200MiB",
@@ -37,6 +40,9 @@
         "metadata": {},
         "image": "netsatbench-sat-container-ion:subsecond",
         "image-pull-policy": "never",
+      "env": {
+        "ION_RFXCLOCK_POLL_MSEC": "10"
+      },
         "sidecars": [],
         "cpu-request": "100m",
         "mem-request": "200MiB",
@@ -65,6 +71,9 @@
         "metadata": {},
         "image": "netsatbench-sat-container-ion:subsecond",
         "image-pull-policy": "never",
+      "env": {
+        "ION_RFXCLOCK_POLL_MSEC": "10"
+      },
         "sidecars": [],
         "cpu-request": "100m",
         "mem-request": "200MiB",

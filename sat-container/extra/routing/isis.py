@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 import time
-import etcd3
 import json
 import ipaddress
 import hashlib
-from pathlib import Path
 import subprocess
-from typing import Mapping, Optional
 from extra.routing.rutils import replace_placeholders_in_file
 
 # ----------------------------

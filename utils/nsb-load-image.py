@@ -7,7 +7,6 @@ import logging
 import os
 import shlex
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, Tuple
@@ -56,17 +55,12 @@ def merge_common(worker_config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 # WORKER SELECTION
 # ==========================================
 def workers_from_etcd(args) -> Dict[str, Dict[str, Any]]:
-    client = (
-        etcd3.client(
-            host=args.etcd_host,
-            port=args.etcd_port,
-            user=args.etcd_user,
-            password=args.etcd_password,
-            ca_cert=args.etcd_ca_cert,
-        )
-        if args.etcd_user and args.etcd_password
-        else etcd3.client(host=args.etcd_host, port=args.etcd_port)
-    )
+    client_args = {"host": args.etcd_host, "port": args.etcd_port}
+    if args.etcd_user and args.etcd_password:
+        client_args.update(user=args.etcd_user, password=args.etcd_password)
+    if args.etcd_ca_cert:
+        client_args["ca_cert"] = args.etcd_ca_cert
+    client = etcd3.client(**client_args)
     client.status()
 
     workers = {}

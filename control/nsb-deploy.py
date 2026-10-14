@@ -3,7 +3,6 @@ import argparse
 import concurrent.futures
 import logging
 import time
-from astropy.units import MiB
 import etcd3
 import subprocess
 import json
@@ -23,14 +22,14 @@ log = logging.getLogger(__name__)
 def connect_etcd(etcd_host: str, etcd_port: int, etcd_user = None, etcd_password = None, etcd_ca_cert = None):
     try:
         log.info(f"📁 Connecting to Etcd at {etcd_host}:{etcd_port}...")
+        client_args = {"host": etcd_host, "port": etcd_port}
         if etcd_user and etcd_password:
-            client = etcd3.client(host=etcd_host, port=etcd_port, user=etcd_user, password=etcd_password, ca_cert=etcd_ca_cert)
-            client.status()  # Test connection, if fail will raise
-            return client
-        else:
-            client = etcd3.client(host=etcd_host, port=etcd_port)
-            client.status()  # Test connection, if fail will raise
-            return client
+            client_args.update(user=etcd_user, password=etcd_password)
+        if etcd_ca_cert:
+            client_args["ca_cert"] = etcd_ca_cert
+        client = etcd3.client(**client_args)
+        client.status()  # Test connection, if fail will raise
+        return client
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)
@@ -169,12 +168,13 @@ def recreate_and_run_container(
                 "-e", f"NODE_NAME={node_name}",
                 "-e", f"ETCD_ENDPOINT={etcd_host}:{etcd_port}"
         ]
-        if etcd_user and etcd_password and etcd_ca_cert:
+        if etcd_user and etcd_password:
             run_cmd.extend([
                 "-e", f"ETCD_USER={etcd_user}",
                 "-e", f"ETCD_PASSWORD={etcd_password}",
-                "-e", f"ETCD_CA_CERT=/app/etcd-ca.crt",
             ])
+        if etcd_ca_cert:
+            run_cmd.extend(["-e", "ETCD_CA_CERT=/app/etcd-ca.crt"])
         # Node-scoped environment from sat-config, e.g. ION_RFXCLOCK_POLL_MSEC.
         for env_name, env_value in (extra_env or {}).items():
             run_cmd.extend(["-e", f"{env_name}={env_value}"])
@@ -199,7 +199,7 @@ def recreate_and_run_container(
         )
 
         # copy the CA cert if needed with scp and then and docker cp via ssh
-        if etcd_user and etcd_password and etcd_ca_cert:
+        if etcd_ca_cert:
             scp_cmd = [
                 "scp",
                 "-i", ssh_key_path,

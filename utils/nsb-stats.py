@@ -11,7 +11,7 @@ import numpy as np
 import argparse
 import logging
 from typing import List, Dict, Optional, Tuple, Any
-from datetime import datetime, timezone
+from datetime import datetime
 from collections import deque, defaultdict
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
@@ -73,20 +73,18 @@ def parse_utc_timestamp(ts: str) -> float:
     """
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
 
-import calendar
-import time
 from typing import Dict, Tuple, Set
 
 def convert_time_epoch_to_timestamp(time_str: str) -> float:
     """
-    Converts ISO-8601 UTC 'YYYY-MM-DDTHH:MM:SSZ' to Unix timestamp (UTC).
+    Convert an ISO-8601 UTC epoch time, including milliseconds, to Unix time.
     """
     try:
-        st = time.strptime(time_str, "%Y-%m-%dT%H:%M:%SZ")
-        return float(calendar.timegm(st))
+        return parse_utc_timestamp(time_str)
     except ValueError:
         raise ValueError(
-            f"❌ Invalid time format: {time_str}. Expected 'YYYY-MM-DDTHH:MM:SSZ'."
+            f"❌ Invalid time format: {time_str}. Expected an ISO-8601 UTC time "
+            "such as '2026-01-01T00:00:00.375Z'."
         )
 
 def load_json_file_or_report(path: str) -> dict:
@@ -306,17 +304,17 @@ def apply_metis_worker_assignment(
         exit(1)
     
     with open(in_json_path, "r", encoding="utf-8") as f:
-        node_cfg: Dict[str, Any] = json.load(f)
+        sat_config: Dict[str, Any] = json.load(f)
     
     with open(workers_file, "r", encoding="utf-8") as f:
         workers_cfg: Dict[str, Any] = json.load(f)  
     
-    worker_field = workers_cfg.get("workers")
-    if not worker_field:
+    worker_configs = workers_cfg.get("workers")
+    if not worker_configs:
         log.error("❌ workers_config must contain a 'workers' field with worker names.")
         exit(1)
     
-    workers = worker_field.keys()
+    workers = worker_configs.keys()
     k = len(workers)
     workers = sorted(list(workers))
 
@@ -334,19 +332,19 @@ def apply_metis_worker_assignment(
     updated = 0
     missing = []
 
-    block = node_cfg.get("nodes", {})
+    block = sat_config.get("nodes", {})
     if not isinstance(block, dict):
         raise ValueError(f"Section nodes must be a dict of node_name -> node_config.")
 
-    for node_name, node_cfg in block.items():
+    for node_name, effective_node_config in block.items():
         if node_name not in node_to_part:
             missing.append(node_name)
             continue
-        if not isinstance(node_cfg, dict):
+        if not isinstance(effective_node_config, dict):
             raise ValueError(f"Node '{node_name}' in section 'nodes' must map to a dict.")
 
         part = node_to_part[node_name]
-        node_cfg[worker_field] = workers[part]
+        effective_node_config["worker"] = workers[part]
         updated += 1
 
     if missing:
@@ -356,7 +354,7 @@ def apply_metis_worker_assignment(
         )
 
     with open(out_json_path, "w", encoding="utf-8") as f:
-        json.dump(node_cfg, f, indent=2, sort_keys=False)
+        json.dump(sat_config, f, indent=2, sort_keys=False)
 
     log.info(f"✅ Wrote updated config to {out_json_path} (assigned {updated} nodes, k={k} groups)")
 

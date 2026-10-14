@@ -354,6 +354,62 @@ def link_exists(ifname):
     return run(["ip", "link", "show", ifname], log_errors=False).returncode == 0
 
 
+def _tc_scaled_value(value, units):
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([a-zA-Z%]+)?\s*", str(value))
+    if not match:
+        return None
+    amount, unit = match.groups()
+    multiplier = units.get((unit or "").lower())
+    return None if multiplier is None else float(amount) * multiplier
+
+
+def netem_matches(qdisc_output, expected):
+    """Compare the requested NetEm properties with tc's rendered state."""
+    if "netem" not in qdisc_output:
+        return False
+
+    checks = {
+        "delay": (r"\bdelay\s+(\S+)", {"us": 1, "ms": 1_000, "s": 1_000_000}),
+        "rate": (
+            r"\brate\s+(\S+)",
+            {"bit": 1, "kbit": 1_000, "mbit": 1_000_000, "gbit": 1_000_000_000},
+        ),
+    }
+    for option, (pattern, units) in checks.items():
+        if option not in expected:
+            continue
+        actual_match = re.search(pattern, qdisc_output, re.IGNORECASE)
+        wanted = _tc_scaled_value(expected[option], units)
+        actual = _tc_scaled_value(actual_match.group(1), units) if actual_match else None
+        if wanted is None or actual is None or abs(wanted - actual) > 1e-6:
+            return False
+
+    if "loss" in expected:
+        wanted_loss = _tc_scaled_value(expected["loss"], {"": 1, "%": 1})
+        actual_match = re.search(
+            r"\bloss(?:\s+random)?\s+(\d+(?:\.\d+)?)%?",
+            qdisc_output,
+            re.IGNORECASE,
+        )
+        if actual_match:
+            actual_loss = float(actual_match.group(1))
+            if wanted_loss is None or abs(wanted_loss - actual_loss) > 1e-6:
+                return False
+        elif wanted_loss != 0:
+            return False
+
+    if "limit" in expected:
+        actual_match = re.search(r"\blimit\s+(\d+)", qdisc_output, re.IGNORECASE)
+        try:
+            wanted_limit = int(expected["limit"])
+        except (TypeError, ValueError):
+            return False
+        if not actual_match or int(actual_match.group(1)) != wanted_limit:
+            return False
+
+    return True
+
+
 def link_operational(vxlan_if, peer_overlay_ip=None, netem_opts=None):
     """Check the local state required to use an existing VXLAN link."""
     link = run(["ip", "-o", "link", "show", "dev", vxlan_if], log_errors=False)
@@ -382,7 +438,7 @@ def link_operational(vxlan_if, peer_overlay_ip=None, netem_opts=None):
     netem_enabled = not isinstance(l3_flags, dict) or l3_flags.get("enable-netem", True)
     if netem_enabled and netem_opts:
         qdisc = run(["tc", "qdisc", "show", "dev", vxlan_if], log_errors=False)
-        if qdisc.returncode != 0 or "netem" not in qdisc.stdout:
+        if qdisc.returncode != 0 or not netem_matches(qdisc.stdout, netem_opts):
             return False
 
     return True

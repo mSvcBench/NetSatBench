@@ -246,6 +246,10 @@ test -x ion-runtime/bin/bpsendtest
 find ion-runtime/bin -maxdepth 1 -type f | sort
 ```
 
+The first successful staging creates `.netsatbench-ion-runtime`. Later runs
+replace only a directory carrying that marker; a symlink, file, or unrelated
+directory is refused so the staging command cannot overwrite user data.
+
 Build the ION-enabled NetSatBench node image:
 
 ```bash
@@ -778,6 +782,7 @@ restart with a new future `T0`.
 | `03-alternate-path` | 10 / 7 min 30 s | 9 / 9 | Tests a symmetric CGR rate sweep, outage, recovery, and queue drain on one orbital ring. |
 | `04-multi-bundle-queue` | 7 / 7 min 30 s | 28 payloads/block | Tests priority-aware service through two constrained bottleneck contacts. |
 | `05-short-contact-capacity` | 5 / about 40 s | 2 / only the 10 KiB positive control | Tests a guarded contact-capacity boundary with a 24 MiB negative control. |
+| `06-handover-overlap` | 61 / approximately 10 min | Scenario-dependent | Replays make-before-break access handovers with guarded ION contacts and no IP routing oracle. |
 
 The approximate run includes the final contact-closing duration but not the
 future-T0 preparation buffer. Epoch timestamps remain authoritative.

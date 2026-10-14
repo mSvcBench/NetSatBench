@@ -156,6 +156,43 @@ class LinkReconciliationTests(unittest.TestCase):
 
         self.assertTrue(healthy)
 
+    def test_link_operational_rejects_stale_netem_parameters(self):
+        self.agent.my_config = {}
+        self.agent.l3_flags = {"enable-netem": True}
+        completed = self.agent.subprocess.CompletedProcess
+        responses = [
+            completed([], 0, "7: vl_sat3_1: <BROADCAST,MULTICAST,UP,LOWER_UP>", ""),
+            completed([], 0, "172.100.0.10 dev vl_sat3_1 src 172.100.0.254", ""),
+            completed(
+                [],
+                0,
+                "qdisc netem 1: root limit 1000 delay 40ms loss 0% rate 100Mbit",
+                "",
+            ),
+        ]
+
+        with patch.object(self.agent, "run", side_effect=responses):
+            healthy = self.agent.link_operational(
+                "vl_sat3_1",
+                peer_overlay_ip="172.100.0.10",
+                netem_opts={
+                    "delay": "4ms",
+                    "loss": "0",
+                    "rate": "100mbit",
+                    "limit": 1000,
+                },
+            )
+
+        self.assertFalse(healthy)
+
+    def test_netem_comparison_normalizes_units(self):
+        self.assertTrue(
+            self.agent.netem_matches(
+                "qdisc netem 1: root limit 1200 delay 0.004s loss random 1% rate 0.1Gbit",
+                {"limit": "1200", "delay": "4ms", "loss": 1, "rate": "100mbit"},
+            )
+        )
+
     def test_link_operational_rejects_a_down_interface(self):
         self.agent.my_config = {}
         completed = self.agent.subprocess.CompletedProcess

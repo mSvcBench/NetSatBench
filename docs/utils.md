@@ -232,7 +232,7 @@ Inject commands after 120 seconds from the first epoch, mapping each command to 
 python3 nsb.py run-inject \
   -c examples/10nodes/sat-config.json \
   --offset-seconds 120 \
-  --node-type-list "usr1,grd1" \
+  --node-type-list "user,gateway" \
   --command-list "echo starting,sleep 5"
 ```
 

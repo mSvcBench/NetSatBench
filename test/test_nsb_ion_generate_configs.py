@@ -43,6 +43,14 @@ class IonContactRateTests(unittest.TestCase):
         self.assertEqual(generator.parse_rate_bytes_per_second("1mbit"), 125_000)
         self.assertEqual(generator.parse_rate_bytes_per_second("100kbit"), 12_500)
         self.assertEqual(generator.parse_rate_bytes_per_second("1.5gbit"), 187_500_000)
+        self.assertEqual(generator.parse_rate_bytes_per_second(8.1), 2)
+
+    def test_rate_parser_rejects_non_finite_values(self):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "finite|positive"
+            ):
+                generator.parse_rate_bytes_per_second(value)
 
     def test_delay_parser_and_ion_quantization(self):
         self.assertAlmostEqual(generator.parse_delay_seconds("500us"), 0.0005)

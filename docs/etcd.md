@@ -105,7 +105,7 @@ These prefixes contain the configuration data of the emulated node indexed by na
     "mem-request": "200MiB", 
     "cpu-limit": 0.2, 
     "mem-limit": "400MiB", 
-    "L3-config": {"enable-netem": true, "enable-routing": true, "routing-module": "extra.routing.isis", "routing-metadata": {"isis-area-id": "0001"}, "auto-assign-ips": true, "auto-assign-super-cidr": [{"matchType": "satellite", "super-cidr": "172.100.0.0/16"}, {"matchType": "gateway", "super-cidr": "172.101.0.0/16"}, {"matchType": "user", "super-cidr": "172.102.0.0/16"}], "cidr": "172.100.0.0/16"}, 
+    "L3-config": {"enable-netem": true, "enable-routing": true, "routing-module": "extra.routing.isis", "routing-metadata": {"isis-area-id": "0001"}, "cidr": "172.100.0.0/30"},
     "worker": "host-2", 
     "eth0_ip": "172.20.0.2"
 }
@@ -133,11 +133,13 @@ These entries are automatically created and managed by the `sat-agent`, which co
 `/config/etchosts/grd1`
 
 ```json
+"172.101.0.2"
+```
 
 `/config/etchosts/sat1`
 
 ```json
- 172.100.0.1
+"172.100.0.2"
 ```
 
 ## /config/links/

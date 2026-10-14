@@ -223,16 +223,12 @@ def main():
     # INIT ETCD
     # ==========================================
     try:
-        if args.etcd_user and args.etcd_password and args.etcd_ca_cert:
-            etcd_client = etcd3.client(
-                host=args.etcd_host,
-                port=args.etcd_port,
-                user=args.etcd_user,
-                password=args.etcd_password,
-                ca_cert=args.etcd_ca_cert,
-            )
-        else:
-            etcd_client = etcd3.client(host=args.etcd_host, port=args.etcd_port)
+        client_args = {"host": args.etcd_host, "port": args.etcd_port}
+        if args.etcd_user and args.etcd_password:
+            client_args.update(user=args.etcd_user, password=args.etcd_password)
+        if args.etcd_ca_cert:
+            client_args["ca_cert"] = args.etcd_ca_cert
+        etcd_client = etcd3.client(**client_args)
     except Exception as e:
         log.error(f"❌ Failed to initialize Etcd client: {e}")
         sys.exit(1)

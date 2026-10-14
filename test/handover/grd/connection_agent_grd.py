@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-from asyncio import log
-from email.policy import default
 import json
 import logging
 import os
@@ -9,7 +7,6 @@ import random
 import re
 import socket
 import subprocess
-import sys
 import threading
 import time
 import etcd3

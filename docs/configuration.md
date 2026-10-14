@@ -50,7 +50,7 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
     "sat-vnet-super-cidr": "<containers-supernet>",
     "cpu": "<num-cpu-cores>",
     "mem": "<memory-available>"
-  }
+  },
   "workers": {
     "<worker-name>": {
       "ip": "<management-ip>",
@@ -86,7 +86,7 @@ The worker configuration file, `worker-config.json`, defines the set of worker h
         "sat-vnet-cidr":"172.20.1.0/24",
         "cpu": "2",
         "mem": "2GiB"
-      },
+      }
   }
 }
 ```

@@ -68,17 +68,21 @@ retain its temporary staging and rollback design.
 
 ### Functional findings, separate from style
 
-Follow-up fixes: findings 1–3 below are now addressed in source. Image loading
+Follow-up fixes: findings 1–7 below are now addressed in source. Image loading
 uses one quoted SSH command and Docker's direct archive input, without a shell
 pipeline. Local and remote ION startup share a fail-fast script. Docker builds
 require all staged core executables and resolvable dynamic libraries through
 `verify-ion-runtime.sh`, without invoking ION admin commands during the build.
-The original finding descriptions remain below as the review record; line
-numbers refer to the reviewed pre-fix version. Findings 4 onward remain open.
+Absolute replay rejects incompatible fixed-wait, resume and loop modes. CA-only
+Etcd settings are retained by the control and utility clients and propagated to
+containers. Fractional bit rates use a mathematical ceiling. Runtime staging
+only replaces directories bearing its managed marker. The original finding
+descriptions remain below as the review record; line numbers refer to the
+reviewed pre-fix version.
 
-Validation after the follow-up: 51 unit tests pass, including shell argument
+Validation after the follow-up: 85 unit tests pass, including shell argument
 preservation, each failed admin stage, local/remote script consistency, and
-runtime-check failure paths; 118 epoch files still match. The image was not
+runtime-check failure paths; 128 epoch files still match. The image was not
 rebuilt or deployed in this follow-up. Dependency validation is not daemon
 readiness: a live startup and bundle pilot is still required for a new image.
 
@@ -134,22 +138,23 @@ readiness: a live startup and bundle pilot is still required for a new image.
    explicit managed-directory marker or overwrite confirmation before accepting
    arbitrary existing output paths. Do not test this with real user directories.
 
-Additional limitations: `apply-ion-patches.sh:8` requires `.git` to be a directory,
-so a legitimate linked Git worktree is rejected. `sat-agent.py:357` checks for a
-netem qdisc but not equality of its configured delay/rate/loss; this is not a
-complete traffic-control reconciliation gate. Watch/reconciliation threads can
-overlap and deserve race-focused tests; no race was reproduced in this review.
+Additional follow-up fixes: `apply-ion-patches.sh` now accepts linked Git
+worktrees, and `sat-agent.py` compares the realized netem delay, rate, loss and
+queue limit with the desired values while normalizing tc units. Oracle-routing
+offsets now accept millisecond precision and preserve fractional UTC output.
+Watch/reconciliation threads can overlap and deserve race-focused tests; no
+race was reproduced in this review.
 The current UDP-address validator accepts IPv6 although generated endpoints
 and demo support are IPv4-oriented. Keep that support boundary explicit.
 
 ### Review verification and limits
 
-- Existing unittest suite: 44 passing tests; 118 canonical epoch files checked.
+- Existing unittest suite: 85 passing tests; 128 canonical epoch files checked.
 - Harmless read-only reproductions: remote shell grouping, shell failure
   masking, and fractional rate conversion. No remote worker was contacted.
-- The prepare tests cover node-name validation and rollback dispatch, not
-  successful/failing admin sequences or daemon readiness. There is no dedicated
-  load-image regression test in this suite, nor absolute resume/loop coverage.
+- The prepare tests cover node-name validation, rollback dispatch and failed
+  admin sequences, but not live daemon readiness. Image loading, CA-only client
+  setup, absolute-mode rejection and managed staging have regression coverage.
 - The test named `test_udp_outduct_payload_stays_below_overlay_mtu` asserts the
   generated `udpclo 1200` line, not measured serialized packet size.
 - C patch hunks follow the adjacent ION C style. Reading them and passing the
@@ -318,10 +323,10 @@ A = added, M = modified, D = deleted. This inventory does not duplicate source f
 | A | [sat-container/patches/ion-udpcla-receive-buffer.patch](../sat-container/patches/ion-udpcla-receive-buffer.patch) |
 | M | [sat-container/sat-agent.py](../sat-container/sat-agent.py) |
 | A | [sat-container/stage-ion-runtime.sh](../sat-container/stage-ion-runtime.sh) |
-| D | [test/handover/grd/__pycache__/connection_agent_grd.cpython-310.pyc](../test/handover/grd/__pycache__/connection_agent_grd.cpython-310.pyc) |
-| D | [test/handover/grd/__pycache__/connection_agent_grd_fq.cpython-310.pyc](../test/handover/grd/__pycache__/connection_agent_grd_fq.cpython-310.pyc) |
-| D | [test/handover/usr/__pycache__/connection_agent_usr.cpython-310.pyc](../test/handover/usr/__pycache__/connection_agent_usr.cpython-310.pyc) |
-| D | [test/handover/usr/__pycache__/connection_agent_usr_fq.cpython-310.pyc](../test/handover/usr/__pycache__/connection_agent_usr_fq.cpython-310.pyc) |
+| D | `test/handover/grd/__pycache__/connection_agent_grd.cpython-310.pyc` |
+| D | `test/handover/grd/__pycache__/connection_agent_grd_fq.cpython-310.pyc` |
+| D | `test/handover/usr/__pycache__/connection_agent_usr.cpython-310.pyc` |
+| D | `test/handover/usr/__pycache__/connection_agent_usr_fq.cpython-310.pyc` |
 | A | [test/test_ion_demo_scenarios.py](../test/test_ion_demo_scenarios.py) |
 | A | [test/test_nsb_ion_generate_configs.py](../test/test_nsb_ion_generate_configs.py) |
 | A | [test/test_nsb_ion_prepare.py](../test/test_nsb_ion_prepare.py) |

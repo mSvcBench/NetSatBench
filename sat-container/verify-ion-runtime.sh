@@ -9,6 +9,15 @@ for binary in ionadmin ionsecadmin bpadmin ipnadmin bpsendfile bpsendtest \
     exit 1
   }
   if ! dependencies="$(ldd "$executable" 2>&1)"; then
+    IFS= read -r first_line < "$executable" || true
+    if [[ "$first_line" == '#!'* ]]; then
+      continue
+    fi
+    magic=""
+    IFS= read -r -n 4 magic < "$executable" || true
+    if [[ "$magic" == $'\x7fELF' && "$dependencies" == *"not a dynamic executable"* ]]; then
+      continue
+    fi
     printf 'Cannot inspect %s: %s\n' "$binary" "$dependencies" >&2
     exit 1
   fi

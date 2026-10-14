@@ -39,6 +39,7 @@ The `nsb.py` integration automatically executes StarPerf tools from `generators/
 | --- | --- |
 | `python3 nsb.py starperf-generate` | `generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchGenerate.py` |
 | `python3 nsb.py starperf-export` | `generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchExport.py` |
+| `python3 nsb.py starperf-visualize` | `generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchVisualizer.py` |
 | `python3 nsb.py starperf-matlab-visualize` | `generators/StarPerf_Simulator/kits/NetSatBench/NetSatBenchMatlabVisualizer.m` via `utils/nsb-starperf-matlab-visualize.py` |
 
 ## StarPerf Generate
@@ -48,16 +49,20 @@ The recommended entrypoint for extended H5 generation is `python3 nsb.py starper
 ```yaml
 - info: # attributes are metadata about the generated H5 file
 - type:
-  - shell_X : [1..n_tot] # vector describing node type in shell X (sat, gs, usr)
+  - shell_X:
+    - type: [1..n_tot] # compound rows: node type, shell id, orbit number, satellite number in orbit
+- position:
+  - shell_X:
+    - timeslotY: [1..n_tot,1..3] # longitude (deg), latitude (deg), altitude (km)
 - delay:
   - shell_X :
-    - snapshot_Y: [1..n_tot,1..n_tot] # square matrix of link delay values (ms) between nodes (i,j) at snapshot Y of shell X. 0 means no link.
+    - timeslotY: [1..n_tot,1..n_tot] # one-way link delay in seconds; 0 means no link
 - rate:
   - shell_X :
-    - snapshot_Y: [1..n_tot,1..n_tot] # square matrix of link bit rates (Mbit/s) between nodes (i,j) at snapshot Y of shell X.
+    - timeslotY: [1..n_tot,1..n_tot] # link rate in Mbit/s
 - loss:
   - shell_X :
-    - snapshot_Y: [1..n_tot,1..n_tot] # square matrix of link loss values (%) between nodes (i,j) at snapshot Y of shell X.
+    - timeslotY: [1..n_tot,1..n_tot] # loss probability in [0,1]
 ```
 
 When delay `(i,j)` is greater than zero, a link exists between nodes `i` and `j` in that snapshot.
@@ -261,7 +266,7 @@ python3 nsb.py starperf-export \
 --sat-config-common kits/NetSatBench/sat-config-common.json
 ```
 
-This generates `sat-config.json` and epoch files for NetSatBench emulation based on the previously generated extended H5 file for OneWeb. Output is placed under `examples/SatPerf/<constellation_name>` at repository root.
+This generates `sat-config.json` and epoch files for NetSatBench emulation based on the previously generated extended H5 file for OneWeb. Output is placed under `examples/StarPerf/<constellation_name>` at repository root.
 
 Note: `sat-config-common.json` is only an example configured for IPv4 + IS-IS and may not scale well for a constellation as large as OneWeb. For scalable settings, see [test/handover/README.md](../test/handover/README.md).
 

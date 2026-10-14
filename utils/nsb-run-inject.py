@@ -8,12 +8,10 @@ from glob import glob
 import json
 import os
 import re
-import numpy as np
 import argparse
 import logging
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Optional
 from datetime import datetime, timedelta, timezone
-from collections import deque, defaultdict
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)

@@ -320,9 +320,12 @@ def parse_rate_bytes_per_second(value):
     if bits_per_second <= 0:
         raise ValueError(f"link rate must be positive: {value!r}")
 
-    # ION accepts an integer byte-per-second rate. Round up so a positive
-    # NetSatBench rate never becomes a zero-capacity contact.
-    return max(1, int((bits_per_second + 7) // 8))
+    if not math.isfinite(bits_per_second):
+        raise ValueError(f"link rate must be finite: {value!r}")
+
+    # ION accepts an integer byte-per-second rate. Round up so every positive
+    # fractional byte contributes to the advertised contact capacity.
+    return max(1, math.ceil(bits_per_second / 8.0))
 
 
 def resolve_contact_rate_bytes_per_second(registry, link_descriptor):
@@ -649,9 +652,6 @@ def contact_segment_owlt(registry, contact):
     )
 
 
-# ==========================================
-# ION VALUE RENDERING
-# ==========================================
 def render_ion_seconds(value, label):
     """Render a duration using ION's optional three-digit fractional syntax."""
     value = float(value)

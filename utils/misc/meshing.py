@@ -6,7 +6,6 @@
 import argparse
 import json
 import logging
-from time import sleep
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger("nsb-meshing")

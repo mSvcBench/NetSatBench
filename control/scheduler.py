@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-import json
 import re
 import sys
-import etcd3
 from typing import Dict, Any
 import logging
 

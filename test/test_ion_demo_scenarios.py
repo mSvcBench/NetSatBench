@@ -1,6 +1,5 @@
 import importlib.util
 import json
-import re
 import unittest
 from fractions import Fraction
 from pathlib import Path
@@ -40,6 +39,16 @@ scenario_generator = load_module(
 
 
 class IonDemoScenarioTests(unittest.TestCase):
+    def test_subsecond_image_enables_ten_millisecond_rfxclock_polling(self):
+        config = json.loads(
+            (ROOT / "examples/10nodes-ion-dtn/sat-config.json").read_text()
+        )
+        common_rules = config["node-config-common"]
+        self.assertEqual(len(common_rules), 3)
+        for rule in common_rules:
+            common = rule["config-common"]
+            self.assertEqual(common["env"]["ION_RFXCLOCK_POLL_MSEC"], "10")
+
     def setUp(self):
         self.registry = generator.load_ion_node_registry(
             ROOT / "examples/10nodes-ion-dtn/ion/ion-node-registry.json"
