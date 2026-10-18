@@ -91,6 +91,27 @@ class SubsecondEpochRunnerTests(unittest.TestCase):
             host="etcd.example", port=2379, ca_cert="ca.pem"
         )
 
+    def test_main_parser_exposes_etcd_ca_certificate(self):
+        client = types.SimpleNamespace(get_prefix=lambda _: iter(()))
+        argv = [
+            "nsb-run.py",
+            "--etcd-host",
+            "etcd.example",
+            "--etcd-ca-cert",
+            "ca.pem",
+        ]
+        with patch.object(sys, "argv", argv), patch.object(
+            runner, "connect_etcd", return_value=client
+        ) as connect:
+            self.assertEqual(runner.main(), 1)
+        connect.assert_called_once_with(
+            etcd_host="etcd.example",
+            etcd_port=2379,
+            etcd_user=None,
+            etcd_password=None,
+            etcd_ca_cert="ca.pem",
+        )
+
 
 class FakeEtcd:
     def __init__(self):

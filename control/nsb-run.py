@@ -625,6 +625,11 @@ def main() -> int:
         help="Etcd password (default: env ETCD_PASSWORD or None)",
     )
     parser.add_argument(
+        "--etcd-ca-cert",
+        default=os.getenv("ETCD_CA_CERT", None),
+        help="Etcd CA certificate (default: env ETCD_CA_CERT or None)",
+    )
+    parser.add_argument(
         "--epoch-dir",
         help="Override epoch directory (takes precedence over Etcd).",
     )
