@@ -170,7 +170,7 @@ def main():
     if len(command) == 1:
         # Single string (e.g. "a; b; c"): run it through a shell *inside* the container,
         # otherwise the remote host's shell would split it at ';' / '&&' / '|'.
-        command = ["sh", "-c", command[0]]
+        command = ["bash", "-c", command[0]]
     docker_cmd += [args.node] + command
 
     # ssh options:
