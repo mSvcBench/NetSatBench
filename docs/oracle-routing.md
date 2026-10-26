@@ -71,7 +71,7 @@ Main options:
 - `--redundancy`: Enable primary + secondary next-hop generation.
 - `--link-creation-offset`: Seconds to delay route installation after link creation.
 - `--drain-before-break-offset`: Seconds to pre-install route changes before link deletion.
-- `--max-routes-per-epoch`: Batch size before inserting sleep in command stream.
+- `--max-routes-per-command`: Maximum number of routes per `run` entry (command); a sleep entry is inserted between entries.
 - `--route-batch-sleep-seconds`: Sleep between route batches.
 - `--log-level`: Logging verbosity.
 
