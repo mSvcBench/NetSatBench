@@ -418,6 +418,13 @@ Each node is identified by a unique logical name (e.g., `sat1`, `grd1`, `usr1`) 
 * **Units / Format**: Binary units `KiB`, `MiB`, `GiB`, `TiB` (e.g., `400MiB`).
 * **Description**: Hard memory cap enforced at runtime.
 
+###### `volume`
+
+* **Type**: string
+* **Requirement**: optional
+* **Units / Format**: `<host-path>:<container-path>` (e.g., `/data/logs:/var/log/nsb`).
+* **Description**: Docker volume (bind mount) added to the node container via the `--volume` option of `docker run`. The host path refers to the filesystem of the worker where the node is deployed, and must exist there. The host path can also be a folder shared across the cluster (e.g., an NFS mount available at the same path on all workers), so that nodes running on different workers can access the same data.
+
 ###### `L3-config`
 
 * **Type**: object
