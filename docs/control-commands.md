@@ -188,7 +188,13 @@ It is intended to be executed from the control host when a node container must b
 - removes the existing container if present
 - starts a fresh container with the same image, network, and resource settings
 
-The `--node` option accepts a comma-separated list, so multiple nodes can be restarted in one invocation.
+The nodes to restart are selected with exactly one of the following (mutually exclusive) options:
+
+- `--node <list>`: comma-separated list of node names, so multiple nodes can be restarted in one invocation
+- `--all`: restart all nodes defined in `/config/nodes/`
+- `--node-type <type>`: restart all nodes of a given type (e.g. `satellite`, `user`, `gateway`; case-insensitive, `any` matches all nodes)
+
+Nodes are restarted in parallel, one thread per node by default. Use `-t`/`--threads <n>` to limit the number of simultaneous restarts (useful with `--all` on large emulations).
 
 ### Usage <!-- omit in toc -->
 ```bash
@@ -197,6 +203,14 @@ python3 nsb.py node-restart --node sat1
 
 ```bash
 python3 nsb.py node-restart --node sat1,sat2,usr1
+```
+
+```bash
+python3 nsb.py node-restart --all -t 10
+```
+
+```bash
+python3 nsb.py node-restart --node-type user
 ```
 
 Run with `--help` to see the full list of available options.

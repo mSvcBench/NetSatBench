@@ -329,9 +329,24 @@ def main() -> int:
         help="Logging level (default: INFO)",
     )
     parser.add_argument(
+        "-t", "--threads",
+        type=int,
+        default=8,
+        help="Maximum number of parallel restarts (default: 8)",
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--node",
-        required=True,
         help="Comma-separated list of node names to restart (must be defined in /config/nodes/ in Etcd)",
+    )
+    group.add_argument(
+        "--all",
+        action="store_true",
+        help="Restart all nodes defined in /config/nodes/ in Etcd",
+    )
+    group.add_argument(
+        "--node-type",
+        help="Restart all nodes of the given type (e.g. satellite, user, gateway; 'any' for all)",
     )
     args = parser.parse_args()
 
@@ -339,10 +354,25 @@ def main() -> int:
 
 
     etcd_client = connect_etcd(args.etcd_host, args.etcd_port, args.etcd_user, args.etcd_password, args.etcd_ca_cert)
-    node_names = [node_name.strip() for node_name in args.node.split(",") if node_name.strip()]
-    if not node_names:
-        log.error("❌ No valid node names provided in --node.")
-        return 1
+    if args.all or args.node_type:
+        wanted = "any" if args.all else args.node_type.lower()
+        try:
+            all_nodes = get_prefix_data(etcd_client, "/config/nodes/")
+        except Exception as e:
+            log.error(f"❌ Error reading nodes from Etcd: {e}")
+            return 1
+        node_names = sorted(
+            name for name, cfg in all_nodes.items()
+            if wanted == "any" or (cfg.get("type") or "").lower() == wanted
+        )
+        if not node_names:
+            log.error(f"❌ No nodes found with type '{wanted}' under /config/nodes/ in Etcd.")
+            return 1
+    else:
+        node_names = [node_name.strip() for node_name in args.node.split(",") if node_name.strip()]
+        if not node_names:
+            log.error("❌ No valid node names provided in --node.")
+            return 1
 
     node_cfgs: Dict[str, Dict[str, Any]] = {}
     worker_cfgs: Dict[str, Dict[str, Any]] = {}
@@ -383,7 +413,14 @@ def main() -> int:
     if not valid_node_names:
         return exit_code or 1
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(valid_node_names)) as executor:
+    max_workers = len(valid_node_names)
+    if args.threads is not None:
+        if args.threads < 1:
+            log.error("❌ -t/--threads must be >= 1.")
+            return 1
+        max_workers = min(max_workers, args.threads)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_node = {
             executor.submit(
                 create_one_node,
