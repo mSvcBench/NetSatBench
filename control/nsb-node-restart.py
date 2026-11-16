@@ -120,6 +120,8 @@ def recreate_and_run_container(
     etcd_user: str = None,
     etcd_password: str = None,
     etcd_ca_cert: str = None,
+    volume: str = None,
+    soft: bool = False,
 ) -> None:
 
     try:
@@ -134,6 +136,17 @@ def recreate_and_run_container(
 
         names = ps.stdout.splitlines() if ps.stdout else []
         exists = node_name in names
+
+        # --- Soft restart: keep the same container (volumes, filesystem, config) ---
+        if soft and exists:
+            run_ssh(
+                ssh_username=ssh_username,
+                ssh_host=worker,
+                ssh_key_path=ssh_key_path,
+                remote_args=["docker", "restart", node_name],
+                check=True,
+            )
+            return
 
         # --- Remove existing container (ignore errors, but still raise SSH transport errors) ---
         if exists:
@@ -172,7 +185,9 @@ def recreate_and_run_container(
              run_cmd.extend(["--cpus", str(cpu_limit)])
         if mem_limit != "0MiB":
              run_cmd.extend(["--memory", str(mem_limit)])
-        run_cmd.append(container_image) 
+        if volume:
+            run_cmd.extend(["--volume", str(volume)])  # <host-path>:<container-path>
+        run_cmd.append(container_image)
 
         run_ssh(
             ssh_username=ssh_username,
@@ -232,7 +247,8 @@ def create_one_node(
     etcd_port: int,
     etcd_user: str = None,
     etcd_password: str = None,
-    etcd_ca_cert: str = None,    
+    etcd_ca_cert: str = None,
+    soft: bool = False,
 ) -> Tuple[str, bool, str]:
     """
     Returns: (name, success, message)
@@ -272,6 +288,8 @@ def create_one_node(
             etcd_user=etcd_user,
             etcd_password=etcd_password,
             etcd_ca_cert=etcd_ca_cert,
+            volume=node.get('volume'),
+            soft=soft,
         )
         msg = f" Restarted on worker={worker}"
         return name, True, msg
@@ -333,6 +351,12 @@ def main() -> int:
         type=int,
         default=8,
         help="Maximum number of parallel restarts (default: 8)",
+    )
+    parser.add_argument(
+        "--soft",
+        action="store_true",
+        help="Restart the existing container with 'docker restart' instead of removing and recreating it "
+             "(keeps volumes and container filesystem; image/cpu/mem changes are not applied)",
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
@@ -432,6 +456,7 @@ def main() -> int:
                 etcd_user=args.etcd_user,
                 etcd_password=args.etcd_password,
                 etcd_ca_cert=args.etcd_ca_cert,
+                soft=args.soft,
             ): node_name
             for node_name in valid_node_names
         }
