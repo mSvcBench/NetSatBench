@@ -186,7 +186,9 @@ It is intended to be executed from the control host when a node container must b
 - resolves the assigned worker from `/config/workers/<worker>`
 - connects to the worker via SSH
 - removes the existing container if present
-- starts a fresh container with the same image, network, and resource settings
+- starts a fresh container with the same image, network, resource settings, and bind-mount `volume` (if configured for the node)
+
+By default the container is removed and recreated, so any data stored in its filesystem (outside of a bind-mounted `volume`) is lost, and image, CPU, and memory changes made in Etcd are applied. With `--soft`, the existing container is instead restarted in place with `docker restart`: its filesystem and volumes are preserved, but changes to image, CPU, or memory settings are **not** applied, and the image is not pulled again. If the container does not exist, `--soft` falls back to creating it.
 
 The nodes to restart are selected with exactly one of the following (mutually exclusive) options:
 
@@ -211,6 +213,10 @@ python3 nsb.py node-restart --all -t 10
 
 ```bash
 python3 nsb.py node-restart --node-type user
+```
+
+```bash
+python3 nsb.py node-restart --node sat1 --soft
 ```
 
 Run with `--help` to see the full list of available options.
