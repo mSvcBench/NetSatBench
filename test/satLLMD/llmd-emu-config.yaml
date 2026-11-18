@@ -1,0 +1,24 @@
+model: dummy-llm
+block_size: 16
+time_scale: 1.0            # >1 = faster than real time (reported timings stay simulated)
+default_output_tokens: 1000
+# vocabulary: [hello, world, ...]   # answers are random words from this list (a built-in one is used if omitted)
+vocabulary_file: data/google-10000-english.txt   # public word list (one word per line); overrides `vocabulary`. Relative to this file
+# seed: 42                          # make the generated answers reproducible
+worker:                    # one process per pod does prefill + decode (no P/D separation, no KV transfer)
+  replicas: 2
+  slots: 8                  # concurrent sequences per worker
+  kv_cache_blocks: 69648      # KV pool: running sequences pin blocks, the rest is the prefix cache
+prefill:
+  base_s: 0.005
+  per_token_s: 0.000256      # t_prefill = base_s + uncached_tokens * per_token_s
+  load_factor: 1.0       # slowdown per other running sequence (placeholder, calibrate)
+decode:
+  ttft_s: 0.0
+  per_token_s: 0.02        # TPOT
+  load_factor: 1       # slowdown per other running sequence (placeholder, calibrate)
+router:
+  policy: least-load     # prefix-aware | least-load | round-robin
+  prefix_weight: 1.0
+  load_weight: 4.0
+  refresh_interval_s: 1.0  # period of the worker-load refresh; between refreshes picks increment inflight

@@ -1,0 +1,52 @@
+{
+"workers-common": {
+    "ssh-user": "ubuntu",
+    "ssh-key": "/Users/detti/.ssh/ansible",
+    "sat-vnet": "sat-vnet",
+    "sat-vnet-super-cidr": "172.20.0.0/16"
+},
+"workers": {
+    "nsb-2": {
+      "ip": "192.168.56.223",
+      "sat-vnet-cidr":"172.20.1.0/24",
+      "cpu": "6",
+      "mem": "6GiB"
+    },
+    "nsb-3": {
+      "ip": "192.168.56.186",
+      "sat-vnet-cidr":"172.20.2.0/24",
+      "cpu": "6",
+      "mem": "6GiB"
+    },
+    "nsb-4": {
+      "ip": "192.168.56.194",
+      "sat-vnet-cidr":"172.20.3.0/24",
+      "cpu": "6",
+      "mem": "6GiB"
+    },
+    "nsb-5": {
+      "ip": "192.168.56.227",
+      "sat-vnet-cidr":"172.20.4.0/24",
+      "cpu": "6",
+      "mem": "6GiB"
+    },
+    "nsb-6": {
+      "ip": "192.168.56.136",
+      "sat-vnet-cidr":"172.20.5.0/24",
+      "cpu": "6",
+      "mem": "6GiB"
+    },
+    "nsb-7": {
+      "ip": "192.168.56.91",
+      "sat-vnet-cidr":"172.20.6.0/24",
+      "cpu": "6",
+      "mem": "6GiB"
+    },
+    "nsb-8": {
+      "ip": "192.168.56.189",
+      "sat-vnet-cidr":"172.20.7.0/24",
+      "cpu": "6",
+      "mem": "6GiB"
+    }
+  }
+}

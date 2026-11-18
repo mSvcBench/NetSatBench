@@ -1,0 +1,134 @@
+function T = llmd_benchmark_plot(file, savePrefix)
+% LLMD_BENCHMARK_PLOT  Read the output of llmd_benchmark.py (--output, one JSON object per line) and plot it.
+%
+%   T = llmd_benchmark_plot('bench.jsonl')
+%   T = llmd_benchmark_plot('bench.jsonl', 'fig/bench')   % also saves fig/bench_<n>.png
+%
+% Returns a table with one row per turn. Figures:
+%   1. latency (client) and simulated ttft/e2e vs time
+%   2. CDF of ttft, e2e and client latency
+%   3. context length (and summarisation events) per session vs turn
+%   4. prompt tokens: cached vs not cached, and cache hit fraction per turn
+%   5. latency breakdown (queue / prefill / decode) when the gateway reports it
+%   6. requests per gateway and latency per gateway (box plot)
+if nargin < 2, savePrefix = ''; end
+
+%% ---------- load ----------
+lines = splitlines(strtrim(fileread(file)));
+lines = lines(~cellfun(@isempty, lines));
+n = numel(lines);
+if n == 0, error('no records in %s', file); end
+
+g = @(s, f, d) getfield_or(s, f, d);
+session = zeros(n,1); turn = zeros(n,1); t = zeros(n,1); latency = zeros(n,1);
+ctx = zeros(n,1); summarized = false(n,1); promptTok = nan(n,1); cachedTok = nan(n,1);
+outTok = nan(n,1); ttft = nan(n,1); e2e = nan(n,1); queue = nan(n,1); prefill = nan(n,1);
+decode = nan(n,1); gateway = strings(n,1); pod = strings(n,1); router = strings(n,1);
+for i = 1:n
+    r = jsondecode(lines{i});
+    session(i) = r.session;  turn(i) = r.turn;  t(i) = r.time;  latency(i) = r.latency_s;
+    ctx(i) = r.context_tokens;  summarized(i) = logical(r.summarized);  gateway(i) = string(r.gateway);
+    u = g(r, 'usage', struct());  e = g(r, 'llmd_emu', struct());
+    promptTok(i) = g(u, 'prompt_tokens', NaN);  outTok(i) = g(u, 'completion_tokens', NaN);
+    pd = g(u, 'prompt_tokens_details', struct());  cachedTok(i) = g(pd, 'cached_tokens', NaN);
+    ttft(i) = g(e, 'ttft_s', NaN);  e2e(i) = g(e, 'e2e_s', NaN);
+    queue(i) = g(e, 'queue_s', NaN);  prefill(i) = g(e, 'prefill_s', NaN);  decode(i) = g(e, 'decode_s', NaN);
+    pod(i) = string(r.llmd_emu.pod); router(i) = string(r.llmd_emu.router);
+end
+t = t - min(t);                                    % seconds from the first request
+T = table(session, turn, t, gateway, latency, ttft, e2e, queue, prefill, decode, ...
+          promptTok, cachedTok, outTok, ctx, summarized, ...
+          'VariableNames', {'session','turn','time_s','gateway','router','pod','latency_s','ttft_s','e2e_s','queue_s', ...
+          'prefill_s','decode_s','prompt_tokens','cached_tokens','completion_tokens','context_tokens','summarized'});
+fprintf('%d requests, %d sessions, %d gateways, %.1f s\n', n, numel(unique(session)), numel(unique(gateway)), max(t));
+fprintf('latency  mean %.3f  p50 %.3f  p95 %.3f  p99 %.3f s\n', mean(latency), prctile(latency,[50 95 99]));
+if any(~isnan(ttft)), fprintf('ttft     mean %.3f  p50 %.3f  p95 %.3f s\n', mean(ttft,'omitnan'), prctile(ttft,[50 95])); end
+
+sess = unique(session);
+cols = lines_colors(numel(sess));
+figs = gobjects(0);
+
+%% ---------- 1. latency vs time ----------
+figs(end+1) = figure('Name', 'Latency vs time'); hold on; grid on;
+plot(t, latency, '.', 'MarkerSize', 10, 'DisplayName', 'client latency');
+if any(~isnan(e2e)),  plot(t, e2e,  '.', 'MarkerSize', 10, 'DisplayName', 'e2e (emulated)'); end
+if any(~isnan(ttft)), plot(t, ttft, '.', 'MarkerSize', 10, 'DisplayName', 'ttft (emulated)'); end
+xlabel('time (s)'); ylabel('seconds'); title('Request latency vs time'); legend('Location', 'best');
+
+%% ---------- 2. CDF ----------
+figs(end+1) = figure('Name', 'Latency CDF'); hold on; grid on;
+series = {latency, 'client latency'; e2e, 'e2e (emulated)'; ttft, 'ttft (emulated)'};
+for k = 1:size(series, 1)
+    x = sort(series{k,1}(~isnan(series{k,1})));
+    if ~isempty(x), stairs(x, (1:numel(x))' / numel(x), 'LineWidth', 1.5, 'DisplayName', series{k,2}); end
+end
+xlabel('seconds'); ylabel('CDF'); title('Latency distribution'); legend('Location', 'southeast');
+
+%% ---------- 3. context length per session ----------
+figs(end+1) = figure('Name', 'Context length'); hold on; grid on;
+for k = 1:numel(sess)
+    m = session == sess(k);  [~, o] = sort(turn(m));
+    tt = turn(m);  cc = ctx(m);  tt = tt(o);  cc = cc(o);
+    plot(tt, cc, '-', 'Color', cols(k,:), 'LineWidth', 1);
+end
+s = summarized;
+plot(turn(s), ctx(s), 'kv', 'MarkerFaceColor', 'k', 'DisplayName', 'summarised');
+xlabel('turn'); ylabel('context (tokens)'); title('Context length per session (v = summarisation)');
+
+%% ---------- 4. prefix cache ----------
+if any(~isnan(cachedTok))
+    figs(end+1) = figure('Name', 'Prefix cache');
+    subplot(2,1,1); hold on; grid on;
+    miss = promptTok - cachedTok;
+    mt = unique(turn);  hit = zeros(size(mt)); mis = zeros(size(mt));
+    for k = 1:numel(mt)
+        hit(k) = mean(cachedTok(turn == mt(k)), 'omitnan');  mis(k) = mean(miss(turn == mt(k)), 'omitnan');
+    end
+    bar(mt, [hit mis], 'stacked'); legend('cached', 'not cached', 'Location', 'northwest');
+    xlabel('turn'); ylabel('mean prompt tokens'); title('Prompt tokens: cached vs computed');
+    subplot(2,1,2); hold on; grid on;
+    frac = cachedTok ./ promptTok;
+    plot(t, frac, '.', 'MarkerSize', 10);
+    xlabel('time (s)'); ylabel('cached fraction'); ylim([0 1]); title('Cache hit fraction per request');
+end
+
+%% ---------- 5. latency breakdown ----------
+if any(~isnan(queue)) && any(~isnan(prefill)) && any(~isnan(decode))
+    figs(end+1) = figure('Name', 'Latency breakdown');
+    mt = unique(turn);  B = zeros(numel(mt), 3);
+    for k = 1:numel(mt)
+        m = turn == mt(k);
+        B(k,:) = [mean(queue(m),'omitnan') mean(prefill(m),'omitnan') mean(decode(m),'omitnan')];
+    end
+    bar(mt, B, 'stacked'); grid on; legend('queue', 'prefill', 'decode', 'Location', 'northwest');
+    xlabel('turn'); ylabel('mean seconds'); title('Emulated latency breakdown per turn');
+end
+
+%% ---------- 6. per gateway ----------
+gws = unique(gateway);
+if numel(gws) > 0
+    figs(end+1) = figure('Name', 'Per gateway');
+    subplot(2,1,1);
+    cnt = arrayfun(@(x) sum(gateway == x), gws);
+    bar(categorical(gws), cnt); grid on; ylabel('requests'); title('Requests per gateway');
+    subplot(2,1,2);
+    boxplot(latency, cellstr(gateway)); grid on; ylabel('client latency (s)'); title('Latency per gateway');
+end
+
+%% ---------- save ----------
+if ~isempty(savePrefix)
+    d = fileparts(savePrefix);
+    if ~isempty(d) && ~exist(d, 'dir'), mkdir(d); end
+    for k = 1:numel(figs)
+        exportgraphics(figs(k), sprintf('%s_%d.png', savePrefix, k), 'Resolution', 150);
+    end
+end
+end
+
+function v = getfield_or(s, f, d)
+if isstruct(s) && isfield(s, f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
+end
+
+function c = lines_colors(k)
+c = lines(max(k, 1));
+end
