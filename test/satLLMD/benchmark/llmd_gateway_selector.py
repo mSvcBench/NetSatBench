@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Select the llmd gateway located in the same orbit as the access satellite.
 
-    sel = GatewaySelector("llmd_emu_sat_config.json")        # Etcd from ETCD_ENDPOINT/ETCD_USER/... env vars
+    sel = GatewaySelector("llmd-sat-config.json")        # Etcd from ETCD_ENDPOINT/ETCD_USER/... env vars
     gw = sel.peek("/tmp/srv6_access.json")                    # -> "sat2" (or None)
 
 - __init__ reads the gateways of the llmd sat config file (written by llmd_emu_sat_deploy.py) and, for each
@@ -84,7 +84,7 @@ class GatewaySelector:
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Print the llmd gateway in the orbit of the access satellite")
-    ap.add_argument("config", help="llmd sat config json (e.g. llmd_emu_sat_config.json)")
+    ap.add_argument("config", help="llmd sat config json (e.g. llmd-sat-config.json)")
     ap.add_argument("--access-file", default="/tmp/srv6_access.json", help="file written by usr_srv6_learn.py")
     args = ap.parse_args()
     selector = GatewaySelector(args.config)

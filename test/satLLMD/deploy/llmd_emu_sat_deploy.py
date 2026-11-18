@@ -25,7 +25,7 @@ import sys
 from typing import Dict, List, Optional
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-CONTAINER_APP_DIR = "/app/shared/cloudsat"
+CONTAINER_VOLUME_DIR = "/app/shared/satLLMD"
 DEPLOY_DIR = "test/satLLMD/deploy"     # tarballs, cluster configs
 SOURCE_DIR = "test/satLLMD"            # llmd_emu and srv6 sources
 
@@ -109,7 +109,7 @@ def screen_cmd(session: str, command: str, prefix: str = "") -> str:
 
 
 def llmd_exec(node: str, session: str, command: str) -> List[str]:
-    remote = screen_cmd(session, f"source .venv/bin/activate; {command}", prefix=f"cd {CONTAINER_APP_DIR}/llmd_emu; ")
+    remote = screen_cmd(session, f"source .venv/bin/activate; {command}", prefix=f"cd {CONTAINER_VOLUME_DIR}/llmd_emu; ")
     return ["nsb.py", "exec", node, remote]
 
 
@@ -124,8 +124,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="print the commands instead of running them")
     ap.add_argument("--max-jobs", type=int, default=int(os.getenv("MAX_JOBS", 8)), help="max parallel nsb.py calls (default 8)")
     ap.add_argument("--volume-host", default="nsb-1", help="host holding the volume shared with the nodes (default nsb-1)")
-    ap.add_argument("--volume-dir", default="~/shared/cloudsat",
-                    help="directory on the volume host where the package is extracted (default ~/shared/cloudsat)")
+    ap.add_argument("--volume-dir", default="~/shared/satLLMD",
+                    help="directory on the volume host where the package is extracted (default ~/shared/satLLMD)")
     a = ap.parse_args()
 
     try:
@@ -147,8 +147,9 @@ def main() -> int:
                 subprocess.run(["git", "pull"], cwd=os.path.join(SOURCE_DIR, "llmd_emu"), check=True)
                 subprocess.run(["tar", "--no-xattrs", "-czf", os.path.join(DEPLOY_DIR, "llmd_emu.tar.gz"),
                                 "-C", SOURCE_DIR, "llmd_emu"], check=True)
-                subprocess.run(["tar", "--no-xattrs", "-cf", os.path.join(DEPLOY_DIR, "software_package.tar"),
-                                "-C", DEPLOY_DIR, "llmd_emu.tar.gz", "venv.tar.gz", "-C", SOURCE_DIR, "srv6"], check=True)
+                subprocess.run(["tar", "--no-xattrs", "-cf", os.path.abspath(os.path.join(DEPLOY_DIR, "software_package.tar")),
+                                "-C", os.path.abspath(DEPLOY_DIR), "llmd_emu.tar.gz", "venv.tar.gz",
+                                "-C", os.path.abspath(SOURCE_DIR), "srv6"], check=True)
             except (subprocess.CalledProcessError, OSError) as e:
                 print(f"package preparation failed: {e}", file=sys.stderr)
                 return 1
@@ -159,22 +160,23 @@ def main() -> int:
                f"cd {a.volume_dir}; sudo rm -rf llmd_emu srv6; tar -xf software_package.tar; rm software_package.tar; "
                "tar -xf llmd_emu.tar.gz; rm llmd_emu.tar.gz; tar -xf venv.tar.gz -C llmd_emu; rm venv.tar.gz"])
 
-    # ----- copy the cluster config to the volume (always, also with --skip-package) -----
-    r.run(["scp", a.config, f"{a.volume_host}:{a.volume_dir}/llmd_emu_sat_config.json"])
+    # ----- copy the sat and emu config to the volume (always, also with --skip-package) -----
+    r.run(["scp", a.config, f"{a.volume_host}:{a.volume_dir}/llmd-sat-config.json"])
+    r.run(["scp", a.config, f"{a.volume_host}:{a.volume_dir}/llmd-emu-config.json"])
 
     # ----- srv6 -----
     if not a.skip_srv6:
         r.run(["nsb.py", "exectype", "--node-type", "satellite", "-t", str(a.max_jobs),
-               screen_cmd("SAT_SRV6_LEARN", f"python3 {CONTAINER_APP_DIR}/srv6/sat_srv6_learn.py")])
+               screen_cmd("SAT_SRV6_LEARN", f"python3 {CONTAINER_VOLUME_DIR}/srv6/sat_srv6_learn.py")])
         r.run(["nsb.py", "exectype", "--node-type", "user", "-t", str(a.max_jobs),
-               screen_cmd("USR_SRV6_LEARN", f"python3 {CONTAINER_APP_DIR}/srv6/usr_srv6_learn.py")])
+               screen_cmd("USR_SRV6_LEARN", f"python3 {CONTAINER_VOLUME_DIR}/srv6/usr_srv6_learn.py")])
 
     # ----- routers -----
     jobs = []
     for o in routers:
         print(f"Starting router on {o['node']} (port {rports[o['node']]})")
         jobs.append(llmd_exec(o["node"], "LLMD_ROUTER",
-                              f"python3 -m llmd_emu router -c config.example.yaml --port {rports[o['node']]} --name {o['node']}"))
+                              f"python3 -m llmd_emu router -c {CONTAINER_VOLUME_DIR}/llmd-sat-config.json --port {rports[o['node']]} --name {o['node']}"))
     r.parallel(jobs)
 
     # ----- gateways (first router of the list only) -----
@@ -184,7 +186,7 @@ def main() -> int:
         port = int(o.get("port", 8000))
         print(f"Starting gateway on {o['node']} (port {port}) -> router {rn}:{rports[rn]}")
         jobs.append(llmd_exec(o["node"], "LLMD_GATEWAY",
-                              f"python3 -m llmd_emu gateway -c config.example.yaml --router-url http://{rn}:{rports[rn]} --port {port} "
+                              f"python3 -m llmd_emu gateway -c {CONTAINER_VOLUME_DIR}/llmd-sat-config.json --router-url http://{rn}:{rports[rn]} --port {port} "
                               f"--name {o['node']}"))
     r.parallel(jobs)
 
@@ -197,7 +199,7 @@ def main() -> int:
             session = "LLMD_WORKER" if k == 0 else f"LLMD_WORKER_{k}"
             print(f"Starting worker on {o['node']} (port {port}) -> router {rn}:{rports[rn]}")
             jobs.append(llmd_exec(o["node"], session,
-                                  f"python3 -m llmd_emu worker -c config.example.yaml --router-url http://{rn}:{rports[rn]} --port {port} "
+                                  f"python3 -m llmd_emu worker -c {CONTAINER_VOLUME_DIR}/llmd-sat-config.json --router-url http://{rn}:{rports[rn]} --port {port} "
                                   f"--name {o['node']} --url http://{o['node']}:{port}"))
     r.parallel(jobs)
 

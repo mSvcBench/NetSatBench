@@ -9,7 +9,6 @@ to the gateway of the access satellite's orbit.
 | Script | Runs on | Role |
 |---|---|---|
 | [usr_srv6_learn.py](usr_srv6_learn.py) | user nodes | Chooses the access satellite and installs an SRv6 default route through it. Follows handovers. Writes the access satellite (name, IPv6, orbit) to a local file. |
-| [usr_srv6_gw_route.py](usr_srv6_gw_route.py) | user nodes | Reads that file and a gateways JSON file, and installs a `/128` route to the service SID through the access satellite and the gateway of its orbit. |
 | [sat_srv6_learn.py](sat_srv6_learn.py) | the end node of the SRv6 path (the node that must answer) | Sniffs incoming SRv6 packets that end here and installs a `/128` reverse route towards each sender. |
 
 ## How it works
@@ -49,27 +48,6 @@ to the gateway of the access satellite's orbit.
 The routes are attached to a permanent placeholder dummy interface (`sr0`, MTU 1400 to leave room
 for the SRH). If the dummy device cannot be created, `eth0` is used instead.
 
-### Service SID routing (`usr_srv6_gw_route.py`)
-
-The llm-d gateways share one service SID (`2001:db8:104::1`, configured on `lo` of each gateway
-node by `llmd-emu-deploy.sh`). The user must reach the gateway of the orbit of its access
-satellite:
-
-1. `usr_srv6_learn.py` writes the access satellite and its orbit to the access file.
-2. `usr_srv6_gw_route.py` looks up the gateway of that orbit in the gateways file, resolves its
-   IPv6 address from `/etc/hosts`, and installs
-
-   ```
-   ip -6 route replace 2001:db8:104::1/128 encap seg6 mode inline segs <access-sat-ipv6>,<gateway-ipv6> dev sr0
-   ```
-
-   The packet goes to the access satellite, then to the gateway node. The SRH still has `segments_left == 1`
-   there, so `sat_srv6_learn.py` does not learn the way back to the user at the gateway (only the end node,
-   `segments_left == 0`, learns).
-3. It reacts to changes of either file (inotify, with a periodic safety re-check), so the route
-   follows handovers. It removes the route when the user is not connected or the orbit has no
-   gateway, and on `SIGINT`/`SIGTERM`. The default route of `usr_srv6_learn.py` then applies.
-
 #### Access file
 
 Written atomically by `usr_srv6_learn.py` (default `/tmp/srv6_access.json`, option
@@ -83,19 +61,6 @@ Written atomically by `usr_srv6_learn.py` (default `/tmp/srv6_access.json`, opti
 `status` is `not_connected` (with empty `satellite`/`ipv6` and null `orbit`) when there is no
 access satellite.
 
-#### Gateways file
-
-Written by `llmd-emu-deploy.sh` (`gateways_json_file`, one entry per orbit, key = orbit number).
-It must be readable from the user node, for example copied into the shared directory.
-
-```json
-{
-"1": ["sat2"],
-"2": ["sat51"]
-}
-```
-
-If an orbit lists several gateways, the first one is used.
 
 ## Requirements
 
@@ -148,23 +113,6 @@ python3 usr_srv6_learn.py --handover-strategy lifetime \
 The remaining lifetime of a link is `expected_duration` (from the link entry in Etcd, if present)
 minus the time since the link appeared.
 
-### User: service SID route
-
-```bash
-python3 usr_srv6_gw_route.py --gateways-file /app/shared/cloudsat/llmd_gateways.json
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `--gateways-file` | required | JSON `{"<orbit>": ["sat<id>", ...]}`. |
-| `--access-file` | `/tmp/srv6_access.json` | File written by `usr_srv6_learn.py`. |
-| `--sid` | `2001:db8:104::1` | Service SID. |
-| `--dev` | `sr0` | Placeholder interface (created as dummy if missing, fallback `eth0`). |
-| `--route-mtu` | none | MTU of the route; leave room for the SRH. |
-| `--interval` | `30` | Safety re-check period (s) when no file change is detected. inotify does not see changes made from other hosts on NFS. |
-| `--log-level` | `INFO` | Logging level. |
-
-If inotify is unavailable the script falls back to checking the files every second.
 
 ## Quick check
 
@@ -178,7 +126,6 @@ On the user:
 
 ```bash
 ip -6 route show default          # default encap seg6 ... segs <access-sat>
-ip -6 route show 2001:db8:104::1  # service SID via <access-sat>,<gateway>
 cat /tmp/srv6_access.json         # current access satellite and orbit
 ```
 
