@@ -2,3 +2,6 @@
 	path = generators/StarPerf_Simulator
 	url = https://github.com/mSvcBench/StarPerf_Simulator.git
 	branch = NetSatBench
+[submodule "test/satLLMD/llmd_emu"]
+	path = test/satLLMD/llmd_emu
+	url = https://github.com/mSvcBench/llmd_emu.git
