@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Select the llmd gateway located in the same orbit as the access satellite.
 
-    sel = GatewaySelector("llmd-sat-config.json")        # Etcd from ETCD_ENDPOINT/ETCD_USER/... env vars
+    sel = GatewaySelector("llmd-sat-config.yaml")        # Etcd from ETCD_ENDPOINT/ETCD_USER/... env vars
     gw = sel.peek("/tmp/srv6_access.json")                    # -> "sat2" (or None)
 
 - __init__ reads the gateways of the llmd sat config file (written by llmd_emu_sat_deploy.py) and, for each
@@ -12,6 +12,7 @@
 """
 import json
 import os
+import yaml
 import sys
 from typing import Any, Dict, Optional, Union
 
@@ -38,11 +39,11 @@ def connect_etcd(host: Optional[str] = None, port: Optional[int] = None, user: O
 
 class GatewaySelector:
     def __init__(self, config_file: str, etcd_client=None, **etcd_args):
-        """config_file: llmd sat config json ({"gateways": [{"node": ...}, ...], ...}).
+        """config_file: llmd sat config yaml ({"gateways": [{"node": ...}, ...], ...}).
         etcd_client: an etcd3 client; if None one is created with connect_etcd(**etcd_args)."""
         self.etcd = etcd_client if etcd_client is not None else connect_etcd(**etcd_args)
         with open(config_file, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
+            cfg = yaml.safe_load(f) or {}
         self.gateways: Dict[str, int] = {}     # gateway sat name -> orbit (config order is kept)
         for gw in cfg.get("gateways", []):
             name = gw["node"]
@@ -84,7 +85,7 @@ class GatewaySelector:
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Print the llmd gateway in the orbit of the access satellite")
-    ap.add_argument("config", help="llmd sat config json (e.g. llmd-sat-config.json)")
+    ap.add_argument("config", help="llmd sat config yaml (e.g. llmd-sat-config.yaml)")
     ap.add_argument("--access-file", default="/tmp/srv6_access.json", help="file written by usr_srv6_learn.py")
     args = ap.parse_args()
     selector = GatewaySelector(args.config)

@@ -12,6 +12,8 @@ workers see the previous context as a shared prefix).
 When the context reaches --context-max tokens, the conversation is summarized: all questions and answers are
 replaced by a summary (dummy words, random length, --summary-*), kept after the system prompt. The next question
 then starts from this shorter context (the prefix changes, so the workers' prefix caches miss).
+The first question of each session has a length uniform in [1, --context-max] words, so that parallel
+sessions do not reach the summarization threshold at the same time.
 
 Random variables (each with configurable mean and std):
   question length (words), answer length (max_tokens requested; the emulator's tokenizer counts words),
@@ -30,7 +32,7 @@ Literature notes (not fitted here, the defaults are modelling choices, tune them
     inter-turn time distribution, and stresses reproducing it.
   - ShareGPT conversations: very skewed prompt lengths (median ~42 tokens, mean ~208), i.e. mean >> median.
 
-usage: llmd_benchmark.py --config llmd_emu_sat_config.json [--access-file /tmp/srv6_access.json] [--turns 10] ...
+usage: llmd_benchmark.py --config llmd-sat-config.yaml [--access-file /tmp/srv6_access.json] [--turns 10] ...
 """
 import argparse
 import json
@@ -114,7 +116,12 @@ def run_session(sid: int, args, selector: GatewaySelector, vocab: List[str], rng
     history: List[dict] = list(base_context)
 
     for turn in range(1, args.turns + 1):
-        question = " ".join(rng.choices(vocab, k=int(round(q_len()))))
+        if turn == 1 and args.context_max > 1:
+            # first question: uniform in [1, context_max] so parallel sessions reach the summarize threshold at different times
+            n_words = rng.randint(1, args.context_max)
+        else:
+            n_words = int(round(q_len()))
+        question = " ".join(rng.choices(vocab, k=n_words))
         max_tokens = int(round(a_len()))
         history.append({"role": "user", "content": question})
 
@@ -174,7 +181,7 @@ def run_session(sid: int, args, selector: GatewaySelector, vocab: List[str], rng
 # ----------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", required=True, help="llmd sat config json (e.g., llmd-sat-config.json); Etcd is reached "
+    ap.add_argument("--config", required=True, help="llmd sat config yaml (e.g., llmd-sat-config.yaml); Etcd is reached "
                     "with the ETCD_ENDPOINT/ETCD_USER/ETCD_PASSWORD/ETCD_CA_CERT environment variables")
     ap.add_argument("--access-file", default="/tmp/srv6_access.json", help="file written by usr_srv6_learn.py")
     ap.add_argument("--gateway-port", type=int, default=8000, help="gateway port (default 8000)")
