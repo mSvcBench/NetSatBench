@@ -3,10 +3,10 @@ block_size: 16
 time_scale: 1.0            # >1 = faster than real time (reported timings stay simulated)
 default_output_tokens: 1000
 # vocabulary: [hello, world, ...]   # answers are random words from this list (a built-in one is used if omitted)
-vocabulary_file: data/google-10000-english.txt   # public word list (one word per line); overrides `vocabulary`. Relative to this file
+vocabulary_file: /app/shared/satLLMD/llmd_emu/data/google-10000-english.txt   # public word list (one word per line); overrides `vocabulary`. Relative to this file
 # seed: 42                          # make the generated answers reproducible
 worker:                    # one process per pod does prefill + decode (no P/D separation, no KV transfer)
-  replicas: 2
+  #  replicas: 2           # not relavant as conttrolled by llmd-sat-config.yaml
   slots: 8                  # concurrent sequences per worker
   kv_cache_blocks: 69648      # KV pool: running sequences pin blocks, the rest is the prefix cache
 prefill:

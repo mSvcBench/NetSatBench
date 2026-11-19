@@ -123,6 +123,7 @@ def main() -> int:
     ap.add_argument("-ec", "--emu-config", required=True, help="configuration of llmd_emu (see llmd-emu-config.yaml)")
     ap.add_argument("--skip-package", action="store_true", help="do not build/copy the software package")
     ap.add_argument("--skip-srv6", action="store_true", help="do not (re)start the srv6 learning scripts on satellites and users")
+    ap.add_argument("--skip-benchmark", action="store_true", help="do not copy the benchmark files")
     ap.add_argument("--dry-run", action="store_true", help="print the commands instead of running them")
     ap.add_argument("--max-jobs", type=int, default=int(os.getenv("MAX_JOBS", 8)), help="max parallel nsb.py calls (default 8)")
     ap.add_argument("--volume-host", default="nsb-1", help="host holding the volume shared with the nodes (default nsb-1)")
@@ -166,9 +167,20 @@ def main() -> int:
     r.run(["scp", a.sat_config, f"{a.volume_host}:{a.volume_dir}/llmd-sat-config.yaml"])
     r.run(["scp", a.emu_config, f"{a.volume_host}:{a.volume_dir}/llmd-emu-config.yaml"])
 
-    # copy benchmark folder to volume host (always, also with --skip-package) -----
-    r.run(["scp", "-r", os.path.join(SOURCE_DIR, "benchmark"), f"{a.volume_host}:{a.volume_dir}/benchmark"])
-    
+    # ----- benchmark -----
+        
+    if not a.skip_benchmark:
+        if not a.dry_run:
+            try:
+                subprocess.run(["scp", "-r", os.path.join(SOURCE_DIR, "benchmark"), f"{a.volume_host}:{a.volume_dir}/benchmark"], check=True)
+            except (subprocess.CalledProcessError, OSError) as e:
+                print(f"benchmark copy failed: {e}", file=sys.stderr)
+                return 1
+        else:
+            print("+ scp benchmark folder (in test/satLLMD/deploy)")
+        r.run(["ssh", a.volume_host,
+                       f"cd {a.volume_dir}/benchmark; sudo rm -rf .venv; tar -xzf venv.tar.gz; rm venv.tar.gz;"])
+          
     # ----- srv6 -----
     if not a.skip_srv6:
         r.run(["nsb.py", "exectype", "--node-type", "satellite", "-t", str(a.max_jobs),
