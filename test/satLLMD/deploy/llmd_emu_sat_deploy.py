@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Configurable llmd_emu deployment (run from the NetSatBench repo root).
 
-usage: test/satLLMD/deploy/llmd_emu_sat_deploy.py -c <cluster.yaml> [options]
+usage: test/satLLMD/deploy/llmd_emu_sat_deploy.py -c|--sat-config <cluster.yaml> [options]
 
 cluster.yaml (YAML; the same structure is shown as JSON):
   {
@@ -119,7 +119,8 @@ def llmd_exec(node: str, session: str, command: str) -> List[str]:
 # ----------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("-c", "--config", required=True, help="cluster description (see llmd-sat-config.yaml)")
+    ap.add_argument("-sc", "--sat-config", required=True, help="satellite cluster description (see llmd-sat-config.yaml)")
+    ap.add_argument("-ec", "--emu-config", required=True, help="configuration of llmd_emu (see llmd-emu-config.yaml)")
     ap.add_argument("--skip-package", action="store_true", help="do not build/copy the software package")
     ap.add_argument("--skip-srv6", action="store_true", help="do not (re)start the srv6 learning scripts on satellites and users")
     ap.add_argument("--dry-run", action="store_true", help="print the commands instead of running them")
@@ -130,7 +131,7 @@ def main() -> int:
     a = ap.parse_args()
 
     try:
-        cfg = load_config(a.config)
+        cfg = load_config(a.sat_config)
     except ConfigError as e:
         print(f"config error: {e}", file=sys.stderr)
         return 1
@@ -162,8 +163,8 @@ def main() -> int:
                "tar -xf llmd_emu.tar.gz; rm llmd_emu.tar.gz; tar -xf venv.tar.gz -C llmd_emu; rm venv.tar.gz"])
 
     # ----- copy the sat and emu config to the volume (always, also with --skip-package) -----
-    r.run(["scp", a.config, f"{a.volume_host}:{a.volume_dir}/llmd-sat-config.yaml"])
-    r.run(["scp", a.config, f"{a.volume_host}:{a.volume_dir}/llmd-emu-config.yaml"])
+    r.run(["scp", a.sat_config, f"{a.volume_host}:{a.volume_dir}/llmd-sat-config.yaml"])
+    r.run(["scp", a.emu_config, f"{a.volume_host}:{a.volume_dir}/llmd-emu-config.yaml"])
 
     # copy benchmark folder to volume host (always, also with --skip-package) -----
     r.run(["scp", "-r", os.path.join(SOURCE_DIR, "benchmark"), f"{a.volume_host}:{a.volume_dir}/benchmark"])
@@ -180,7 +181,7 @@ def main() -> int:
     for o in routers:
         print(f"Starting router on {o['node']} (port {rports[o['node']]})")
         jobs.append(llmd_exec(o["node"], "LLMD_ROUTER",
-                              f"python3 -m llmd_emu router -c {CONTAINER_VOLUME_DIR}/llmd-sat-config.yaml --port {rports[o['node']]} --name {o['node']}"))
+                              f"python3 -m llmd_emu router -c {CONTAINER_VOLUME_DIR}/llmd-emu-config.yaml --port {rports[o['node']]} --name {o['node']}"))
     r.parallel(jobs)
 
     # ----- gateways (first router of the list only) -----
@@ -190,7 +191,7 @@ def main() -> int:
         port = int(o.get("port", 8000))
         print(f"Starting gateway on {o['node']} (port {port}) -> router {rn}:{rports[rn]}")
         jobs.append(llmd_exec(o["node"], "LLMD_GATEWAY",
-                              f"python3 -m llmd_emu gateway -c {CONTAINER_VOLUME_DIR}/llmd-sat-config.yaml --router-url http://{rn}:{rports[rn]} --port {port} "
+                              f"python3 -m llmd_emu gateway -c {CONTAINER_VOLUME_DIR}/llmd-emu-config.yaml --router-url http://{rn}:{rports[rn]} --port {port} "
                               f"--name {o['node']}"))
     r.parallel(jobs)
 
@@ -203,7 +204,7 @@ def main() -> int:
             session = "LLMD_WORKER" if k == 0 else f"LLMD_WORKER_{k}"
             print(f"Starting worker on {o['node']} (port {port}) -> router {rn}:{rports[rn]}")
             jobs.append(llmd_exec(o["node"], session,
-                                  f"python3 -m llmd_emu worker -c {CONTAINER_VOLUME_DIR}/llmd-sat-config.yaml --router-url http://{rn}:{rports[rn]} --port {port} "
+                                  f"python3 -m llmd_emu worker -c {CONTAINER_VOLUME_DIR}/llmd-emu-config.yaml --router-url http://{rn}:{rports[rn]} --port {port} "
                                   f"--name {o['node']} --url http://{o['node']}:{port}"))
     r.parallel(jobs)
 

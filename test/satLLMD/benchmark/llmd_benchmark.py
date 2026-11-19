@@ -32,7 +32,7 @@ Literature notes (not fitted here, the defaults are modelling choices, tune them
     inter-turn time distribution, and stresses reproducing it.
   - ShareGPT conversations: very skewed prompt lengths (median ~42 tokens, mean ~208), i.e. mean >> median.
 
-usage: llmd_benchmark.py --config llmd-sat-config.yaml [--access-file /tmp/srv6_access.json] [--turns 10] ...
+usage: llmd_benchmark.py --sat-config llmd-sat-config.yaml [--access-file /tmp/srv6_access.json] [--turns 10] ...
 """
 import argparse
 import json
@@ -181,7 +181,7 @@ def run_session(sid: int, args, selector: GatewaySelector, vocab: List[str], rng
 # ----------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", required=True, help="llmd sat config yaml (e.g., llmd-sat-config.yaml); Etcd is reached "
+    ap.add_argument("--sat-config", required=True, help="llmd sat config yaml (e.g., llmd-sat-config.yaml); Etcd is reached "
                     "with the ETCD_ENDPOINT/ETCD_USER/ETCD_PASSWORD/ETCD_CA_CERT environment variables")
     ap.add_argument("--access-file", default="/tmp/srv6_access.json", help="file written by usr_srv6_learn.py")
     ap.add_argument("--gateway-port", type=int, default=8000, help="gateway port (default 8000)")
@@ -215,7 +215,7 @@ def main() -> int:
     a = ap.parse_args()
 
     vocab = load_vocabulary(a.vocabulary_file)
-    selector = GatewaySelector(a.config)
+    selector = GatewaySelector(a.sat_config)
     print(f"gateways: {selector.gateways}; vocabulary: {len(vocab)} words", flush=True)
 
     out_file = open(a.output, "a", encoding="utf-8") if a.output else None
