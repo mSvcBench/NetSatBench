@@ -1,24 +1,58 @@
-model: dummy-llm
-block_size: 16
+model: llama-3.1-70b       # served model name (string)
+block_size: 16             # cache block size in tokens (int)
 time_scale: 1.0            # >1 = faster than real time (reported timings stay simulated)
 default_output_tokens: 1000
 # vocabulary: [hello, world, ...]   # answers are random words from this list (a built-in one is used if omitted)
-vocabulary_file: /app/shared/satLLMD/llmd_emu/data/google-10000-english.txt   # public word list (one word per line); overrides `vocabulary`. Relative to this file
-# seed: 42                          # make the generated answers reproducible
-worker:                    # one process per pod does prefill + decode (no P/D separation, no KV transfer)
-  #  replicas: 2           # not relavant as conttrolled by llmd-sat-config.yaml
-  slots: 8                  # concurrent sequences per worker
-  kv_cache_blocks: 69648      # KV pool: running sequences pin blocks, the rest is the prefix cache
-prefill:
-  base_s: 0.005
-  per_token_s: 0.000256      # t_prefill = base_s + uncached_tokens * per_token_s
-  load_factor: 1.0       # slowdown per other running sequence (placeholder, calibrate)
-decode:
-  ttft_s: 0.0
-  per_token_s: 0.02        # TPOT
-  load_factor: 1       # slowdown per other running sequence (placeholder, calibrate)
+vocabulary_file: llmd_emu/data/google-10000-english.txt   # public word list (one word per line); overrides `vocabulary`. Relative to this file
+seed: 42                          # make the generated answers reproducible
+
+# ---------------------------------------------------------------------------------------------------------------
+# Emulated deployment: Llama-3.1-70B in FP16/BF16 on 4x NVIDIA A100 80GB (tensor parallel 4), one pod per worker.
+# Everything below comes from architecture and datasheet values, NOT from measurements. Ideal roofline: efficiency
+# factors are 1 and overheads are 0, so the resulting latencies are lower bounds. Calibrate before trusting them.
+# ---------------------------------------------------------------------------------------------------------------
+llm:                       # architecture (informational: the step coefficients below are derived from it)
+  params: 70.6e9           # P
+  active_params: 70.6e9    # dense model: all parameters are used per token
+  bytes_per_param: 2       # FP16/BF16 -> W = P*2 = 141.2 GB
+  n_layers: 80
+  n_kv_heads: 8            # GQA
+  head_dim: 128
+  kv_bytes_per_elem: 2
+  # KV bytes per token k = 2*n_layers*n_kv_heads*head_dim*kv_bytes = 327680 B
+hardware:                  # per GPU (informational)
+  name: A100-80GB-SXM
+  hbm_bandwidth_Bps: 2.039e12    # datasheet
+  peak_flops: 312e12             # datasheet, dense FP16/BF16 tensor cores
+  hbm_capacity_bytes: 80e9
+  tp: 4                          # tensor parallelism , 4*80 GB = 320 GB: 141.2 GB of weights do not fit on 2 GPUs with room for KV
+
+worker:                     # one process per pod does prefill + decode (no P/D separation, no KV transfer)
+  replicas: 2               # used only by python -m llmd_emu cluster
+  slots: 8                  # concurrent sequences per worker (max-num-seqs)
+  kv_cache_blocks: 28000    # = (0.9*tp*80e9 - 141.2e9) / (block_size*327680 B). 0.9 = vLLM-style memory utilization;
+                            #   upper bound: activations and CUDA graphs are not subtracted
+
+step:                      # T_step = max(base_s, compute_per_token_s*(n_d + c)) + per_kv_token_s*sum(L_i)
+                           #          + overhead_s
+                           # n_d decoding sequences, c prefill tokens in the step, L_i context of every running sequence
+  max_batched_tokens: 2048   # token budget per step (decode tokens + prefill chunk). Typical chunked-prefill value,
+                             #   a config choice: set it to your engine's. Must be >= worker.slots. null = unlimited
+  base_s: 0.017312           # s0 = W/(tp*BW_HBM) = 141.2e9 / (4*2.039e12): streaming the weights once per step
+  compute_per_token_s: 1.1314e-4   # s_c = 2*P/(tp*peak_flops) = 141.2e9 / (4*312e12): matmul compute per token, same
+                             #   for decode and prefill tokens. It exceeds base_s only above s0/s_c = 153 tokens per step
+  per_kv_token_s: 4.0177e-8  # s_kv = k/(tp*BW_HBM) = 327680 / (4*2.039e12): KV read per cached token (attention)
+  overhead_s: 0.0            # kernel launch + TP all-reduce per step (80 layers x 2 all-reduces: likely several ms).
+                             #   Not hideable, so added outside the max. No datasheet value: 0 until measured
+  # Approximations (the step time is a lower bound): attention FLOPs, KV-cache writes to HBM, achieved/peak
+  # efficiencies are not modelled (dividing a derived coefficient by an efficiency eta <= 1 scales it up;
+  # calibrate base_s and compute_per_token_s from the step log).
+
+trace:
+  step_log: false          # true: record (sim_time, n_decode, n_prefill, prefill_tokens, ctx_sum, step_s) per step
+
 router:
-  policy: least-load    # prefix-aware | least-load | round-robin
+  policy: round-robin     # prefix-aware | least-load | round-robin
   prefix_weight: 1.0
   load_weight: 4.0
   refresh_interval_s: 1.0  # period of the worker-load refresh; between refreshes picks increment inflight
