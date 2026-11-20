@@ -42,14 +42,12 @@ step:                      # T_step = max(base_s, compute_per_token_s*(n_d + c))
   compute_per_token_s: 1.1314e-4   # s_c = 2*P/(tp*peak_flops) = 141.2e9 / (4*312e12): matmul compute per token, same
                              #   for decode and prefill tokens. It exceeds base_s only above s0/s_c = 153 tokens per step
   per_kv_token_s: 4.0177e-8  # s_kv = k/(tp*BW_HBM) = 327680 / (4*2.039e12): KV read per cached token (attention)
-  overhead_s: 0.0            # kernel launch + TP all-reduce per step (80 layers x 2 all-reduces: likely several ms).
-                             #   Not hideable, so added outside the max. No datasheet value: 0 until measured
-  # Approximations (the step time is a lower bound): attention FLOPs, KV-cache writes to HBM, achieved/peak
-  # efficiencies are not modelled (dividing a derived coefficient by an efficiency eta <= 1 scales it up;
-  # calibrate base_s and compute_per_token_s from the step log).
-
+  overhead_s: 0.0327         # t_ov = T1_ref - base_s = 0.050 - 0.017312: kernel launch + TP all-reduce per step, added
+                             #   outside the max. NOT measured: set so a single decoding sequence takes T1 = 50 ms, the
+                             #   midpoint of the 40-60 ms inter-token latency listed for 70B on A100 TP=4 in
+                             #   llm-d-inference-sim docs/latency-profiles.md.
 trace:
-  step_log: false          # true: record (sim_time, n_decode, n_prefill, prefill_tokens, ctx_sum, step_s) per step
+  step_log: false           # true: record (sim_time, n_decode, n_prefill, prefill_tokens, ctx_sum, step_s) per step
 
 router:
   policy: round-robin     # prefix-aware | least-load | round-robin
