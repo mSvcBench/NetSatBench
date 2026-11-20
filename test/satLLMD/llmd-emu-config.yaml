@@ -18,7 +18,7 @@ decode:
   per_token_s: 0.02        # TPOT
   load_factor: 1       # slowdown per other running sequence (placeholder, calibrate)
 router:
-  policy: round-robin    # prefix-aware | least-load | round-robin
+  policy: least-load    # prefix-aware | least-load | round-robin
   prefix_weight: 1.0
   load_weight: 4.0
   refresh_interval_s: 1.0  # period of the worker-load refresh; between refreshes picks increment inflight

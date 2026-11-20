@@ -51,6 +51,18 @@ from llmd_gateway_selector import GatewaySelector  # noqa: E402
 
 DEFAULT_VOCAB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "llmd_emu", "data", "google-10000-english.txt")
 
+_t0_init: Optional[float] = None       # time of the first request of any parallel session
+_t0_init_lock = threading.Lock()
+
+
+def mark_first_request(t0: float) -> float:
+    """Store t0 as t0_init if it is the first request of all sessions; return t0_init."""
+    global _t0_init
+    with _t0_init_lock:
+        if _t0_init is None:
+            _t0_init = t0
+        return _t0_init
+
 
 # ----------------------------
 #   RANDOM VARIABLES
@@ -130,6 +142,7 @@ def run_session(sid: int, args, selector: GatewaySelector, vocab: List[str], rng
             try:
                 gw = pick_gateway(selector, args.access_file, args.gateway_wait)   # selected before every question
                 t0 = time.time()
+                mark_first_request(t0)
                 resp = post_chat(f"http://{gw}:{args.gateway_port}/v1/chat/completions", history, max_tokens, args.timeout)
                 break
             except SessionAbort as e:
@@ -165,7 +178,7 @@ def run_session(sid: int, args, selector: GatewaySelector, vocab: List[str], rng
             summary = " ".join(rng.choices(vocab, k=int(round(summary_len()))))
             history = base_context + [{"role": "system", "content": summary}]
         if out_file:
-            rec = {"session": sid, "turn": turn, "time": t0, "gateway": gw, "question_words": len(question.split()),
+            rec = {"session": sid, "turn": turn, "time": t0 - mark_first_request(t0), "gateway": gw, "question_words": len(question.split()),
                    "max_tokens": max_tokens, "usage": usage, "llmd_emu": emu, "latency_s": latency,
                    "context_tokens": context_len, "summarized": summarized}
             with out_lock:
@@ -211,14 +224,14 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=120.0, help="HTTP timeout per request, s (default 120)")
     ap.add_argument("--retries", type=int, default=3, help="retries of a failed request (default 3)")
     ap.add_argument("--seed", type=int, help="random seed (reproducible sessions)")
-    ap.add_argument("--output", help="append one JSON line per turn to this file")
+    ap.add_argument("--output", help="write one JSON line per turn to this file")
     a = ap.parse_args()
 
     vocab = load_vocabulary(a.vocabulary_file)
     selector = GatewaySelector(a.sat_config)
     print(f"gateways: {selector.gateways}; vocabulary: {len(vocab)} words", flush=True)
 
-    out_file = open(a.output, "a", encoding="utf-8") if a.output else None
+    out_file = open(a.output, "w", encoding="utf-8") if a.output else None
     out_lock = threading.Lock()
     base = random.Random(a.seed)
     system_prompt = " ".join(base.choices(vocab, k=a.system_prompt_length)) if a.system_prompt_length > 0 else ""

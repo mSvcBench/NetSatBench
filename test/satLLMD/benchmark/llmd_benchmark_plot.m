@@ -8,8 +8,8 @@ function T = llmd_benchmark_plot(file, savePrefix)
 %   1. latency (client) and simulated ttft/e2e vs time
 %   2. CDF of ttft, e2e and client latency
 %   3. context length (and summarisation events) per session vs turn
-%   4. prompt tokens: cached vs not cached, and cache hit fraction per turn
-%   5. latency breakdown (queue / prefill / decode) when the gateway reports it
+%   4. prompt tokens: cached vs not cached per turn (first session), and cache hit fraction per request
+%   5. latency breakdown (queue / prefill / decode) per turn (first session) when the gateway reports it
 %   6. requests per gateway and latency per gateway (box plot)
 if nargin < 2, savePrefix = ''; end
 
@@ -80,12 +80,10 @@ if any(~isnan(cachedTok))
     figs(end+1) = figure('Name', 'Prefix cache');
     subplot(2,1,1); hold on; grid on;
     miss = promptTok - cachedTok;
-    mt = unique(turn);  hit = zeros(size(mt)); mis = zeros(size(mt));
-    for k = 1:numel(mt)
-        hit(k) = mean(cachedTok(turn == mt(k)), 'omitnan');  mis(k) = mean(miss(turn == mt(k)), 'omitnan');
-    end
+    m1 = session == sess(1);  [mt, o] = sort(turn(m1));      % session 1 only
+    hit = cachedTok(m1);  hit = hit(o);  mis = miss(m1);  mis = mis(o);
     bar(mt, [hit mis], 'stacked'); legend('cached', 'not cached', 'Location', 'northwest');
-    xlabel('turn'); ylabel('mean prompt tokens'); title('Prompt tokens: cached vs computed');
+    xlabel('turn'); ylabel('prompt tokens'); title(sprintf('Prompt tokens: cached vs computed (session %d)', sess(1)));
     subplot(2,1,2); hold on; grid on;
     frac = cachedTok ./ promptTok;
     plot(t, frac, '.', 'MarkerSize', 10);
@@ -95,13 +93,10 @@ end
 %% ---------- 5. latency breakdown ----------
 if any(~isnan(queue)) && any(~isnan(prefill)) && any(~isnan(decode))
     figs(end+1) = figure('Name', 'Latency breakdown');
-    mt = unique(turn);  B = zeros(numel(mt), 3);
-    for k = 1:numel(mt)
-        m = turn == mt(k);
-        B(k,:) = [mean(queue(m),'omitnan') mean(prefill(m),'omitnan') mean(decode(m),'omitnan')];
-    end
+    m1 = session == sess(1);  [mt, o] = sort(turn(m1));      % session 1 only
+    B = [queue(m1) prefill(m1) decode(m1)];  B = B(o,:);
     bar(mt, B, 'stacked'); grid on; legend('queue', 'prefill', 'decode', 'Location', 'northwest');
-    xlabel('turn'); ylabel('mean seconds'); title('Emulated latency breakdown per turn');
+    xlabel('turn'); ylabel('seconds'); title(sprintf('Emulated latency breakdown per turn (session %d)', sess(1)));
 end
 
 %% ---------- 6. per gateway ----------

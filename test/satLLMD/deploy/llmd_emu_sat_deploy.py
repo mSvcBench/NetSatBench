@@ -172,14 +172,14 @@ def main() -> int:
     if not a.skip_benchmark:
         if not a.dry_run:
             try:
-                subprocess.run(["scp", "-r", os.path.join(SOURCE_DIR, "benchmark"), f"{a.volume_host}:{a.volume_dir}/benchmark"], check=True)
+                subprocess.run(["scp", "-r", os.path.join(SOURCE_DIR, "benchmark"), f"{a.volume_host}:{a.volume_dir}"], check=True)
             except (subprocess.CalledProcessError, OSError) as e:
                 print(f"benchmark copy failed: {e}", file=sys.stderr)
                 return 1
+            r.run(["ssh", a.volume_host,
+                f"cd {a.volume_dir}/benchmark; sudo rm -rf .venv; tar xzf venv.tar.gz; rm venv.tar.gz;"]) 
         else:
             print("+ scp benchmark folder (in test/satLLMD/deploy)")
-        r.run(["ssh", a.volume_host,
-                       f"cd {a.volume_dir}/benchmark; sudo rm -rf .venv; tar -xzf venv.tar.gz; rm venv.tar.gz;"])
           
     # ----- srv6 -----
     if not a.skip_srv6:
