@@ -121,6 +121,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-sc", "--sat-config", required=True, help="satellite cluster description (see llmd-sat-config.yaml)")
     ap.add_argument("-ec", "--emu-config", required=True, help="configuration of llmd_emu (see llmd-emu-config.yaml)")
+    ap.add_argument("-bc", "--benchmark-config", required=True, help="configuration of the benchmark (see benchmark-config.yaml)")
     ap.add_argument("--skip-package", action="store_true", help="do not build/copy the software package")
     ap.add_argument("--skip-srv6", action="store_true", help="do not (re)start the srv6 learning scripts on satellites and users")
     ap.add_argument("--skip-benchmark", action="store_true", help="do not copy the benchmark files")
@@ -163,9 +164,10 @@ def main() -> int:
                f"cd {a.volume_dir}; sudo rm -rf llmd_emu srv6; tar -xf software_package.tar; rm software_package.tar; "
                "tar -xf llmd_emu.tar.gz; rm llmd_emu.tar.gz; tar -xf venv.tar.gz -C llmd_emu; rm venv.tar.gz"])
 
-    # ----- copy the sat and emu config to the volume (always, also with --skip-package) -----
+    # ----- copy the sat, emu and benchmark config to the volume (always, also with --skip-package) -----
     r.run(["scp", a.sat_config, f"{a.volume_host}:{a.volume_dir}/llmd-sat-config.yaml"])
     r.run(["scp", a.emu_config, f"{a.volume_host}:{a.volume_dir}/llmd-emu-config.yaml"])
+    r.run(["scp", a.benchmark_config, f"{a.volume_host}:{a.volume_dir}/benchmark-config.yaml"])
 
     # ----- benchmark -----
         

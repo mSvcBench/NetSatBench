@@ -19,7 +19,7 @@ llm:                       # architecture (informational: the step coefficients 
   n_kv_heads: 8            # GQA
   head_dim: 128
   kv_bytes_per_elem: 2
-  # KV bytes per token k = 2*n_layers*n_kv_heads*head_dim*kv_bytes = 327680 B
+  # KV_bytes_per_token k = 2 (K and V) *n_layers*n_kv_heads*head_dim*kv_bytes = 327680 B
 hardware:                  # per GPU (informational)
   name: A100-80GB-SXM
   hbm_bandwidth_Bps: 2.039e12    # datasheet
@@ -30,13 +30,13 @@ hardware:                  # per GPU (informational)
 worker:                     # one process per pod does prefill + decode (no P/D separation, no KV transfer)
   # replicas: 2               # used only by python -m llmd_emu cluster
   slots: 8                  # concurrent sequences per worker (max-num-seqs)
-  kv_cache_blocks: 28000    # = (0.9*tp*80e9 - 141.2e9) / (block_size*327680 B). 0.9 = vLLM-style memory utilization;
+  kv_cache_blocks: 28000    # = (0.9*tp*hbm_capacity_bytes - W) / (block_size*KV_bytes_per_token). 0.9 = vLLM-style memory utilization;
                             #   upper bound: activations and CUDA graphs are not subtracted
   register_interval_s: 5.0  # heartbeat: re-register with the router this often, so a dropped worker rejoins
 
 step:                      # T_step = max(base_s, compute_per_token_s*(n_d + c)) + per_kv_token_s*sum(L_i)
                            #          + overhead_s
-                           # n_d decoding sequences, c prefill tokens in the step, L_i context of every running sequence
+                           # n_d decoding sequences (1 token each), c prefill tokens in the step, L_i context of every running sequence
   max_batched_tokens: 2048   # token budget per step (decode tokens + prefill chunk). Typical chunked-prefill value,
                              #   a config choice: set it to your engine's. Must be >= worker.slots. null = unlimited
   base_s: 0.017312           # s0 = W/(tp*BW_HBM) = 141.2e9 / (4*2.039e12): streaming the weights once per step
@@ -51,8 +51,9 @@ trace:
   step_log: false           # true: record (sim_time, n_decode, n_prefill, prefill_tokens, ctx_sum, step_s) per step
 
 router:
-  policy: round-robin     # prefix-aware | least-load | round-robin
-  prefix_weight: 1.0
-  load_weight: 4.0
+  policy: prefix-aware     # prefix-aware | least-load | round-robin
+  prefix_weight: 3.0       # score += prefix_weight * cached_blocks / prompt_blocks  (0..1, as llm-d's prefix-cache scorer)
+  load_weight: 2.0         # score -= load_weight * inflight / slots
+  warmup_requests: 32      # prefix-aware: the first N picks go to a random worker (spreads the system prompt); 0 = off
   refresh_interval_s: 1.0  # period of the worker-load refresh; between refreshes picks increment inflight
   max_refresh_failures: 3   # consecutive failed refreshes (e.g. over a lossy ISL path) before a worker is dropped

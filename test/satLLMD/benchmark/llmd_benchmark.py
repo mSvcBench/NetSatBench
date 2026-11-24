@@ -32,7 +32,7 @@ Literature notes (not fitted here, the defaults are modelling choices, tune them
     inter-turn time distribution, and stresses reproducing it.
   - ShareGPT conversations: very skewed prompt lengths (median ~42 tokens, mean ~208), i.e. mean >> median.
 
-usage: llmd_benchmark.py --sat-config llmd-sat-config.yaml [--access-file /tmp/srv6_access.json] [--turns 10] ...
+usage: llmd_benchmark.py [--config benchmark-config.yaml] --sat-config llmd-sat-config.yaml [--access-file /tmp/srv6_access.json] [--turns 10] ...
 """
 import argparse
 import json
@@ -189,12 +189,43 @@ def run_session(sid: int, args, selector: GatewaySelector, vocab: List[str], rng
             time.sleep(think())                                         # user thinking time
 
 
+def load_config(ap: argparse.ArgumentParser, path: str) -> Dict:
+    """Read a yaml of option values (keys = option names without '--'; '-' and '_' both accepted).
+    Null values are skipped (the built-in default is kept). Returns {dest: value} for ap.set_defaults."""
+    import yaml
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    if not isinstance(cfg, dict):
+        ap.error(f"{path}: expected a mapping of option: value")
+    actions = {act.dest: act for act in ap._actions if act.dest not in ("help", "config")}
+    out = {}
+    for key, val in cfg.items():
+        dest = str(key).replace("-", "_")
+        act = actions.get(dest)
+        if act is None:
+            ap.error(f"{path}: unknown option '{key}'")
+        if val is None:
+            continue
+        if act.type is not None:
+            try:
+                val = act.type(val)
+            except (TypeError, ValueError):
+                ap.error(f"{path}: invalid value for '{key}': {val!r}")
+        if act.choices is not None and val not in act.choices:
+            ap.error(f"{path}: '{key}' must be one of {', '.join(map(str, act.choices))}")
+        out[dest] = val
+    return out
+
+
 # ----------------------------
 #   MAIN
 # ----------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--sat-config", required=True, help="llmd sat config yaml (e.g., llmd-sat-config.yaml); Etcd is reached "
+    ap.add_argument("--config", help="benchmark config yaml (e.g., benchmark-config.yaml) with any of the options below "
+                    "(keys = option names without '--'); options given on the command line override the file")
+    ap.add_argument("--sat-config", help="(required, here or in --config) "
+                    "llmd sat config yaml (e.g., llmd-sat-config.yaml); Etcd is reached "
                     "with the ETCD_ENDPOINT/ETCD_USER/ETCD_PASSWORD/ETCD_CA_CERT environment variables")
     ap.add_argument("--access-file", default="/tmp/srv6_access.json", help="file written by usr_srv6_learn.py")
     ap.add_argument("--gateway-port", type=int, default=8000, help="gateway port (default 8000)")
@@ -215,7 +246,7 @@ def main() -> int:
     ap.add_argument("--question-mean", type=float, default=50, help="question length, words (default 50)")
     ap.add_argument("--question-std", type=float, default=50)
     ap.add_argument("--question-dist", choices=dists, default="lognormal")
-    ap.add_argument("--answer-mean", type=float, default=300, help="answer length, tokens requested as max_tokens (default 64)")
+    ap.add_argument("--answer-mean", type=float, default=300, help="answer length, tokens requested as max_tokens (default 300)")
     ap.add_argument("--answer-std", type=float, default=20)
     ap.add_argument("--answer-dist", choices=dists, default="lognormal")
     ap.add_argument("--think-mean", type=float, default=10.0, help="think time between answer and next question, s (default 10)")
@@ -225,7 +256,12 @@ def main() -> int:
     ap.add_argument("--retries", type=int, default=3, help="retries of a failed request (default 3)")
     ap.add_argument("--seed", type=int, help="random seed (reproducible sessions)")
     ap.add_argument("--output", help="write one JSON line per turn to this file")
+    pre, _ = ap.parse_known_args()
+    if pre.config:
+        ap.set_defaults(**load_config(ap, pre.config))        # file values become defaults, the command line wins
     a = ap.parse_args()
+    if not a.sat_config:
+        ap.error("--sat-config is required (on the command line or in --config)")
 
     vocab = load_vocabulary(a.vocabulary_file)
     selector = GatewaySelector(a.sat_config)
@@ -241,6 +277,7 @@ def main() -> int:
         t = threading.Thread(target=run_session, args=(sid, a, selector, vocab, rng, out_lock, out_file, system_prompt))
         threads.append(t)
         t.start()
+        time.sleep(2)  # stagger the sessions a bit so they don't all start at the same time
     try:
         for t in threads:
             t.join()

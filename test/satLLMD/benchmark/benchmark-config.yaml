@@ -1,0 +1,41 @@
+# llmd_benchmark.py configuration:  python3 llmd_benchmark.py --config benchmark-config.yaml [--option value ...]
+# Keys are the command-line option names without "--". Options given on the command line override this file.
+# null = keep the built-in default (or unset, for seed and output).
+# The values below are the built-in defaults.
+
+# --- infrastructure ---
+sat-config: shared/satLLMD/llmd-sat-config.yaml                      # llmd sat config yaml (required, here or on the command line), e.g. ../llmd-sat-config.yaml
+access-file: /tmp/srv6_access.json    # file written by usr_srv6_learn.py
+gateway-port: 8000
+gateway-wait: 30.0                    # max seconds to wait for a gateway
+vocabulary-file: null                 # one word per line; null = ../llmd_emu/data/google-10000-english.txt
+
+# --- context ---
+system-prompt-length: 100             # words of the constant system prompt shared by all sessions; 0 = none
+context-max: 8000                     # tokens; when reached the conversation is replaced by a summary; 0 = never
+summary-mean: 200                     # summary length, words
+summary-std: 50
+summary-dist: lognormal               # lognormal | gamma | normal
+
+# --- sessions ---
+turns: 100                             # questions per session
+parallels: 32                          # parallel independent chat sessions
+
+# --- random variables (dist: lognormal | gamma | normal; std 0 = constant) ---
+question-mean: 50                     # question length, words
+question-std: 50
+question-dist: lognormal
+answer-mean: 300                      # answer length, tokens requested as max_tokens
+answer-std: 300
+answer-dist: lognormal
+think-mean: 10.0                      # think time between answer and next question, s
+think-std: 10.0
+think-dist: lognormal
+
+# --- requests ---
+timeout: 120.0                        # HTTP timeout per request, s
+retries: 3                            # retries of a failed request
+
+# --- run ---
+seed: null                            # random seed (reproducible sessions)
+output: null                          # write one JSON line per turn to this file
