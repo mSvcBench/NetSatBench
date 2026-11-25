@@ -35,7 +35,8 @@ import sys
 import logging
 
 import etcd3
-from scipy.sparse import lil_matrix, csr_matrix
+import numpy as np
+from scipy.sparse import lil_matrix, csr_matrix, diags
 from scipy.sparse.csgraph import dijkstra
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
@@ -131,19 +132,76 @@ def parse_delay(value) -> float:
 # ==========================================
 # ROUTE COMPUTATION LOGIC
 # ==========================================
+def compute_dist_to_targets(
+    A_csr: csr_matrix,
+    target_idxs: List[int],
+    no_forward: np.ndarray,
+) -> Dict[int, np.ndarray]:
+    """
+    Returns {target_idx: dist_vector}, where dist_vector[u] is the cost of the
+    shortest path u -> ... -> target in which every node except the endpoints u
+    and target is a forwarding node (no_forward[x] == False).
+    """
+    n = A_csr.shape[0]
+    target_idxs = sorted(set(target_idxs))
+    if not target_idxs:
+        return {}
+
+    if not no_forward.any():
+        d = dijkstra(A_csr, directed=False, indices=target_idxs)
+        return {t: d[k] for k, t in enumerate(target_idxs)}
+
+    # R = A with the rows of non-forwarding nodes removed. A directed Dijkstra on R
+    # from source x only expands out of forwarding nodes, hence it returns, for each u,
+    # the cost of u -> ... -> x where all nodes but u are forwarding (A is symmetric).
+    R = (diags((~no_forward).astype("float64")) @ A_csr).tocsr()
+    R.eliminate_zeros()
+
+    fwd_targets = [t for t in target_idxs if not no_forward[t]]
+    nf_targets = [t for t in target_idxs if no_forward[t]]
+    nf_neighbors = {t: A_csr.indices[A_csr.indptr[t]:A_csr.indptr[t + 1]] for t in nf_targets}
+
+    sources = set(fwd_targets)
+    for t in nf_targets:
+        sources.update(int(f) for f in nf_neighbors[t] if not no_forward[f])
+    sources = sorted(sources)
+
+    rows: Dict[int, np.ndarray] = {}
+    if sources:
+        d = dijkstra(R, directed=True, indices=sources)
+        rows = {src: d[k] for k, src in enumerate(sources)}
+
+    out: Dict[int, np.ndarray] = {t: rows[t] for t in fwd_targets}
+
+    # Non-forwarding target t: last hop f must be forwarding (or u itself is a neighbor).
+    for t in nf_targets:
+        dt = np.full(n, np.inf)
+        dt[t] = 0.0
+        for f in nf_neighbors[t]:
+            w = A_csr[t, f]
+            if no_forward[f]:
+                dt[f] = min(dt[f], w)
+            else:
+                np.minimum(dt, w + rows[int(f)], out=dt)
+        out[t] = dt
+    return out
+
+
 def pick_primary_secondary_next_hops(
     A_csr: csr_matrix,
-    dist,
+    dist_to_target: np.ndarray,
     src_idx: int,
     target_idx: int,
+    no_forward: np.ndarray,
     previous_next_hops: list[int] | None = None,
 ) -> list[int]:
     """
     Returns [primary_nh] or [primary_nh, secondary_nh].
     Primary = lowest-cost path after applying small anti-flap penalties.
     Secondary = lowest-cost path among those whose first hop != primary.
+    A non-forwarding neighbor is a valid next hop only if it is the target itself.
     """
-    d_st = dist[src_idx, target_idx]
+    d_st = dist_to_target[src_idx]
     if d_st == float("inf") or src_idx == target_idx:
         return []
 
@@ -157,7 +215,9 @@ def pick_primary_secondary_next_hops(
 
     cands = []
     for n in neighbors:
-        d_nt = dist[n, target_idx]
+        if n != target_idx and no_forward[n]:
+            continue
+        d_nt = dist_to_target[n]
         if d_nt == float("inf"):
             continue
         anti_flap_penalty = 0.0
@@ -189,6 +249,7 @@ def compute_routes_single_epoch(
     node_to_route: list,
     node_to_install: list,
     previous_next_hops: Dict[int, Dict[int, list]],
+    no_forward: np.ndarray,
     drain_before_break: bool,
     offset_seconds: int,
     num_nodes: int,
@@ -274,9 +335,14 @@ def compute_routes_single_epoch(
     if no_links_added == 0 and no_links_updated == 0 and no_links_deleted == 0:
         return {}
     
-    # Run Dijkstra (unweighted hop-count)
+    # Run Dijkstra towards the route targets only (non-forwarding nodes cannot be transit)
     A_csr: csr_matrix = A_lil.tocsr()
-    dist, _predecessors = dijkstra(A_csr, directed=False, unweighted=False, return_predecessors=True)
+    A_csr.eliminate_zeros()
+    dist_to = compute_dist_to_targets(
+        A_csr,
+        [node_map[t] for t in node_to_route if t in node_map],
+        no_forward,
+    )
 
     # Build route commands for this epoch
     route_commands: Dict[str, List[str]] = {}   # src_name -> list of cmd strings
@@ -317,9 +383,10 @@ def compute_routes_single_epoch(
             prior_next_hops = previous_next_hops.get(src_idx, {}).get(target_idx, [])
             next_hops = pick_primary_secondary_next_hops(
                 A_csr,
-                dist,
+                dist_to[target_idx],
                 src_idx,
                 target_idx,
+                no_forward,
                 previous_next_hops=prior_next_hops,
             )
             if next_hops == prior_next_hops:
@@ -403,6 +470,7 @@ def compute_routes(
     node_type_to_route: list,
     node_type_to_install: list,
     node_type_to_process: list,
+    node_type_no_forward: set,
     drain_before_break_offset: int,
     link_creation_offset: int,
     ip_version: int,
@@ -420,6 +488,7 @@ def compute_routes(
     log.info(f"     - Node type: {node_type_to_process}")
     log.info(f"     - Node type to route: {node_type_to_route}")
     log.info(f"     - Node type to install: {node_type_to_install}")
+    log.info(f"     - Node type no forward: {node_type_no_forward}")
 
     
     node_map: Dict[str, int] = {} # node_name -> index in adjacency matrix
@@ -430,16 +499,28 @@ def compute_routes(
     # Build node map and filter nodes to route/install based on type
     idx = 0
     for name, node_info in nodes.items():
-        if node_info.get("type") not in node_type_to_process and "any" not in node_type_to_process:
+        ntype = node_info.get("type")
+        if ntype not in node_type_to_process and "any" not in node_type_to_process:
+            continue
+        is_route = ntype in node_type_to_route or "any" in node_type_to_route
+        is_install = ntype in node_type_to_install or "any" in node_type_to_install
+        # A non-forwarding node that is neither a route target nor an install point
+        # can never be source, destination or transit of a computed path: drop it from
+        # the graph so that its link events are ignored (no Dijkstra recomputation).
+        if ntype in node_type_no_forward and not is_route and not is_install:
             continue
         node_map[name] = idx
-        node_type[name] = node_info.get("type", "unknown")
+        node_type[name] = ntype or "unknown"
         idx += 1
-        if node_info.get("type") in node_type_to_route or "any" in node_type_to_route:
+        if is_route:
             node_to_route.append(name)
-        if node_info.get("type") in node_type_to_install or "any" in node_type_to_install:
+        if is_install:
             node_to_install.append(name)
     inv_node_map = {i: name for name, i in node_map.items()} # for reverse lookup of node names by index
+    no_forward = np.array(
+        [node_type[inv_node_map[i]] in node_type_no_forward for i in range(len(node_map))],
+        dtype=bool,
+    )  # non-forwarding nodes can be path endpoints but never transit
 
     # Build IP map from etcd prefix
     found_all_ip = True
@@ -492,6 +573,7 @@ def compute_routes(
                 node_to_route=node_to_route,
                 node_to_install=node_to_install,
                 previous_next_hops=previous_next_hops,
+                no_forward=no_forward,
                 drain_before_break=True,
                 offset_seconds=drain_before_break_offset,
                 num_nodes=num_nodes,
@@ -533,6 +615,7 @@ def compute_routes(
             node_to_route=node_to_route,
             node_to_install=node_to_install,
             previous_next_hops=previous_next_hops,
+            no_forward=no_forward,
             drain_before_break=False,
             offset_seconds=-link_creation_offset,
             num_nodes=num_nodes,
@@ -575,6 +658,7 @@ def compute_routes(
             node_to_route=node_to_route,
             node_to_install=node_to_install,
             previous_next_hops=previous_next_hops,
+            no_forward=no_forward,
             drain_before_break=True,
             offset_seconds=drain_before_break_offset,
             num_nodes=num_nodes,
@@ -716,6 +800,7 @@ def main() -> int:
             node_type_to_route=node_type_to_route_list,
             node_type_to_install=node_type_to_install_list,
             node_type_to_process=node_type_to_process,
+            node_type_no_forward=set(t for t in args.node_type_no_forward.split(",") if t),
             drain_before_break_offset=args.drain_before_break_offset,
             link_creation_offset=args.link_creation_offset,
             ip_version=args.ip_version,
