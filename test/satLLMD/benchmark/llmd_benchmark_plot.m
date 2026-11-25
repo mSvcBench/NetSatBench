@@ -1,4 +1,4 @@
-function T = llmd_benchmark_plot(file, savePrefix, scrapeFile)
+function T = llmd_benchmark_plot(file, savePrefix, scrapeFile, workerNode)
 % LLMD_BENCHMARK_PLOT  Plot the output of llmd_benchmark.py (--output, one JSON object per line) and, optionally,
 % the worker state sampled by scraper.py (--output, one JSON object per scrape).
 %
@@ -6,6 +6,7 @@ function T = llmd_benchmark_plot(file, savePrefix, scrapeFile)
 %   T = llmd_benchmark_plot('bench.jsonl', 'fig/bench')                 % also saves fig/bench_<n>.png
 %   T = llmd_benchmark_plot('bench.jsonl', '', 'scrape.json')           % benchmark + scraper figures
 %   llmd_benchmark_plot('', '', 'scrape.json')                          % scraper figures only
+%   llmd_benchmark_plot('', '', 'scrape.json', 'sat13')                 % figure 11 for worker node sat13
 %
 % Returns a table with one row per request (empty if no benchmark file); column 'kind' is "turn" or "summary"
 % (the client's summary request when the context is full). Figures 1, 2, 6, 7 include every request, figures 3-5b
@@ -23,11 +24,14 @@ function T = llmd_benchmark_plot(file, savePrefix, scrapeFile)
 %      reachable worker processes
 %   9. per worker process vs time (heatmaps, grouped per router): inflight requests and KV cache occupancy
 %  10. per worker process totals (grouped and coloured per router): completed requests, KV hit rate, evictions
+%  11. single worker node (workerNode, default 'sat111'; '' = no figure) vs time, one line per process (= router):
+%      inflight, running prefill / decode, KV occupancy and pinned, KV hit rate, completion rate
 if nargin < 2, savePrefix = ''; end
 if nargin < 3, scrapeFile = ''; end
+if nargin < 4, workerNode = 'sat111'; end
 T = table();  figs = gobjects(0);
 if ~isempty(file), [T, figs] = plot_bench(file); end
-if ~isempty(scrapeFile), figs = [figs, plot_scrape(scrapeFile)]; end
+if ~isempty(scrapeFile), figs = [figs, plot_scrape(scrapeFile, workerNode)]; end
 
 %% ---------- save ----------
 if ~isempty(savePrefix)
@@ -244,8 +248,8 @@ function k = natural_key(s)
 k = string(regexprep(cellstr(s), '(\d+)', '${sprintf(''%09d'', str2double($1))}'));
 end
 
-function figs = plot_scrape(file)
-% Scraper figures 8-10 (see llmd_benchmark_plot). One JSON line per scrape: {"time", "elapsed_s", "workers": [...]},
+function figs = plot_scrape(file, workerNode)
+% Scraper figures 8-11 (see llmd_benchmark_plot). One JSON line per scrape: {"time", "elapsed_s", "workers": [...]},
 % each worker process {"url", "node", "port", "router", "ok", <worker /debug/state> when ok}.
 lines = splitlines(strtrim(fileread(file)));
 lines = lines(~cellfun(@isempty, lines));
@@ -284,7 +288,7 @@ fprintf('scrape: %d samples, %d worker processes, %.1f s, %.1f%% of the samples 
 % group per router, natural order (sat2 < sat51 < sat100)
 lab = wnode + ":" + string(regexprep(cellstr(urls), '.*:(\d+)$', '$1'));
 [~, o] = sort(natural_key(wrouter) + "|" + natural_key(lab));
-urls = urls(o);  lab = lab(o);  wrouter = wrouter(o);  ok = ok(o, :);
+urls = urls(o);  lab = lab(o);  wnode = wnode(o);  wrouter = wrouter(o);  ok = ok(o, :);
 for f = F, V.(f{1}) = V.(f{1})(o, :); end
 rts = unique(wrouter, 'stable');  nr = numel(rts);
 [~, gi] = ismember(wrouter, rts);
@@ -369,6 +373,40 @@ for k = 1:3
     end
 end
 title(tl, sprintf('Per worker process totals over %.0f s, grouped per router (%d completed requests)', ts(end), sum(compl)));
+
+%% ---------- 11. single worker node vs time ----------
+if isempty(workerNode), return; end
+sel = find(wnode == string(workerNode));
+if isempty(sel), warning('worker node %s not found in %s', workerNode, file); return; end
+figs(end+1) = figure('Name', sprintf('Worker %s vs time', workerNode));
+tl = tiledlayout(5, 1, 'TileSpacing', 'compact');
+ax = gobjects(5, 1);
+for k = 1:5, ax(k) = nexttile; hold on; grid on; end
+hl = gobjects(numel(sel), 1);
+for j = 1:numel(sel)
+    i = sel(j);  c = C(gi(i), :);                            % same colour as the router in figure 10
+    nm = sprintf('%s (router %s)', lab(i), wrouter(i));
+    hl(j) = plot(ax(1), ts, V.inflight(i,:), 'Color', c, 'LineWidth', 1.2, 'DisplayName', nm);
+    plot(ax(2), ts, V.running_prefill(i,:), '-',  'Color', c, 'LineWidth', 1.2);
+    plot(ax(2), ts, V.running_decode(i,:),  '--', 'Color', c, 'LineWidth', 1.2);
+    plot(ax(3), ts, V.blocks_used(i,:) ./ V.capacity_blocks(i,:),      '-', 'Color', c, 'LineWidth', 1.2);
+    plot(ax(3), ts, V.kv_pinned_blocks(i,:) ./ V.capacity_blocks(i,:), ':', 'Color', c, 'LineWidth', 1.2);
+    h = movsum(dHit(i,:)', win, 'omitnan');  l = movsum(dLook(i,:)', win, 'omitnan');
+    plot(ax(4), ts, nan_if(h ./ l, l == 0), '-', 'Color', c, 'LineWidth', 1.2);
+    plot(ax(4), ts, V.hit_blocks(i,:) ./ V.lookup_blocks(i,:), '--', 'Color', c);
+    plot(ax(5), ts, movmean(dComp(i,:)' ./ dtComp(i,:)', win, 'omitnan'), '-', 'Color', c, 'LineWidth', 1.2);
+    fprintf('worker %s: %.1f%% of the samples reachable, %d completed requests\n', nm, 100 * mean(ok(i,:)), ...
+            first_ok(V.completed(i,:)) + sum(dComp(i,:), 'omitnan'));
+end
+legend(ax(1), hl, 'Location', 'northwest');
+ylabel(ax(1), 'sequences');  title(ax(1), 'Inflight requests');
+ylabel(ax(2), 'sequences');  title(ax(2), 'Running prefill (solid) / decode (dashed)');
+ylabel(ax(3), 'fraction');   ylim(ax(3), [0 1]);  title(ax(3), 'KV occupancy (solid) / pinned (dotted)');
+ylabel(ax(4), 'fraction');   ylim(ax(4), [0 1]);
+title(ax(4), sprintf('KV hit rate: %d-sample window (solid) / cumulative (dashed)', win));
+ylabel(ax(5), 'requests/s'); title(ax(5), sprintf('Completion rate (%d-sample mean)', win));
+xlabel(tl, 'time from the first scrape (s)');  linkaxes(ax, 'x');  xlim(ax(1), [0 ts(end)]);
+title(tl, sprintf('Worker %s, one line per process (gaps = unreachable)', workerNode));
 end
 
 function [d, dt] = counter_inc(X, ts)

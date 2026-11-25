@@ -566,6 +566,7 @@ The first epoch file should contain <u>all initial link definitions</u> required
   "links-add": [ ... ],
   "links-update": [ ... ],
   "links-del": [ ... ],
+  "metadata-update": { ... },
   "run": { ... }
 }
 ```
@@ -738,6 +739,28 @@ Any additional fields (e.g., `rate`, `loss`, `delay`, `limit`) may be present bu
 
 ---
 
+### `metadata-update`
+
+* **Type**: object
+* **Requirement**: optional
+* **Description**: Changes to the `metadata` of nodes at the epoch time. Each update is deep-merged into the `metadata` object of the node configuration stored in Etcd (`/config/nodes/<node-name>`): nested objects are merged, other values are replaced, and keys not present in the update keep their previous value. Applications running in the nodes can read the current value from Etcd. Updates are applied after the link changes and before the `run` commands of the same epoch.
+
+Structure:
+
+```json
+"metadata-update": {
+  "sat9": { "sunlit": true },
+  "grd1": { "sunlit": false }
+}
+```
+
+* **Key** `<node-name>`: must match a node defined in `sat-config.json` (unknown nodes are skipped with a warning).
+* **Value**: object merged into the node `metadata`.
+
+The StarPerf exporter (`NetSatBenchExport.py`) uses this field for `sunlit`, the per-node line of sight to the Sun (satellites: not in the Earth's shadow; ground stations and users: Sun above the horizon). The first epoch carries the value of every node; later epochs carry only the nodes whose value changed.
+
+---
+
 ### `run`
 
 * **Type**: object
@@ -777,4 +800,4 @@ Per-entry:
 ## Cross-File Consistency Requirements
 
 * Worker names referenced in `sat-config.json` must exist in `worker-config.json`.
-* All node names referenced in epoch files (`endpoint1`, `endpoint2`, and `run` keys) must correspond to nodes defined in `sat-config.json`.
+* All node names referenced in epoch files (`endpoint1`, `endpoint2`, `metadata-update` and `run` keys) must correspond to nodes defined in `sat-config.json`.

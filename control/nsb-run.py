@@ -253,6 +253,14 @@ def start_queue_watcher(path: Path) -> Observer:
 # ==========================================
 # CORE LOGIC
 # ==========================================
+def deep_merge_dict(base: Dict, override: Dict) -> Dict:
+    """Recursively merge override into a copy of base (nested dicts merged, other values replaced)."""
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = deep_merge_dict(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
 def process_epoch_from_queue(json_path: str) -> None:
     """
     Reads an epoch file and applies updates into etcd.
@@ -265,6 +273,7 @@ def process_epoch_from_queue(json_path: str) -> None:
         "links-add",
         "links-del",
         "links-update",
+        "metadata-update",
         "run"
     ]
 
@@ -361,6 +370,26 @@ def process_epoch_from_queue(json_path: str) -> None:
         )
         etcd_client.put(f"/config/run/{node}", json.dumps(cmds))
 
+    def apply_metadata_update(node_and_meta: Tuple[str, Dict]) -> None:
+        # Merge the update into the "metadata" of /config/nodes/<node>. Compare-and-swap, so that a concurrent
+        # writer of the same key (e.g. the sat-agent registering its eth0_ip) is never overwritten.
+        node, meta = node_and_meta
+        if not isinstance(meta, dict):
+            log.warning(f"⚠️  [{os.path.basename(json_path)}] metadata-update for {node} is not an object. Skipping.")
+            return
+        key = f"/config/nodes/{node}"
+        for _ in range(10):
+            old, _ = etcd_client.get(key)
+            if not old:
+                log.warning(f"⚠️  [{os.path.basename(json_path)}] Node {node} not found in Etcd. Skipping metadata-update.")
+                return
+            cfg = json.loads(old.decode("utf-8"))
+            cfg["metadata"] = deep_merge_dict(cfg.get("metadata") or {}, meta)
+            if etcd_client.replace(key, old, json.dumps(cfg)):
+                log.debug(f"🏷️  [{os.path.basename(json_path)}] Syncing metadata-update of {node}: {meta}")
+                return
+        log.warning(f"⚠️  [{os.path.basename(json_path)}] metadata-update of {node} failed: {key} kept changing.")
+
     def execute_items(items: List, fn) -> None:
         if not items:
             return
@@ -373,11 +402,11 @@ def process_epoch_from_queue(json_path: str) -> None:
             for fut in concurrent.futures.as_completed(futures):
                 fut.result()
 
+    # Execute actiones in the order: add, delete, update, metadata-update, run
     execute_items(add, apply_link_add)
     execute_items(delete, apply_link_delete)
     execute_items(update, apply_link_update)
-
-    # D. Push Runtime Commands
+    execute_items(list(epoch_dict.get("metadata-update", {}).items()), apply_metadata_update)
     execute_items(list(epoch_dict.get("run", {}).items()), apply_run_cmd)
 
     log.info(f"✅ [{os.path.basename(json_path)}] Epoch applied successfully.")
