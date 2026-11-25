@@ -29,10 +29,13 @@ hardware:                  # per GPU (informational)
 
 worker:                     # one process per pod does prefill + decode (no P/D separation, no KV transfer)
   # replicas: 2               # used only by python -m llmd_emu cluster
-  slots: 8                  # concurrent sequences per worker (max-num-seqs)
+  slots: 43                 # concurrent sequences per worker (max-num-seqs) = floor(kv_cache_blocks*block_size /
+                            #   max_model_len): 43 max-length sequences always fit in the KV pool
   kv_cache_blocks: 28000    # = (0.9*tp*hbm_capacity_bytes - W) / (block_size*KV_bytes_per_token). 0.9 = vLLM-style memory utilization;
                             #   upper bound: activations and CUDA graphs are not subtracted
   register_interval_s: 5.0  # heartbeat: re-register with the router this often, so a dropped worker rejoins
+  max_model_len: 10240      # vLLM --max-model-len: benchmark context-max 8192 + room for question and answer.
+                            #   prompt + max_tokens above it -> HTTP 400; keep benchmark-config max-model-len equal
 
 step:                      # T_step = max(base_s, compute_per_token_s*(n_d + c)) + per_kv_token_s*sum(L_i)
                            #          + overhead_s

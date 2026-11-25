@@ -7,7 +7,9 @@ function T = llmd_benchmark_plot(file, savePrefix, scrapeFile)
 %   T = llmd_benchmark_plot('bench.jsonl', '', 'scrape.json')           % benchmark + scraper figures
 %   llmd_benchmark_plot('', '', 'scrape.json')                          % scraper figures only
 %
-% Returns a table with one row per turn (empty if no benchmark file). Benchmark figures:
+% Returns a table with one row per request (empty if no benchmark file); column 'kind' is "turn" or "summary"
+% (the client's summary request when the context is full). Figures 1, 2, 6, 7 include every request, figures 3-5b
+% only the turns. Benchmark figures:
 %   1. latency (client) and simulated ttft/e2e vs time
 %   2. CDF of ttft, e2e and client latency
 %   3. context length (and summarisation events) per session vs turn
@@ -49,9 +51,10 @@ g = @(s, f, d) getfield_or(s, f, d);
 session = zeros(n,1); turn = zeros(n,1); t = zeros(n,1); latency = zeros(n,1);
 ctx = zeros(n,1); summarized = false(n,1); promptTok = nan(n,1); cachedTok = nan(n,1);
 outTok = nan(n,1); ttft = nan(n,1); e2e = nan(n,1); queue = nan(n,1); prefill = nan(n,1);
-decode = nan(n,1); gateway = strings(n,1); pod = strings(n,1); router = strings(n,1);
+decode = nan(n,1); gateway = strings(n,1); pod = strings(n,1); router = strings(n,1); kind = strings(n,1);
 for i = 1:n
     r = jsondecode(lines{i});
+    kind(i) = string(g(r, 'kind', 'turn'));
     session(i) = r.session;  turn(i) = r.turn;  t(i) = r.time;  latency(i) = r.latency_s;
     ctx(i) = r.context_tokens;  summarized(i) = logical(r.summarized);  gateway(i) = string(r.gateway);
     u = g(r, 'usage', struct());  e = g(r, 'llmd_emu', struct());
@@ -62,11 +65,13 @@ for i = 1:n
     pod(i) = string(r.llmd_emu.pod); router(i) = string(r.llmd_emu.router);
 end
 t = t - min(t);                                    % seconds from the first request
-T = table(session, turn, t, gateway, router, pod, latency, ttft, e2e, queue, prefill, decode, ...
+isTurn = kind ~= "summary";                        % figures 3-5b: conversation turns only
+T = table(kind, session, turn, t, gateway, router, pod, latency, ttft, e2e, queue, prefill, decode, ...
           promptTok, cachedTok, outTok, ctx, summarized, ...
-          'VariableNames', {'session','turn','time_s','gateway','router','pod','latency_s','ttft_s','e2e_s','queue_s', ...
+          'VariableNames', {'kind','session','turn','time_s','gateway','router','pod','latency_s','ttft_s','e2e_s','queue_s', ...
           'prefill_s','decode_s','prompt_tokens','cached_tokens','completion_tokens','context_tokens','summarized'});
-fprintf('%d requests, %d sessions, %d gateways, %.1f s\n', n, numel(unique(session)), numel(unique(gateway)), max(t));
+fprintf('%d requests (%d summaries), %d sessions, %d gateways, %.1f s\n', n, sum(~isTurn), numel(unique(session)), ...
+        numel(unique(gateway)), max(t));
 fprintf('latency  mean %.3f  p50 %.3f  p95 %.3f  p99 %.3f s\n', mean(latency), prctile(latency,[50 95 99]));
 if any(~isnan(ttft)), fprintf('ttft     mean %.3f  p50 %.3f  p95 %.3f s\n', mean(ttft,'omitnan'), prctile(ttft,[50 95])); end
 
@@ -93,7 +98,7 @@ xlabel('seconds'); ylabel('CDF'); title('Latency distribution'); legend('Locatio
 %% ---------- 3. context length per session ----------
 figs(end+1) = figure('Name', 'Context length'); hold on; grid on;
 for k = 1:numel(sess)
-    m = session == sess(k);  [~, o] = sort(turn(m));
+    m = session == sess(k) & isTurn;  [~, o] = sort(turn(m));
     tt = turn(m);  cc = ctx(m);  tt = tt(o);  cc = cc(o);
     plot(tt, cc, '-', 'Color', cols(k,:), 'LineWidth', 1);
 end
@@ -108,7 +113,7 @@ if any(~isnan(cachedTok))
     nr = 2 + hasItl;                                           % 3rd row: TTFT vs inter-token time
     subplot(nr,1,1); hold on; grid on;
     miss = promptTok - cachedTok;
-    m1 = session == sess(1);  [mt, o] = sort(turn(m1));      % session 1 only
+    m1 = session == sess(1) & isTurn;  [mt, o] = sort(turn(m1));   % session 1 only, turns only
     hit = cachedTok(m1);  hit = hit(o);  mis = miss(m1);  mis = mis(o);
     mp = pod(m1);  mp = mp(o);
     mg = gateway(m1);  mg = mg(o);
@@ -137,7 +142,7 @@ end
 %% ---------- 5. latency breakdown ----------
 if any(~isnan(queue)) && any(~isnan(prefill)) && any(~isnan(decode))
     figs(end+1) = figure('Name', 'Latency breakdown');
-    m1 = session == sess(1);  [mt, o] = sort(turn(m1));      % session 1 only
+    m1 = session == sess(1) & isTurn;  [mt, o] = sort(turn(m1));   % session 1 only, turns only
     B = [queue(m1) prefill(m1) decode(m1)];  B = B(o,:);
     mp = pod(m1);  mp = mp(o);  mg = gateway(m1);  mg = mg(o);
     chg  = find(mp(2:end) ~= mp(1:end-1)) + 1;                 % pod changes w.r.t. the previous turn
@@ -154,7 +159,7 @@ end
 %% ---------- 5b. TTFT vs inter-token time (own figure only if there is no prefix-cache figure) ----------
 if hasItl && ~any(~isnan(cachedTok))
     figs(end+1) = figure('Name', 'TTFT vs ITL');
-    m1 = session == sess(1);  [mt, o] = sort(turn(m1));      % session 1 only
+    m1 = session == sess(1) & isTurn;  [mt, o] = sort(turn(m1));   % session 1 only, turns only
     mp = pod(m1);  mp = mp(o);  mg = gateway(m1);  mg = mg(o);
     chg  = find(mp(2:end) ~= mp(1:end-1)) + 1;                 % pod changes w.r.t. the previous turn
     chgG = find(mg(2:end) ~= mg(1:end-1)) + 1;                 % gateway changes w.r.t. the previous turn

@@ -12,13 +12,13 @@ vocabulary-file: null                 # one word per line; null = ../llmd_emu/da
 
 # --- context ---
 system-prompt-length: 100             # words of the constant system prompt shared by all sessions; 0 = none
-context-max: 8000                     # tokens; when reached the conversation is replaced by a summary; 0 = never
-summary-mean: 200                     # summary length, words
-summary-std: 50
+context-max: 8192                     # tokens; when reached the conversation is replaced by a summary; 0 = never
+summary-mean: 1000                    # summary length, tokens requested as max_tokens of the summary request
+summary-std: 300                      #   (~12% of context-max; the summary request runs during the think time)
 summary-dist: lognormal               # lognormal | gamma | normal
 
 # --- sessions ---
-turns: 100                             # questions per session
+turns: 50                             # questions per session
 parallels: 32                          # parallel independent chat sessions
 
 # --- random variables (dist: lognormal | gamma | normal; std 0 = constant) ---
@@ -28,6 +28,8 @@ question-dist: lognormal
 answer-mean: 300                      # answer length, tokens requested as max_tokens
 answer-std: 300
 answer-dist: lognormal
+max-model-len: 10240                  # = worker.max_model_len of llmd-emu-config.yaml: max_tokens is capped at
+                                      #   max-model-len - prompt tokens (a 400 would end the session); 0 = no cap
 think-mean: 10.0                      # think time between answer and next question, s
 think-std: 10.0
 think-dist: lognormal
