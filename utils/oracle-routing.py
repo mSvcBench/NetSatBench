@@ -702,7 +702,7 @@ def main() -> int:
     parser.add_argument("--node-type-to-route", default="", help="Comma-separated node types to route to (default: --node-type). Matches against node 'type' in config. Use 'any' to route to all nodes.")
     parser.add_argument("--node-type-to-install", default="", help="Comma-separated node types to install routes on (default: --node-type). Matches against node 'type' in config. Use 'any' to install on all nodes.")
     parser.add_argument("--node-type", default="any", help="Comma-separated node types to include in the Dijkstra graph (default: any). Matches against node 'type' in config. Use 'any' to install on all nodes.")
-    parser.add_argument("--node-type-no-forward", default="user", help="Comma-separated node types to treat as hosts not suporting IP forwarding (default: user). Matches against node 'type' in config.")
+    parser.add_argument("--node-type-no-forward", default="user", help="Comma-separated node types to treat as hosts not supporting IP forwarding (default: user): they can be path endpoints but never transit hops; if neither routed to nor installed on, they are removed from the graph. Matches against node 'type' in config.")
     parser.add_argument("--drain-before-break-offset", type=int, default=0, help="Seconds offset for drain-before-break epoch. If 0, no separate drain-before-break epoch is emitted.")
     parser.add_argument("--link-creation-offset", type=int, default=1, help="Seconds offset for route replacement after link creation. Default: 1 second after link creation.")
     parser.add_argument("--redundancy", action="store_true", help="Whether to compute secondary next hops for redundancy (default: False).")
