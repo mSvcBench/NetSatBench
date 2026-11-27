@@ -132,6 +132,7 @@ def recreate_and_run_container(
     etcd_password: str = None,
     etcd_ca_cert: str = None,
     extra_env: dict = None,
+    volume: str = None,
 ) -> None:
 
     try:
@@ -188,7 +189,9 @@ def recreate_and_run_container(
              run_cmd.extend(["--cpus", str(cpu_limit)])
         if mem_limit != "0MiB":
              run_cmd.extend(["--memory", str(mem_limit)])
-        run_cmd.append(container_image) 
+        if volume:
+             run_cmd.extend(["--volume", str(volume)])  # <host-path>:<container-path>
+        run_cmd.append(container_image)
 
         run_ssh(
             ssh_username=ssh_username,
@@ -291,6 +294,7 @@ def create_one_node(
             cpu_limit=cpu_limit,
             mem_limit=mem_limit,
             extra_env=extra_env,
+            volume=node.get('volume'),
             etcd_host=etcd_host,
             etcd_port=etcd_port,
             etcd_user=etcd_user,

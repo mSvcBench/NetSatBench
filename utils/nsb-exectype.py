@@ -6,13 +6,15 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Tuple
 
 import etcd3
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger("nsb-exectype")
+SUMMARY_LINES = 10   # lines of nested nsb-exec output repeated for each failed node in the final report
 
 
 def get_nodes_by_type(etcd_client, wanted_type: str) -> List[str]:
@@ -63,12 +65,25 @@ def build_nsb_exec_cmd(args, node: str) -> List[str]:
     return cmd
 
 
-def exec_on_node(args, node: str) -> int:
+print_lock = threading.Lock()
+
+
+def exec_on_node(args, node: str) -> Tuple[int, List[str]]:
+    """Run nsb-exec for one node. Its output (stdout+stderr, including its log.error lines) is shown live,
+    prefixed with the node name, and returned so that failures can be summarized at the end."""
     cmd = build_nsb_exec_cmd(args, node)
-    rc = subprocess.run(cmd).returncode
+    lines: List[str] = []
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        line = line.rstrip("\n")
+        lines.append(line)
+        with print_lock:
+            print(f"[{node}] {line}", flush=True)
+    rc = proc.wait()
     if rc != 0:
         log.error(f"❌ Command failed on node '{node}' (exit={rc})")
-    return rc
+    return rc, lines
 
 
 def main() -> int:
@@ -138,6 +153,7 @@ def main() -> int:
     worker_count = min(args.threads, len(nodes))
     log.info(f"▶️ Executing with {worker_count} thread(s)...")
 
+    failures: Dict[str, Tuple[int, List[str]]] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
             executor.submit(exec_on_node, args, node): node
@@ -146,13 +162,22 @@ def main() -> int:
         for fut in concurrent.futures.as_completed(futures):
             node = futures[fut]
             try:
-                rc = fut.result()
+                rc, lines = fut.result()
             except Exception as e:
+                failures[node] = (1, [str(e)])
                 log.error(f"❌ Command failed on node '{node}': {e}")
-                return 1
+                continue
             if rc != 0:
-                return rc
+                failures[node] = (rc, lines)
 
+    if failures:
+        log.error(f"❌ Command failed on {len(failures)}/{len(nodes)} node(s):")
+        for node in sorted(failures):
+            rc, lines = failures[node]
+            log.error(f"   {node} (exit={rc})")
+            for line in lines[-SUMMARY_LINES:]:          # last lines of the nested nsb-exec output
+                log.error(f"      {line}")
+        return next(rc for rc, _ in (failures[n] for n in sorted(failures)))
     return 0
 
 

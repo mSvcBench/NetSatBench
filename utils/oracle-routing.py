@@ -104,24 +104,27 @@ def parse_millisecond_offset(value: str) -> float:
         raise argparse.ArgumentTypeError("offset must use millisecond precision")
     return offset
 
-def join_route_commands_with_sleep(
+def split_route_commands_with_sleep(
     commands: List[str],
-    max_routes_per_epoch: int,
+    max_routes_per_command: int,
     sleep_seconds: int,
-) -> str:
+) -> List[str]:
+    """
+    Returns a list of "run" entries (each executed by its own `bash -c`, sequentially),
+    so no single command string grows beyond max_routes_per_command routes.
+    A separate "sleep N" entry is inserted between batches if sleep_seconds > 0.
+    """
     if not commands:
-        return ""
-    if max_routes_per_epoch <= 0 or sleep_seconds <= 0:
-        return "; ".join(commands)
+        return []
+    if max_routes_per_command <= 0:
+        return ["; ".join(commands)]
 
-    output_cmds: List[str] = []
-    for idx, cmd in enumerate(commands):
-        output_cmds.append(cmd)
-        reached_batch_end = (idx + 1) % max_routes_per_epoch == 0
-        is_last_cmd = idx == len(commands) - 1
-        if reached_batch_end and not is_last_cmd:
-            output_cmds.append(f"sleep {sleep_seconds}")
-    return "; ".join(output_cmds)
+    entries: List[str] = []
+    for start in range(0, len(commands), max_routes_per_command):
+        if start > 0 and sleep_seconds > 0:
+            entries.append(f"sleep {sleep_seconds}")
+        entries.append("; ".join(commands[start:start + max_routes_per_command]))
+    return entries
 
 def parse_delay(value) -> float:
     if not value: return 0.0
@@ -210,7 +213,7 @@ def compute_routes_single_epoch(
     ip_version: int,
     redundancy: bool,
     routing_metric: str,
-    max_routes_per_epoch: int,
+    max_routes_per_command: int,
     sleep_seconds: int,
     route_change_count_by_node: Dict[str, int] | None = None,
 ) -> dict:
@@ -396,13 +399,13 @@ def compute_routes_single_epoch(
         new_epoch_data["time"] = format_epoch_time(t_new)
         new_epoch_data["run"] = {}
         for src_name, commands in route_commands.items():
-            combined_cmd = join_route_commands_with_sleep(
+            entries = split_route_commands_with_sleep(
                 commands=commands,
-                max_routes_per_epoch=max_routes_per_epoch,
+                max_routes_per_command=max_routes_per_command,
                 sleep_seconds=sleep_seconds,
             )
-            if combined_cmd:
-                new_epoch_data["run"][src_name] = [combined_cmd]
+            if entries:
+                new_epoch_data["run"][src_name] = entries
     except ValueError as ve:
         log.warning(f"\t ⚠️ Error parsing time '{new_epoch_data['time']}': {ve}")
 
@@ -422,7 +425,7 @@ def compute_routes(
     etcd_etchosts_prefix: str,
     redundancy: bool,
     routing_metric: str,
-    max_routes_per_epoch: int,
+    max_routes_per_command: int,
     route_batch_sleep_seconds: int,
     report_path: str | None = None,
 ) -> None:
@@ -513,7 +516,7 @@ def compute_routes(
                 ip_version=ip_version,
                 redundancy=redundancy,
                 routing_metric=routing_metric,
-                max_routes_per_epoch=max_routes_per_epoch,
+                max_routes_per_command=max_routes_per_command,
                 sleep_seconds=route_batch_sleep_seconds,
             )
             if dbb_epoch_data.get("run", {}) != {}:
@@ -554,7 +557,7 @@ def compute_routes(
             ip_version=ip_version,
             redundancy = redundancy,
             routing_metric=routing_metric,
-            max_routes_per_epoch=max_routes_per_epoch,
+            max_routes_per_command=max_routes_per_command,
             sleep_seconds=route_batch_sleep_seconds,
             route_change_count_by_node=epoch_route_changes,
         )
@@ -596,7 +599,7 @@ def compute_routes(
             ip_version=ip_version,
             redundancy = redundancy,
             routing_metric=routing_metric,
-            max_routes_per_epoch=max_routes_per_epoch,
+            max_routes_per_command=max_routes_per_command,
             sleep_seconds=route_batch_sleep_seconds,
         )
         if dbb_epoch_data0.get("run", {}) != {}:
@@ -637,8 +640,8 @@ def main() -> int:
     parser.add_argument("--redundancy", action="store_true", help="Whether to compute secondary next hops for redundancy (default: False).")
     parser.add_argument("--ip-version", type=int, choices=[4, 6], default=4, help="Generate IPv4 or IPv6 route commands. Default: 4 (IPv4).")
     parser.add_argument("--routing-metrics", choices=["hops","delay"], default="hops", help="Whether to use hop count or delay as routing metric (default: hops)")
-    parser.add_argument("--max-routes-per-epoch", type=int, default=50, help="Maximum number of route commands before inserting a sleep in the combined command string. If <=0, no sleeps are inserted. Default: 50.")
-    parser.add_argument("--route-batch-sleep-seconds", type=int, default=1, help="Seconds to sleep between route batches inside a single command string. Default: 1.")
+    parser.add_argument("--max-routes-per-command", "--max-routes-per-epoch", dest="max_routes_per_command", type=int, default=50, help="Maximum number of route commands per run entry; a sleep entry is inserted between entries. If <=0, all routes go in a single entry with no sleeps. Default: 50.")
+    parser.add_argument("--route-batch-sleep-seconds", type=int, default=1, help="Seconds to sleep between route batches (separate run entries). Default: 1.")
     parser.add_argument("--link-delay-quantum-ms", type=int, default=5, help="Delay quantum for delay-based routing metric. Costs are rounded up to the nearest multiple of this value. Default: 5ms.")
 
     parser.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
@@ -735,7 +738,7 @@ def main() -> int:
             etcd_etchosts_prefix="/config/etchosts/" if args.ip_version == 4 else "/config/etchosts6/",
             redundancy=args.redundancy,
             routing_metric=args.routing_metrics if args.routing_metrics else "hops",
-            max_routes_per_epoch=args.max_routes_per_epoch,
+            max_routes_per_command=args.max_routes_per_command,
             route_batch_sleep_seconds=args.route_batch_sleep_seconds,
             report_path=report_path if args.report else None,
         )

@@ -217,9 +217,17 @@ It is intended to be executed from the control host when a node container must b
 - resolves the assigned worker from `/config/workers/<worker>`
 - connects to the worker via SSH
 - removes the existing container if present
-- starts a fresh container with the same image, network, and resource settings
+- starts a fresh container with the same image, network, resource settings, and bind-mount `volume` (if configured for the node)
 
-The `--node` option accepts a comma-separated list, so multiple nodes can be restarted in one invocation.
+By default the container is removed and recreated, so any data stored in its filesystem (outside of a bind-mounted `volume`) is lost, and image, CPU, and memory changes made in Etcd are applied. With `--soft`, the existing container is instead restarted in place with `docker restart`: its filesystem and volumes are preserved, but changes to image, CPU, or memory settings are **not** applied, and the image is not pulled again. If the container does not exist, `--soft` falls back to creating it.
+
+The nodes to restart are selected with exactly one of the following (mutually exclusive) options:
+
+- `--node <list>`: comma-separated list of node names, so multiple nodes can be restarted in one invocation
+- `--all`: restart all nodes defined in `/config/nodes/`
+- `--node-type <type>`: restart all nodes of a given type (e.g. `satellite`, `user`, `gateway`; case-insensitive, `any` matches all nodes)
+
+Nodes are restarted in parallel, one thread per node by default. Use `-t`/`--threads <n>` to limit the number of simultaneous restarts (useful with `--all` on large emulations).
 
 ### Usage <!-- omit in toc -->
 ```bash
@@ -228,6 +236,18 @@ python3 nsb.py node-restart --node sat1
 
 ```bash
 python3 nsb.py node-restart --node sat1,sat2,usr1
+```
+
+```bash
+python3 nsb.py node-restart --all -t 10
+```
+
+```bash
+python3 nsb.py node-restart --node-type user
+```
+
+```bash
+python3 nsb.py node-restart --node sat1 --soft
 ```
 
 Run with `--help` to see the full list of available options.
@@ -257,11 +277,24 @@ The script can be configured to use a fixed wait time between epochs instead of 
 
 The script can be configured to work in an *interactive-mode* (`--interactive`), where it process only epoch file injected manually by the user in the epoch-queue directory instead of reading from a predefined epoch directory. In this case the script does not perform any time synchronization, simply processing each injected epoch file as soon as it appears in the queue directory. This mode is useful for **digital twin** scenarios where the user update satellite system state at runtime.
 
+Before starting the queue watcher, `--queue-policy` controls leftover entries:
+`ask` (default) prompts on a terminal; `clear` deletes existing files and symlinks;
+`keep` leaves them in place; and `abort` refuses to start with a non-empty queue.
+Without a terminal, `ask` returns an error for a non-empty queue instead of
+blocking an automated run. Choose a policy explicitly for unattended replay.
+Cleanup does not follow symlinks or recursively remove directories.
+
 ### Usage <!-- omit in toc --><!-- omit in toc -->
 Example invocation:
 ```bash
 python3 nsb.py run
 ```
+For an automated run that must reject leftover queue entries:
+
+```bash
+python3 nsb.py run --queue-policy abort
+```
+
 Run with `--help` to see the full list of available options.
 
 ## ION-DTN preparation

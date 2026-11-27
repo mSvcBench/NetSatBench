@@ -597,6 +597,42 @@ def run_all_epochs(
 # ==========================================
 # MAIN
 # ==========================================
+def prepare_epoch_queue(queue_dir: Path, policy: str) -> bool:
+    """Resolve leftover queue entries before starting the watcher."""
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    entries = list(queue_dir.iterdir())
+    if not entries:
+        log.info(f"📂 Epoch queue directory is empty: {queue_dir}.")
+        return True
+
+    log.warning(f"⚠️ Epoch queue directory is not empty: {queue_dir}.")
+    if policy == "ask":
+        if not sys.stdin.isatty():
+            log.error("❌ Non-interactive replay requires --queue-policy clear, keep, or abort for a non-empty queue.")
+            return False
+        try:
+            response = input("Clear the epoch-queue directory before starting? (y/N): ").strip().lower()
+        except EOFError:
+            log.error("❌ No queue policy supplied; leaving existing entries unchanged.")
+            return False
+        policy = "clear" if response == "y" else "keep"
+    if policy == "abort":
+        log.error("❌ Refusing to replay with existing epoch-queue entries.")
+        return False
+    if policy == "clear":
+        try:
+            for entry in entries:
+                if entry.is_file() or entry.is_symlink():
+                    entry.unlink()
+                    log.info(f"🗑️ Removed existing queue entry: {entry}")
+        except OSError as exc:
+            log.error(f"❌ Failed to clear epoch queue: {exc}")
+            return False
+    else:
+        log.info("ℹ️ Proceeding without clearing the epoch-queue directory.")
+    return True
+
+
 def main() -> int:
     global etcd_client, PARALLEL_WORKERS
 
@@ -676,6 +712,12 @@ def main() -> int:
         help="Resume the emulation process.",
     )
     parser.add_argument(
+        "--queue-policy",
+        choices=("ask", "clear", "keep", "abort"),
+        default="ask",
+        help="Handle leftover epoch-queue entries before replay (default: ask on a terminal; fail without one).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (default: INFO)",
@@ -723,8 +765,8 @@ def main() -> int:
     )
 
     # Prelimiary check nodes exists. Any /config/nodes/* key is a json file that should contain the key "eth0_ip"" 
-    nodes = etcd_client.get_prefix("/config/nodes/")
-    if not any(nodes):
+    nodes = list(etcd_client.get_prefix("/config/nodes/"))
+    if not nodes:
         log.error("❌ No nodes found in Etcd under /config/nodes/. Ensure satellite system is running and configured correctly.")
         return 1
     for value, metadata in nodes:
@@ -745,7 +787,8 @@ def main() -> int:
         file_pattern = file_pattern or file_pattern_etcd
 
     epoch_queue_dir = os.path.join(epoch_dir, "epoch-queue")
-    os.makedirs(epoch_queue_dir, exist_ok=True)
+    if not prepare_epoch_queue(Path(epoch_queue_dir), args.queue_policy):
+        return 1
 
     # Start watcher
     queue_observer = start_queue_watcher(Path(epoch_queue_dir))

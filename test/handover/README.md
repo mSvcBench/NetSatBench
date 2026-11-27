@@ -308,7 +308,7 @@ mv $TARGET_DIR/iperf3_grd5.csv $TARGET_DIR/iperf3_usr2_grd5_bbr.csv
 mv $TARGET_DIR/iperf3_grd5.csv $TARGET_DIR/iperf3_usr1_grd5_bbr.csv
 ```
 
-## 8. Visualize constellation in MATLABg}
+## 8. Visualize constellation in MATLAB}
 
 Open Matlab and move in the directory `generators/StarPerf_Simulator/kits/NetSatBench` then run the following command to visualize the constellation and the users:
 

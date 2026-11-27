@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import sys
 import subprocess
 import etcd3
@@ -161,7 +162,12 @@ def main():
         docker_cmd += ["-it"]
     if args.detached:
         docker_cmd += ["-d"]
-    docker_cmd += [args.node] + args.command
+    command = args.command
+    if len(command) == 1:
+        # Single string (e.g. "a; b; c"): run it through a shell *inside* the container,
+        # otherwise the remote host's shell would split it at ';' / '&&' / '|'.
+        command = ["bash", "-c", command[0]]
+    docker_cmd += [args.node] + command
 
     # ssh options:
     # -i: key
@@ -169,7 +175,9 @@ def main():
     ssh_cmd = ["ssh", "-i", ssh_key]
     if args.interactive:
         ssh_cmd += ["-tt"]
-    ssh_cmd += [f"{ssh_user}@{worker_ip}"] + docker_cmd
+    # ssh concatenates its args and passes them to the remote shell: quote each one
+    # so the command reaches docker exec unchanged.
+    ssh_cmd += [f"{ssh_user}@{worker_ip}", shlex.join(docker_cmd)]
 
     # ==========================================
     # EXECUTE

@@ -61,7 +61,7 @@ class OracleRoutingSubsecondTests(unittest.TestCase):
             ip_version=4,
             redundancy=False,
             routing_metric="hops",
-            max_routes_per_epoch=50,
+            max_routes_per_command=50,
             sleep_seconds=1,
         )
         self.assertEqual(result["time"], "2026-01-01T00:00:10.250Z")
