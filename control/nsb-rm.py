@@ -103,7 +103,7 @@ def node_removal(ssh_user: str, ssh_host: str, ssh_key: str, name: str, worker: 
             # ----------------------------------------
             # Check if container exists
             # ----------------------------------------
-        ps = run_ssh(
+        run_ssh(
                 ssh_username=ssh_user,
                 ssh_host=ssh_host,
                 ssh_key_path=ssh_key,
@@ -121,7 +121,7 @@ def node_removal(ssh_user: str, ssh_host: str, ssh_key: str, name: str, worker: 
     # Stop and Remove
     # ----------------------------------------
     try:
-        del_proc = run_ssh(
+        run_ssh(
                 ssh_username=ssh_user,
                 ssh_host=ssh_host,
                 ssh_key_path=ssh_key,
@@ -288,7 +288,7 @@ def main():
         log.info(f"   ➞ Deleting keys with prefix {prefix} ...")
         etcd_client.delete_prefix(prefix)
     #cleanup workers' usage stats
-    log.info(f"   ➞ Resetting workers' usage stats...")
+    log.info("   ➞ Resetting workers' usage stats...")
     for name, worker_cfg in workers.items():
         # Reset usage
         worker_cfg['cpu-used'] = 0.0

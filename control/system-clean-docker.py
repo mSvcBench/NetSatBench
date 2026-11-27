@@ -247,7 +247,7 @@ def main():
                         f"\t\tSTDERR: {remote_cmd_res.stderr}"
                     )
                 else:
-                    log.info(f"    ✅ DOCKER-USER iptables rule removed successfully.")
+                    log.info("    ✅ DOCKER-USER iptables rule removed successfully.")
 
             # inserted rule was: -A POSTROUTING -t nat -s {sat_vnet_supercidr} ! -d {sat_vnet_supercidr} -o {default_interface} -j MASQUERADE
             default_interface_cmd = f"ssh {remote_str} ip route show default | awk '/default/ {{print $5}}'"
@@ -276,7 +276,7 @@ def main():
                         f"\t\tSTDERR: {remote_cmd_res.stderr}"
                     )
                 else:
-                    log.info(f"    ✅ POSTROUTING NAT iptables rule removed successfully.")
+                    log.info("    ✅ POSTROUTING NAT iptables rule removed successfully.")
             
     # 4) Remove ETCD keys that your script created/overwrote
     etcd_client.delete_prefix("/config/workers/")

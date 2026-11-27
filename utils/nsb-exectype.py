@@ -14,7 +14,9 @@ import etcd3
 
 logging.basicConfig(level="INFO", format="[%(levelname)s] %(message)s")
 log = logging.getLogger("nsb-exectype")
-SUMMARY_LINES = 10   # lines of nested nsb-exec output repeated for each failed node in the final report
+SUMMARY_LINES = (
+    10  # lines of nested nsb-exec output repeated for each failed node in the final report
+)
 
 
 def get_nodes_by_type(etcd_client, wanted_type: str) -> List[str]:
@@ -44,12 +46,14 @@ def build_nsb_exec_cmd(args, node: str) -> List[str]:
     nsb_exec_path = str(Path(__file__).with_name("nsb-exec.py"))
     cmd = [sys.executable, nsb_exec_path]
 
-    cmd.extend([
-        "--etcd-host",
-        args.etcd_host,
-        "--etcd-port",
-        str(args.etcd_port),
-    ])
+    cmd.extend(
+        [
+            "--etcd-host",
+            args.etcd_host,
+            "--etcd-port",
+            str(args.etcd_port),
+        ]
+    )
     if args.etcd_user:
         cmd.extend(["--etcd-user", args.etcd_user])
     if args.etcd_password:
@@ -69,11 +73,12 @@ print_lock = threading.Lock()
 
 
 def exec_on_node(args, node: str) -> Tuple[int, List[str]]:
-    """Run nsb-exec for one node. Its output (stdout+stderr, including its log.error lines) is shown live,
-    prefixed with the node name, and returned so that failures can be summarized at the end."""
+    """Stream node-prefixed output and return it with the command exit code."""
     cmd = build_nsb_exec_cmd(args, node)
     lines: List[str] = []
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+    )
     assert proc.stdout is not None
     for line in proc.stdout:
         line = line.rstrip("\n")
@@ -86,43 +91,68 @@ def exec_on_node(args, node: str) -> Tuple[int, List[str]]:
     return rc, lines
 
 
-def main() -> int:
-    if "-it" in sys.argv or "--interactive" in sys.argv:
-        log.error("❌ -it/--interactive is not supported by nsb-exectype")
-        return 2
-
-    p = argparse.ArgumentParser(
+def create_parser():
+    """Define the multi-node execution command-line interface."""
+    parser = argparse.ArgumentParser(
         prog="nsb-exectype",
         description="Execute a command on all nodes of a given type using nsb-exec.",
     )
 
-    p.add_argument(
+    parser.add_argument(
         "-d",
         "--detached",
         action="store_true",
         help="Run in detached mode (docker exec -d).",
     )
 
-    p.add_argument("--etcd-host", default=os.getenv("ETCD_HOST", "127.0.0.1"), help="Etcd host (default: 127.0.0.1)")
-    p.add_argument("--etcd-port", type=int, default=int(os.getenv("ETCD_PORT", 2379)), help="Etcd port (default: 2379)")
-    p.add_argument("--etcd-user", default=os.getenv("ETCD_USER", None), help="Etcd user (default: None)")
-    p.add_argument("--etcd-password", default=os.getenv("ETCD_PASSWORD", None), help="Etcd password (default: None)")
-    p.add_argument("--etcd-ca-cert", default=os.getenv("ETCD_CA_CERT", None), help="Etcd CA certificate path (default: None)")
-    p.add_argument("--log-level", default="INFO")
-    p.add_argument("--node-type", default="any", help="Target node type (default: any)")
-    p.add_argument(
-        "-t", "--threads",
+    parser.add_argument(
+        "--etcd-host",
+        default=os.getenv("ETCD_HOST", "127.0.0.1"),
+        help="Etcd host (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--etcd-port",
+        type=int,
+        default=int(os.getenv("ETCD_PORT", 2379)),
+        help="Etcd port (default: 2379)",
+    )
+    parser.add_argument(
+        "--etcd-user", default=os.getenv("ETCD_USER", None), help="Etcd user (default: None)"
+    )
+    parser.add_argument(
+        "--etcd-password",
+        default=os.getenv("ETCD_PASSWORD", None),
+        help="Etcd password (default: None)",
+    )
+    parser.add_argument(
+        "--etcd-ca-cert",
+        default=os.getenv("ETCD_CA_CERT", None),
+        help="Etcd CA certificate path (default: None)",
+    )
+    parser.add_argument("--log-level", default="INFO")
+    parser.add_argument("--node-type", default="any", help="Target node type (default: any)")
+    parser.add_argument(
+        "-t",
+        "--threads",
         type=int,
         default=8,
         help="Number of worker threads for parallel command execution (default: 8).",
     )
-    p.add_argument(
+    parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
         help="Command to run inside each matching node container.",
     )
 
-    args = p.parse_args()
+    return parser
+
+
+def main() -> int:
+    if "-it" in sys.argv or "--interactive" in sys.argv:
+        log.error("❌ -it/--interactive is not supported by nsb-exectype")
+        return 2
+
+    args = create_parser().parse_args()
     log.setLevel(args.log_level.upper())
 
     if args.threads < 1:
@@ -155,10 +185,7 @@ def main() -> int:
 
     failures: Dict[str, Tuple[int, List[str]]] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = {
-            executor.submit(exec_on_node, args, node): node
-            for node in nodes
-        }
+        futures = {executor.submit(exec_on_node, args, node): node for node in nodes}
         for fut in concurrent.futures.as_completed(futures):
             node = futures[fut]
             try:
@@ -175,9 +202,10 @@ def main() -> int:
         for node in sorted(failures):
             rc, lines = failures[node]
             log.error(f"   {node} (exit={rc})")
-            for line in lines[-SUMMARY_LINES:]:          # last lines of the nested nsb-exec output
+            for line in lines[-SUMMARY_LINES:]:  # last lines of the nested nsb-exec output
                 log.error(f"      {line}")
-        return next(rc for rc, _ in (failures[n] for n in sorted(failures)))
+        first_failed_node = sorted(failures)[0]
+        return failures[first_failed_node][0]
     return 0
 
 

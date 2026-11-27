@@ -116,7 +116,7 @@ def get_node_info(etcd_client, worker_dict, verbose=False):
                                 ssh_key_path=worker_info.get("ssh-key", "~/.ssh/id_rsa"),
                             )
     print(running_nodes) if verbose else None
-    for node_val, node_key in etcd_client.get_prefix(f"/config/nodes/"):
+    for node_val, node_key in etcd_client.get_prefix("/config/nodes/"):
         try:
             status = "unknown"
             node_cfg = json.loads(node_val.decode())
@@ -144,7 +144,7 @@ def get_node_info(etcd_client, worker_dict, verbose=False):
 
 def get_link_info(etcd_client):
     link_list = []
-    for link_val, _ in etcd_client.get_prefix(f"/config/links/"):
+    for link_val, _ in etcd_client.get_prefix("/config/links/"):
         try:
             link_cfg = json.loads(link_val.decode())
             link_list.append(link_cfg)
@@ -154,7 +154,7 @@ def get_link_info(etcd_client):
 
 def get_worker_info(etcd_client):
     worker_dict = {}
-    for worker_val, worker_key in etcd_client.get_prefix(f"/config/workers/"):
+    for worker_val, worker_key in etcd_client.get_prefix("/config/workers/"):
         try:
             worker_cfg = json.loads(worker_val.decode())
             worker_name = worker_key.key.decode().split("/")[-1]
@@ -164,7 +164,7 @@ def get_worker_info(etcd_client):
     return worker_dict
 
 def get_epoch_config(etcd_client):
-    cfg_val, _ = etcd_client.get(f"/config/epoch-config")
+    cfg_val, _ = etcd_client.get("/config/epoch-config")
     cfg = None
     if cfg_val:
         try:
@@ -234,8 +234,8 @@ def main():
         sys.exit(1)
 
 
-    print(f"🛰️ NetSatBench System Status") if not args.verbose else print(f"🛰️ NetSatBench System Status -- Verbose")
-    print(f"===========================")
+    print("🛰️ NetSatBench System Status") if not args.verbose else print("🛰️ NetSatBench System Status -- Verbose")
+    print("===========================")
     print("⏳ Gathering worker information...")
     worker_dict = get_worker_info(etcd_client=etcd_client)
     print("⏳ Gathering node information...") if not args.verbose else print("⏳ Gathering node information...(verbose mode: checking container status on workers, this may take a while...)")
@@ -244,7 +244,7 @@ def main():
     link_list = get_link_info(etcd_client=etcd_client)
     print("⏳ Gathering epoch configuration...")
     epoch_cfg = get_epoch_config(etcd_client=etcd_client)
-    print(f"===========================")
+    print("===========================")
     print(f" Workers: {len(worker_dict)}")
     if args.verbose:
         for worker_name, worker in worker_dict.items():
@@ -259,7 +259,7 @@ def main():
                     node_count += 1
             print(f"      - Nodes: {node_count}")
         
-    print(f"===========================")
+    print("===========================")
     print(f" Nodes: {len(node_dict)}") 
     n_satellites = sum(1 for node in node_dict.values() if node.get("type") == "satellite")
     n_users = sum(1 for node in node_dict.values() if node.get("type") == "user")
@@ -280,17 +280,17 @@ def main():
         if node.get("status") not in running_states:
             print(f"    ⚠️ Node {node_key} has status '{node.get('status')}'")
 
-    print(f"===========================")
+    print("===========================")
     print(f" Links: {len(link_list)}")
     
-    print(f"===========================")
-    print(f" Epoch configuration:")
+    print("===========================")
+    print(" Epoch configuration:")
     if epoch_cfg:
         print(f"   - Epoch dir: {epoch_cfg.get('epoch-dir', 'unknown')}")
         print(f"   - File pattern: {epoch_cfg.get('file-pattern', 'unknown')}")
         print(f"   - Epoch file: {epoch_cfg.get('epoch-file', 'emulation not started')}")
         print(f"   - Epoch time: {epoch_cfg.get('epoch-time', 'emulation not started')}")
-    print(f"===========================")
+    print("===========================")
         
 if __name__ == "__main__":
     main()

@@ -28,6 +28,27 @@ restart = load("node_restart_safety", "control/nsb-node-restart.py")
 
 
 class CommandSafetyTests(unittest.TestCase):
+    def test_image_distribution_counts_all_worker_results(self):
+        args = types.SimpleNamespace(
+            threads=2, remote_path="/tmp/image.tar.gz", timeout=5, keep_remote=False
+        )
+        workers = {"worker-1": {}, "worker-2": {}}
+
+        def load_worker(name, *unused):
+            return name, name == "worker-1", "loaded" if name == "worker-1" else "load failed"
+
+        with patch.object(loader, "load_on_worker", side_effect=load_worker) as load:
+            self.assertEqual(loader.distribute_image(workers, Path("image.tar.gz"), args), (1, 1))
+        self.assertEqual(load.call_count, 2)
+
+    def test_image_distribution_does_not_hide_worker_exceptions(self):
+        args = types.SimpleNamespace(
+            threads=1, remote_path="/tmp/image.tar.gz", timeout=5, keep_remote=False
+        )
+        with patch.object(loader, "load_on_worker", side_effect=RuntimeError("worker failed")):
+            with self.assertRaisesRegex(RuntimeError, "worker failed"):
+                loader.distribute_image({"worker-1": {}}, Path("image.tar.gz"), args)
+
     def test_runtime_staging_only_replaces_managed_directories(self):
         required = (
             "ionadmin ionsecadmin bpadmin ipnadmin "

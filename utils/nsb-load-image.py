@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+"""Distribute a staged Docker image to the selected NetSatBench workers."""
+
 import argparse
 import concurrent.futures
 import gzip
@@ -138,7 +141,9 @@ def run_ssh(ssh_user: str, ssh_host: str, ssh_key: str, remote_args: list[str], 
     return run(cmd, check=True, timeout=timeout + 30)
 
 
-def copy_archive(archive_path: Path, ssh_user: str, ssh_host: str, ssh_key: str, remote_path: str, timeout: int):
+def copy_archive(
+    archive_path: Path, ssh_user: str, ssh_host: str, ssh_key: str, remote_path: str, timeout: int
+):
     cmd = [
         "scp",
         "-i",
@@ -180,20 +185,67 @@ def load_on_worker(
         return name, False, str(exc)
 
 
+def distribute_image(workers, archive_path, args):
+    """Load the image on all selected workers and report success/failure counts."""
+    ok = 0
+    fail = 0
+    worker_count = min(args.threads, len(workers))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(
+                load_on_worker,
+                name,
+                worker,
+                archive_path,
+                args.remote_path,
+                args.timeout,
+                args.keep_remote,
+            ): name
+            for name, worker in workers.items()
+        }
+        for future in concurrent.futures.as_completed(futures):
+            name, success, message = future.result()
+            if success:
+                ok += 1
+                log.info(f"✅ {name}: {message}")
+            else:
+                fail += 1
+                log.error(f"❌ {name}: {message}")
+
+    return ok, fail
+
+
 # ==========================================
 # MAIN
 # ==========================================
-def main() -> int:
+def create_parser():
+    """Define the command-line arguments without executing runtime operations."""
     parser = argparse.ArgumentParser(
         description="Copy a local Docker image to all NetSatBench workers and load it there."
     )
-    parser.add_argument("--image", required=True, help="Local Docker image tag, for example netsatbench-sat-container-ion:prototype")
-    parser.add_argument("--worker-config", help="Worker config JSON. If omitted, workers are read from Etcd.")
+    parser.add_argument(
+        "--image",
+        required=True,
+        help="Local Docker image tag, for example netsatbench-sat-container-ion:prototype",
+    )
+    parser.add_argument(
+        "--worker-config", help="Worker config JSON. If omitted, workers are read from Etcd."
+    )
     parser.add_argument("--workers", nargs="+", help="Optional worker names to target.")
-    parser.add_argument("--remote-path", default="/tmp/netsatbench-image.tar.gz", help="Remote archive path on each worker.")
-    parser.add_argument("--keep-remote", action="store_true", help="Keep the uploaded archive on workers.")
-    parser.add_argument("-t", "--threads", type=int, default=4, help="Parallel workers (default: 4).")
-    parser.add_argument("--timeout", type=int, default=60, help="SSH/SCP connection timeout in seconds.")
+    parser.add_argument(
+        "--remote-path",
+        default="/tmp/netsatbench-image.tar.gz",
+        help="Remote archive path on each worker.",
+    )
+    parser.add_argument(
+        "--keep-remote", action="store_true", help="Keep the uploaded archive on workers."
+    )
+    parser.add_argument(
+        "-t", "--threads", type=int, default=4, help="Parallel workers (default: 4)."
+    )
+    parser.add_argument(
+        "--timeout", type=int, default=60, help="SSH/SCP connection timeout in seconds."
+    )
     parser.add_argument("--log-level", default="INFO")
 
     parser.add_argument("--etcd-host", default=os.getenv("ETCD_HOST", "127.0.0.1"))
@@ -201,8 +253,11 @@ def main() -> int:
     parser.add_argument("--etcd-user", default=os.getenv("ETCD_USER"))
     parser.add_argument("--etcd-password", default=os.getenv("ETCD_PASSWORD"))
     parser.add_argument("--etcd-ca-cert", default=os.getenv("ETCD_CA_CERT"))
+    return parser
 
-    args = parser.parse_args()
+
+def main() -> int:
+    args = create_parser().parse_args()
     log.setLevel(args.log_level.upper())
 
     if args.threads < 1:
@@ -226,30 +281,7 @@ def main() -> int:
             write_image_archive(args.image, archive_path)
 
             log.info(f"🔎 Target workers: {', '.join(sorted(workers))}")
-            ok = 0
-            fail = 0
-            worker_count = min(args.threads, len(workers))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-                futures = {
-                    executor.submit(
-                        load_on_worker,
-                        name,
-                        worker,
-                        archive_path,
-                        args.remote_path,
-                        args.timeout,
-                        args.keep_remote,
-                    ): name
-                    for name, worker in workers.items()
-                }
-                for future in concurrent.futures.as_completed(futures):
-                    name, success, message = future.result()
-                    if success:
-                        ok += 1
-                        log.info(f"✅ {name}: {message}")
-                    else:
-                        fail += 1
-                        log.error(f"❌ {name}: {message}")
+            ok, fail = distribute_image(workers, archive_path, args)
 
             if fail:
                 log.error(f"❌ Image load completed with {fail} failure(s).")

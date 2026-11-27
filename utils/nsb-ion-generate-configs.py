@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+"""Derive guarded ION plans and node configurations from a NetSatBench scenario."""
+
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -80,9 +82,7 @@ def resolve_netsatbench_node_configs(config_path):
         for common_rule_index, common_rule in enumerate(common_config_rules):
             if not node_matches_config_rule(node_config, common_rule):
                 continue
-            common_l3_config = common_rule.get("config-common", {}).get(
-                "L3-config", {}
-            )
+            common_l3_config = common_rule.get("config-common", {}).get("L3-config", {})
             if assigned_cidr or not common_l3_config.get("auto-assign-ips"):
                 break
             for cidr_rule_index, cidr_rule in enumerate(
@@ -137,9 +137,7 @@ def allocate_indexed_ipv4_subnet(super_cidr, subnet_index, prefix_length):
     if prefix_length < parent_network.prefixlen:
         raise ValueError(f"cannot allocate /{prefix_length} from {super_cidr}")
     subnet_size = 1 << (32 - prefix_length)
-    subnet_address = int(parent_network.network_address) + (
-        subnet_index * subnet_size
-    )
+    subnet_address = int(parent_network.network_address) + (subnet_index * subnet_size)
     allocated_subnet = ipaddress.ip_network((subnet_address, prefix_length))
     if not allocated_subnet.subnet_of(parent_network):
         raise ValueError(f"subnet index {subnet_index} exceeds {super_cidr}")
@@ -172,8 +170,7 @@ def populate_udp_cla_addresses(ion_registry, registry_path):
     if not node_config_reference:
         raise ValueError(
             "nodes are missing udp_cla_address and the ION registry has no "
-            "netsatbench_node_config source: "
-            + ", ".join(nodes_without_udp_cla_address)
+            "netsatbench_node_config source: " + ", ".join(nodes_without_udp_cla_address)
         )
 
     node_config_path = Path(node_config_reference)
@@ -187,17 +184,11 @@ def populate_udp_cla_addresses(ion_registry, registry_path):
     for node_name in nodes_without_udp_cla_address:
         netsatbench_node = netsatbench_nodes.get(node_name)
         if netsatbench_node is None:
-            raise ValueError(
-                f"ION node {node_name!r} is missing from {node_config_path}"
-            )
+            raise ValueError(f"ION node {node_name!r} is missing from {node_config_path}")
         node_cidr = netsatbench_node.get("L3-config", {}).get("cidr")
         if not node_cidr:
-            raise ValueError(
-                f"ION node {node_name!r} has no IPv4 CIDR in {node_config_path}"
-            )
-        ion_registry["nodes"][node_name]["udp_cla_address"] = (
-            select_udp_cla_ipv4_address(node_cidr)
-        )
+            raise ValueError(f"ION node {node_name!r} has no IPv4 CIDR in {node_config_path}")
+        ion_registry["nodes"][node_name]["udp_cla_address"] = select_udp_cla_ipv4_address(node_cidr)
 
     return ion_registry
 
@@ -219,8 +210,7 @@ def parse_utc_datetime(value):
         parsed = datetime.fromisoformat(normalized)
     except ValueError as exc:
         raise ValueError(
-            f"invalid UTC timestamp {value!r}; expected ISO-8601 like "
-            "2026-07-20T10:30:00Z"
+            f"invalid UTC timestamp {value!r}; expected ISO-8601 like 2026-07-20T10:30:00Z"
         ) from exc
 
     if parsed.tzinfo is None:
@@ -282,9 +272,7 @@ def epoch_offset_seconds(timestamp, first_timestamp, epoch_path):
     if rounded < 0:
         raise ValueError(f"epoch time moves backwards: {epoch_path}")
     if not math.isclose(offset, rounded, abs_tol=1e-6):
-        raise ValueError(
-            f"epoch offset supports at most millisecond precision: {epoch_path}"
-        )
+        raise ValueError(f"epoch offset supports at most millisecond precision: {epoch_path}")
 
     return rounded
 
@@ -355,8 +343,7 @@ def parse_delay_seconds(value):
         )
         if not match:
             raise ValueError(
-                f"invalid link delay {value!r}; expected values like "
-                "500us, 4.7ms, or 1.2s"
+                f"invalid link delay {value!r}; expected values like 500us, 4.7ms, or 1.2s"
             )
         amount, unit = match.groups()
         multiplier = {"us": 0.000001, "ms": 0.001, "s": 1.0}[unit.lower()]
@@ -379,8 +366,7 @@ def quantize_ion_owlt_seconds(delay_seconds, subsecond_policy="ceil-positive"):
     """
     if subsecond_policy not in {"ceil-positive", "zero", "ceil-millisecond"}:
         raise ValueError(
-            "ion_subsecond_owlt_policy must be 'ceil-positive', 'zero', "
-            "or 'ceil-millisecond'"
+            "ion_subsecond_owlt_policy must be 'ceil-positive', 'zero', or 'ceil-millisecond'"
         )
     if subsecond_policy == "ceil-millisecond":
         return math.ceil(delay_seconds * 1000.0 - 1e-12) / 1000.0
@@ -397,9 +383,7 @@ def resolve_contact_owlt_seconds(registry, link_descriptor):
     policy = registry.get("ion_subsecond_owlt_policy", "ceil-positive")
     link_delay = link_descriptor.get("delay")
     if link_delay in (None, ""):
-        return quantize_ion_owlt_seconds(
-            float(registry["owlt_seconds"]), policy
-        )
+        return quantize_ion_owlt_seconds(float(registry["owlt_seconds"]), policy)
     return quantize_ion_owlt_seconds(parse_delay_seconds(link_delay), policy)
 
 
@@ -467,8 +451,7 @@ def derive_contacts_from_epochs(
             active_contact = active_links.pop(key, None)
             if active_contact is None:
                 raise ValueError(
-                    f"delete references inactive link in {epoch_path}: "
-                    f"{left} <-> {right}"
+                    f"delete references inactive link in {epoch_path}: {left} <-> {right}"
                 )
 
             guarded_end = start - contact_end_guard
@@ -490,16 +473,12 @@ def derive_contacts_from_epochs(
             active_contact = active_links.get(key)
             if active_contact is None:
                 raise ValueError(
-                    f"update references inactive link in {epoch_path}: "
-                    f"{left} <-> {right}"
+                    f"update references inactive link in {epoch_path}: {left} <-> {right}"
                 )
 
             updated_rate = (
                 resolve_contact_rate_bytes_per_second(registry, link)
-                if (
-                    link.get("ion-rate") not in (None, "")
-                    or link.get("rate") not in (None, "")
-                )
+                if (link.get("ion-rate") not in (None, "") or link.get("rate") not in (None, ""))
                 else active_contact.rate_bytes_per_second
             )
             updated_owlt = (
@@ -547,17 +526,14 @@ def derive_contacts_from_epochs(
             key = link_key(left, right)
             if key in active_links:
                 raise ValueError(
-                    f"duplicate add for active link in {epoch_path}: "
-                    f"{left} <-> {right}"
+                    f"duplicate add for active link in {epoch_path}: {left} <-> {right}"
                 )
 
             active_links[key] = ActiveContactWindow(
                 endpoint1=left,
                 endpoint2=right,
                 start_seconds=start + contact_start_guard,
-                rate_bytes_per_second=resolve_contact_rate_bytes_per_second(
-                    registry, link
-                ),
+                rate_bytes_per_second=resolve_contact_rate_bytes_per_second(registry, link),
                 ion_owlt_seconds=resolve_contact_owlt_seconds(registry, link),
                 source_epoch=epoch_path.name,
             )
@@ -735,17 +711,14 @@ def validate_ion_node_registry(registry):
         if not NODE_NAME_PATTERN.fullmatch(name):
             raise ValueError(f"invalid node name: {name!r}")
         if "ion_node_number" not in node or "udp_cla_address" not in node:
-            raise ValueError(
-                f"node {name} requires ion_node_number and udp_cla_address"
-            )
+            raise ValueError(f"node {name} requires ion_node_number and udp_cla_address")
         if int(node["ion_node_number"]) <= 0:
             raise ValueError(f"node {name} ion_node_number must be positive")
         try:
             ipaddress.ip_address(node["udp_cla_address"])
         except ValueError as error:
             raise ValueError(
-                f"node {name} has invalid udp_cla_address: "
-                f"{node['udp_cla_address']!r}"
+                f"node {name} has invalid udp_cla_address: {node['udp_cla_address']!r}"
             ) from error
 
     ipn_node_numbers = [int(node["ion_node_number"]) for node in nodes.values()]
@@ -764,13 +737,10 @@ def validate_ion_node_registry(registry):
         if float(registry[value_key]) <= 0:
             raise ValueError(f"{value_key} must be positive")
 
-    subsecond_policy = registry.get(
-        "ion_subsecond_owlt_policy", "ceil-positive"
-    )
+    subsecond_policy = registry.get("ion_subsecond_owlt_policy", "ceil-positive")
     if subsecond_policy not in {"ceil-positive", "zero", "ceil-millisecond"}:
         raise ValueError(
-            "ion_subsecond_owlt_policy must be 'ceil-positive', 'zero', "
-            "or 'ceil-millisecond'"
+            "ion_subsecond_owlt_policy must be 'ceil-positive', 'zero', or 'ceil-millisecond'"
         )
 
     contact_duration = float(
@@ -855,10 +825,12 @@ def render_global_ionrc(registry):
         lines.append(f"a range {start_text} {end_text} {a} {b} {owlt_seconds}")
         lines.append(f"a range {start_text} {end_text} {b} {a} {owlt_seconds}")
 
-    lines.extend([
-        "",
-        "# Contacts declare planned transmission opportunities and byte-per-second rate.",
-    ])
+    lines.extend(
+        [
+            "",
+            "# Contacts declare planned transmission opportunities and byte-per-second rate.",
+        ]
+    )
 
     for contact in contacts:
         left, right = contact_nodes(contact)
@@ -901,10 +873,12 @@ def render_node_bprc(registry, node_name):
             f"{udp_port} udpclo {UDP_CLA_MAX_PAYLOAD_BYTES}"
         )
 
-    lines.extend([
-        "r 'ipnadmin node.ipnrc'",
-        "s",
-    ])
+    lines.extend(
+        [
+            "r 'ipnadmin node.ipnrc'",
+            "s",
+        ]
+    )
 
     return "\n".join(lines) + "\n"
 
@@ -925,8 +899,7 @@ def render_node_ipnrc(registry, node_name):
         rates = [
             contact_segment_rate(registry, contact)
             for contact in registry["contacts"]
-            if node_name in contact_nodes(contact)
-            and neighbor_name in contact_nodes(contact)
+            if node_name in contact_nodes(contact) and neighbor_name in contact_nodes(contact)
         ]
         rate = max(rates, default=int(registry["default_contact_rate_bytes_per_second"]))
         lines.append(f"# Neighbor: {neighbor_name}")
@@ -977,8 +950,7 @@ def render_node_ionrc(registry, node_name):
         # ION folds maxClockError into startXmit/stopXmit as each contact is
         # inserted, so it has to be set before the contact plan is read.
         lines.append(
-            "m clockerr "
-            + render_ion_seconds(registry["clock_error_seconds"], "clock error")
+            "m clockerr " + render_ion_seconds(registry["clock_error_seconds"], "clock error")
         )
 
     lines.append("r 'ionadmin ../global.ionrc'")
@@ -991,9 +963,74 @@ def render_node_ionsecrc(registry, node_name):
 
 
 # ==========================================
+# CONFIGURATION OUTPUT
+# ==========================================
+def write_config_file(path, contents):
+    """Write one UTF-8 ION configuration and record its path."""
+    path.write_text(contents, encoding="utf-8")
+    log.info(f"📝 wrote {path}")
+
+
+def write_configuration_files(registry, output_dir):
+    """Write the shared plan and each node's five configuration files."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_config_file(output_dir / "global.ionrc", render_global_ionrc(registry))
+    node_renderers = (
+        ("node.bprc", render_node_bprc),
+        ("node.ipnrc", render_node_ipnrc),
+        ("node.ionconfig", render_node_ionconfig),
+        ("node.ionrc", render_node_ionrc),
+        ("node.ionsecrc", render_node_ionsecrc),
+    )
+    for node_name in sorted(registry["nodes"]):
+        node_dir = output_dir / node_name
+        node_dir.mkdir(parents=True, exist_ok=True)
+        for filename, render in node_renderers:
+            write_config_file(node_dir / filename, render(registry, node_name))
+
+
+def load_generation_registry(args):
+    """Load the registry, apply CLI overrides and derive validated contacts."""
+    registry_path = Path(args.registry_path)
+    registry = load_ion_node_registry(registry_path)
+    registry.setdefault("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)
+    if args.clock_error is not None:
+        registry["clock_error_seconds"] = args.clock_error
+    if args.absolute_start_time:
+        registry["_absolute_start_time"] = parse_utc_datetime(args.absolute_start_time)
+
+    if args.epoch_dir:
+        if args.epoch_duration is None:
+            raise ValueError("--epoch-duration is required when --epoch-dir is set")
+        if args.epoch_duration <= 0:
+            raise ValueError("--epoch-duration must be positive")
+        if args.contact_start_guard < 0 or args.contact_end_guard < 0:
+            raise ValueError("contact guards must be non-negative")
+        if args.contact_start_guard + args.contact_end_guard >= args.epoch_duration:
+            raise ValueError("contact guards must leave a positive window within one epoch")
+
+        registry["contacts"] = derive_contacts_from_epochs(
+            registry,
+            args.epoch_dir,
+            args.file_pattern,
+            args.epoch_duration,
+            args.contact_start_guard,
+            args.contact_end_guard,
+        )
+        registry["contact_duration_seconds"] = max(
+            float(registry.get("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)),
+            max(contact["end"] for contact in registry["contacts"]) + args.epoch_duration,
+        )
+
+    validate_ion_node_registry(registry)
+    return registry
+
+
+# ==========================================
 # MAIN
 # ==========================================
-def main() -> int:
+def create_parser():
+    """Define the ION configuration generator command-line interface."""
     parser = argparse.ArgumentParser(
         description="Generate ION config files from a NetSatBench DTN node registry."
     )
@@ -1062,81 +1099,18 @@ def main() -> int:
             "event or scenario end (canonical default: 1)."
         ),
     )
-    args = parser.parse_args()
+    return parser
 
-    registry_path = Path(args.registry_path)
-    output_dir = Path(args.output)
 
-    # The registry helpers raise so that callers and tests can inspect the
-    # failure; on the command line it is reported and turned into an exit code.
+def main() -> int:
+    args = create_parser().parse_args()
     try:
-        registry = load_ion_node_registry(registry_path)
-        registry.setdefault("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)
-        if args.clock_error is not None:
-            registry["clock_error_seconds"] = args.clock_error
-        if args.absolute_start_time:
-            registry["_absolute_start_time"] = parse_utc_datetime(args.absolute_start_time)
-
-        if args.epoch_dir:
-            if args.epoch_duration is None:
-                raise ValueError("--epoch-duration is required when --epoch-dir is set")
-            if args.epoch_duration <= 0:
-                raise ValueError("--epoch-duration must be positive")
-            if args.contact_start_guard < 0 or args.contact_end_guard < 0:
-                raise ValueError("contact guards must be non-negative")
-            if args.contact_start_guard + args.contact_end_guard >= args.epoch_duration:
-                raise ValueError(
-                    "contact guards must leave a positive window within one epoch"
-                )
-
-            registry["contacts"] = derive_contacts_from_epochs(
-                registry,
-                args.epoch_dir,
-                args.file_pattern,
-                args.epoch_duration,
-                args.contact_start_guard,
-                args.contact_end_guard,
-            )
-            registry["contact_duration_seconds"] = max(
-                float(registry.get("contact_duration_seconds", DEFAULT_CONTACT_DURATION_SECONDS)),
-                max(contact["end"] for contact in registry["contacts"]) + args.epoch_duration,
-            )
-
-        validate_ion_node_registry(registry)
-    except (ValueError, FileNotFoundError, KeyError) as e:
-        log.error(f"❌ {e}")
+        registry = load_generation_registry(args)
+    except (ValueError, FileNotFoundError, KeyError) as exc:
+        log.error(f"❌ {exc}")
         return 1
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    global_ionrc = render_global_ionrc(registry)
-    (output_dir / "global.ionrc").write_text(global_ionrc, encoding="utf-8")
-    log.info(f"📝 wrote {output_dir / 'global.ionrc'}")
-
-    for node_name in sorted(registry["nodes"]):
-        node_dir = output_dir / node_name
-        node_dir.mkdir(parents=True, exist_ok=True)
-
-        node_bprc = render_node_bprc(registry, node_name)
-        (node_dir / "node.bprc").write_text(node_bprc, encoding="utf-8")
-        log.info(f"📝 wrote {node_dir / 'node.bprc'}")
-
-        node_ipnrc = render_node_ipnrc(registry, node_name)
-        (node_dir / "node.ipnrc").write_text(node_ipnrc, encoding="utf-8")
-        log.info(f"📝 wrote {node_dir / 'node.ipnrc'}")
-
-        node_ionconfig = render_node_ionconfig(registry, node_name)
-        (node_dir / "node.ionconfig").write_text(node_ionconfig, encoding="utf-8")
-        log.info(f"📝 wrote {node_dir / 'node.ionconfig'}")
-
-        node_ionrc = render_node_ionrc(registry, node_name)
-        (node_dir / "node.ionrc").write_text(node_ionrc, encoding="utf-8")
-        log.info(f"📝 wrote {node_dir / 'node.ionrc'}")
-
-        node_ionsecrc = render_node_ionsecrc(registry, node_name)
-        (node_dir / "node.ionsecrc").write_text(node_ionsecrc, encoding="utf-8")
-        log.info(f"📝 wrote {node_dir / 'node.ionsecrc'}")
-
+    write_configuration_files(registry, Path(args.output))
     return 0
 
 

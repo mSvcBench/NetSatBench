@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+"""Generate and verify the deterministic ION demonstration epochs."""
+
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
@@ -73,9 +75,7 @@ def build_epoch(elapsed_seconds, *, links_add=(), links_update=(), links_del=())
 # ==========================================
 def build_sequential_chain_epochs():
     """Open each next hop 6 s before closing the preceding hop."""
-    epochs = [
-        build_epoch(0, links_add=[build_link_descriptor(*CHAIN_LINKS[0])])
-    ]
+    epochs = [build_epoch(0, links_add=[build_link_descriptor(*CHAIN_LINKS[0])])]
     for index in range(1, len(CHAIN_LINKS)):
         boundary = index * 45
         epochs.append(
@@ -95,9 +95,7 @@ def build_sequential_chain_epochs():
 
 def build_cloudy_ground_epochs(outage_seconds=90):
     """Build the first eight relays plus a delayed final ground contact."""
-    epochs = [
-        build_epoch(0, links_add=[build_link_descriptor(*CHAIN_LINKS[0])])
-    ]
+    epochs = [build_epoch(0, links_add=[build_link_descriptor(*CHAIN_LINKS[0])])]
     for index in range(1, 8):
         boundary = index * 45
         epochs.append(
@@ -115,16 +113,10 @@ def build_cloudy_ground_epochs(outage_seconds=90):
 
     final_boundary = 8 * 45
     ground_add = final_boundary - 6 + outage_seconds
-    ground_event = build_epoch(
-        ground_add, links_add=[build_link_descriptor(*CHAIN_LINKS[8])]
-    )
-    relay_close = build_epoch(
-        final_boundary, links_del=[build_link_descriptor(*CHAIN_LINKS[7])]
-    )
+    ground_event = build_epoch(ground_add, links_add=[build_link_descriptor(*CHAIN_LINKS[8])])
+    relay_close = build_epoch(final_boundary, links_del=[build_link_descriptor(*CHAIN_LINKS[7])])
     epochs.extend(
-        [ground_event, relay_close]
-        if ground_add < final_boundary
-        else [relay_close, ground_event]
+        [ground_event, relay_close] if ground_add < final_boundary else [relay_close, ground_event]
     )
     return epochs
 
@@ -132,6 +124,7 @@ def build_cloudy_ground_epochs(outage_seconds=90):
 def build_multi_bundle_epochs():
     """Create two constrained service windows around one relay queue."""
     bottleneck = ("sat4", "sat5")
+
     def queue_link(
         endpoint1,
         endpoint2,
@@ -147,11 +140,7 @@ def build_multi_bundle_epochs():
             delay=MULTI_BUNDLE_DELAY,
         )
 
-    bypassed_bottleneck = [
-        queue_link(*link)
-        for link in CHAIN_LINKS
-        if link != bottleneck
-    ]
+    bypassed_bottleneck = [queue_link(*link) for link in CHAIN_LINKS if link != bottleneck]
     return [
         build_epoch(0, links_add=bypassed_bottleneck),
         build_epoch(
@@ -164,15 +153,11 @@ def build_multi_bundle_epochs():
         ),
         build_epoch(
             188,
-            links_add=[
-                queue_link(*bottleneck, rate="10mbit", ion_rate="1mbit")
-            ],
+            links_add=[queue_link(*bottleneck, rate="10mbit", ion_rate="1mbit")],
         ),
         build_epoch(
             233,
-            links_del=[
-                queue_link(*bottleneck, rate="10mbit", ion_rate="1mbit")
-            ],
+            links_del=[queue_link(*bottleneck, rate="10mbit", ion_rate="1mbit")],
         ),
         build_epoch(
             278,
@@ -224,15 +209,11 @@ def build_handover_overlap_epochs():
             ),
             build_epoch(
                 6,
-                links_del=[
-                    build_link_descriptor("usr1", "sat1", delay="1ms")
-                ],
+                links_del=[build_link_descriptor("usr1", "sat1", delay="1ms")],
             ),
             build_epoch(
                 11,
-                links_del=[
-                    build_link_descriptor("grd1", "sat7", delay="1ms")
-                ],
+                links_del=[build_link_descriptor("grd1", "sat7", delay="1ms")],
             ),
             build_epoch(28),
             build_epoch(33),
@@ -247,35 +228,21 @@ def build_handover_overlap_epochs():
             [
                 build_epoch(
                     cycle * 60,
-                    links_add=[
-                        build_link_descriptor(
-                            "usr1", f"sat{user_new}", delay="1ms"
-                        )
-                    ],
+                    links_add=[build_link_descriptor("usr1", f"sat{user_new}", delay="1ms")],
                 ),
                 build_epoch(cycle * 60 + 2),
                 build_epoch(
                     cycle * 60 + 5,
-                    links_add=[
-                        build_link_descriptor(
-                            "grd1", f"sat{ground_new}", delay="1ms"
-                        )
-                    ],
+                    links_add=[build_link_descriptor("grd1", f"sat{ground_new}", delay="1ms")],
                 ),
                 build_epoch(
                     cycle * 60 + 6,
-                    links_del=[
-                        build_link_descriptor(
-                            "usr1", f"sat{cycle % 8 + 1}", delay="1ms"
-                        )
-                    ],
+                    links_del=[build_link_descriptor("usr1", f"sat{cycle % 8 + 1}", delay="1ms")],
                 ),
                 build_epoch(
                     cycle * 60 + 11,
                     links_del=[
-                        build_link_descriptor(
-                            "grd1", f"sat{(cycle + 6) % 8 + 1}", delay="1ms"
-                        )
+                        build_link_descriptor("grd1", f"sat{(cycle + 6) % 8 + 1}", delay="1ms")
                     ],
                 ),
                 build_epoch(cycle * 60 + 28),
@@ -312,12 +279,8 @@ def build_millisecond_scale_epochs():
             0.0,
             links_add=[descriptor(link) for link in path_links],
         ),
-        build_epoch(
-            0.3, links_update=[descriptor(bottleneck, rate="1mbit")]
-        ),
-        build_epoch(
-            0.6, links_update=[descriptor(bottleneck, rate="100kbit")]
-        ),
+        build_epoch(0.3, links_update=[descriptor(bottleneck, rate="1mbit")]),
+        build_epoch(0.6, links_update=[descriptor(bottleneck, rate="100kbit")]),
         build_epoch(0.9, links_update=[descriptor(bottleneck)]),
         build_epoch(
             1.2,
@@ -352,12 +315,8 @@ def build_millisecond_precision_epochs():
             0.0,
             links_add=[descriptor(link) for link in path_links],
         ),
-        build_epoch(
-            10.237, links_update=[descriptor(bottleneck, rate="1mbit")]
-        ),
-        build_epoch(
-            20.481, links_update=[descriptor(bottleneck, rate="100kbit")]
-        ),
+        build_epoch(10.237, links_update=[descriptor(bottleneck, rate="1mbit")]),
+        build_epoch(20.481, links_update=[descriptor(bottleneck, rate="100kbit")]),
         build_epoch(30.719, links_update=[descriptor(bottleneck)]),
         build_epoch(
             40.953,
@@ -372,8 +331,7 @@ def build_millisecond_precision_epochs():
 def build_demo_scenarios():
     """Return the complete reproducible 10-node ION demonstration suite."""
     all_chain_links = [
-        build_link_descriptor(endpoint1, endpoint2)
-        for endpoint1, endpoint2 in CHAIN_LINKS
+        build_link_descriptor(endpoint1, endpoint2) for endpoint1, endpoint2 in CHAIN_LINKS
     ]
     subsecond_all_open_links = [
         build_link_descriptor(endpoint1, endpoint2, delay="5ms")
@@ -405,9 +363,7 @@ def build_demo_scenarios():
         ),
         build_epoch(
             20,
-            links_update=[
-                build_link_descriptor("sat4", "sat5", rate="100kbit")
-            ],
+            links_update=[build_link_descriptor("sat4", "sat5", rate="100kbit")],
         ),
         build_epoch(
             30,
@@ -417,68 +373,46 @@ def build_demo_scenarios():
     ]
 
     return {
-        "00-all-open": [
-            build_epoch(0.125, links_add=subsecond_all_open_links)
-        ],
+        "00-all-open": [build_epoch(0.125, links_add=subsecond_all_open_links)],
         "01-store-carry-forward": build_sequential_chain_epochs(),
         "02-cloudy-ground": build_cloudy_ground_epochs(),
         "03-alternate-path": [
             build_epoch(
                 0,
-                links_add=(
-                    ring_access_links
-                    + clockwise_ring_links
-                    + counterclockwise_ring_links
-                ),
+                links_add=(ring_access_links + clockwise_ring_links + counterclockwise_ring_links),
             ),
             build_epoch(
                 45,
-                links_update=[
-                    build_link_descriptor("sat2", "sat3", rate="3mbit")
-                ],
+                links_update=[build_link_descriptor("sat2", "sat3", rate="3mbit")],
             ),
             build_epoch(
                 90,
-                links_update=[
-                    build_link_descriptor("sat2", "sat3", rate="1mbit")
-                ],
+                links_update=[build_link_descriptor("sat2", "sat3", rate="1mbit")],
             ),
             build_epoch(
                 135,
-                links_update=[
-                    build_link_descriptor("sat2", "sat3", rate="100kbit")
-                ],
+                links_update=[build_link_descriptor("sat2", "sat3", rate="100kbit")],
             ),
             build_epoch(180, links_del=[build_link_descriptor("sat2", "sat3")]),
             build_epoch(
                 225,
-                links_add=[
-                    build_link_descriptor("sat2", "sat3", rate="100kbit")
-                ],
+                links_add=[build_link_descriptor("sat2", "sat3", rate="100kbit")],
             ),
             build_epoch(
                 270,
-                links_update=[
-                    build_link_descriptor("sat2", "sat3", rate="1mbit")
-                ],
+                links_update=[build_link_descriptor("sat2", "sat3", rate="1mbit")],
             ),
             build_epoch(
                 315,
-                links_update=[
-                    build_link_descriptor("sat2", "sat3", rate="3mbit")
-                ],
+                links_update=[build_link_descriptor("sat2", "sat3", rate="3mbit")],
             ),
             build_epoch(
                 360,
-                links_update=[
-                    build_link_descriptor("sat2", "sat3", rate="10mbit")
-                ],
+                links_update=[build_link_descriptor("sat2", "sat3", rate="10mbit")],
             ),
             build_epoch(
                 405,
-                links_update=[
-                    build_link_descriptor("sat2", "sat3", rate="10mbit")
-                ],
+                links_update=[build_link_descriptor("sat2", "sat3", rate="10mbit")],
             ),
         ],
         "04-multi-bundle-queue": build_multi_bundle_epochs(),
@@ -497,11 +431,7 @@ def expected_epoch_files():
     expected_files = {}
     for scenario_name, scenario_epochs in build_demo_scenarios().items():
         for epoch_index, epoch_data in enumerate(scenario_epochs):
-            epoch_path = (
-                SCENARIO_ROOT
-                / scenario_name
-                / f"NetSatBench-epoch{epoch_index}.json"
-            )
+            epoch_path = SCENARIO_ROOT / scenario_name / f"NetSatBench-epoch{epoch_index}.json"
             expected_files[epoch_path] = json.dumps(epoch_data, indent=2) + "\n"
     return expected_files
 

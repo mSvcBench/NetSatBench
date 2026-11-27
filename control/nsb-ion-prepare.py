@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
+"""Generate, distribute and start guarded ION configurations on NetSatBench nodes."""
+
 import argparse
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -13,7 +16,6 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
-import math
 
 import etcd3
 
@@ -142,12 +144,7 @@ def write_ion_nodes_file(registry, nodes):
 
 
 def ensure_container_exists(node):
-    result = run(
-        ["docker", "inspect", "--format", "{{.Name}}", node],
-        check=False,
-        capture_output=True,
-    )
-    if result.returncode != 0:
+    if not local_container_exists(node):
         raise RuntimeError(f"container is not available: {node}")
 
 
@@ -283,20 +280,28 @@ def copy_node_config(node, generated_dir, ion_nodes_text):
     run(["docker", "exec", node, "python3", "-c", writer])
 
 
-def stop_ion(node):
-    cmd = (
+def ion_stop_commands(node, *, terminate_processes=True):
+    """Build the stop script shared by local and remote preparation."""
+    commands = (
         "export ION_NODE_LIST_DIR=/ion\n"
         f"if [ -d /ion/{node} ]; then cd /ion/{node}; fi\n"
         "ionstop >/dev/null 2>&1 || true\n"
         "ionexit >/dev/null 2>&1 || true\n"
-        "killm >/dev/null 2>&1 || true\n"
-        "for proc in bprecvfile bpsendfile rfxclock bpclm bpclock bptransit "
-        "ipnfw ipnadminep udpcli udpclo cpsd ionwarn; do "
-        "pkill -x \"$proc\" >/dev/null 2>&1 || true; "
-        "done\n"
-        "sleep 1\n"
+        "killm >/dev/null 2>&1 || true"
     )
-    run(["docker", "exec", node, "sh", "-lc", cmd], check=False)
+    if terminate_processes:
+        commands += (
+            "\nfor proc in bprecvfile bpsendfile rfxclock bpclm bpclock bptransit "
+            "ipnfw ipnadminep udpcli udpclo cpsd ionwarn; do "
+            'pkill -x "$proc" >/dev/null 2>&1 || true; '
+            "done\n"
+            "sleep 1\n"
+        )
+    return commands
+
+
+def stop_ion(node):
+    run(["docker", "exec", node, "sh", "-lc", ion_stop_commands(node)], check=False)
 
 
 def ion_start_commands(node):
@@ -332,28 +337,14 @@ def prepare_node(node, generated_dir, ion_nodes_text, args):
 
 def prepare_remote_node(node, worker, archive_path, args):
     if args.dry_run:
-        return (
-            f"Dry run: would prepare /ion for {node} on "
-            f"{worker['name']} ({worker['host']})"
-        )
+        return f"Dry run: would prepare /ion for {node} on {worker['name']} ({worker['host']})"
 
     remote_archive = f"/tmp/nsb-ion-prepare-{node}.tar.gz"
     container_archive = f"/tmp/nsb-ion-prepare-{node}.tar.gz"
     try:
         copy_to_worker(archive_path, worker, remote_archive, args.ssh_timeout)
 
-        stop_commands = ""
-        if not args.no_stop:
-            stop_commands = (
-                "export ION_NODE_LIST_DIR=/ion; "
-                f"if [ -d /ion/{node} ]; then cd /ion/{node}; fi; "
-                "ionstop >/dev/null 2>&1 || true; "
-                "ionexit >/dev/null 2>&1 || true; "
-                "killm >/dev/null 2>&1 || true; "
-                "for proc in bprecvfile bpsendfile rfxclock bpclm bpclock bptransit "
-                "ipnfw ipnadminep udpcli udpclo cpsd ionwarn; do "
-                "pkill -x \"$proc\" >/dev/null 2>&1 || true; done; sleep 1; "
-            )
+        stop_commands = "" if args.no_stop else ion_stop_commands(node)
 
         start_commands = ""
         if not args.no_start:
@@ -361,9 +352,9 @@ def prepare_remote_node(node, worker, archive_path, args):
 
         remote_command = (
             f"docker inspect {node} >/dev/null 2>&1 && "
-            f"docker exec {node} sh -lc '{stop_commands}' && "
+            f"docker exec {node} sh -lc {shlex.quote(stop_commands)} && "
             f"docker cp {remote_archive} {node}:{container_archive} && "
-            f"docker exec {node} python3 -c \"import os,shutil,tarfile; "
+            f'docker exec {node} python3 -c "import os,shutil,tarfile; '
             "shutil.rmtree('/ion',ignore_errors=True); os.makedirs('/ion'); "
             f"tarfile.open('{container_archive}','r:gz').extractall('/ion'); "
             f"os.remove('{container_archive}')\" && "
@@ -382,13 +373,7 @@ def prepare_remote_node(node, worker, archive_path, args):
 
 
 def stop_remote_ion(node, worker, args):
-    script = (
-        "export ION_NODE_LIST_DIR=/ion; "
-        f"if [ -d /ion/{node} ]; then cd /ion/{node}; fi; "
-        "ionstop >/dev/null 2>&1 || true; "
-        "ionexit >/dev/null 2>&1 || true; "
-        "killm >/dev/null 2>&1 || true"
-    )
+    script = ion_stop_commands(node, terminate_processes=False)
     run_worker_ssh(
         worker,
         f"docker exec {node} sh -lc {shlex.quote(script)}",
@@ -424,10 +409,176 @@ def default_scenario_base(repo_root):
 
 
 # ==========================================
+# PREPARATION WORKFLOW
+# ==========================================
+def load_preparation_inputs(args, repo_root):
+    """Validate the selected scenario, nodes, guards and shared start time."""
+    registry_path = Path(args.registry_path).resolve()
+    registry = load_json(registry_path)
+
+    scenario_dir = (
+        Path(args.scenario_dir).resolve()
+        if args.scenario_dir
+        else default_scenario_base(repo_root) / args.scenario
+    )
+    if not scenario_dir.is_dir():
+        raise RuntimeError(f"scenario directory not found: {scenario_dir}")
+
+    nodes = args.nodes if args.nodes else scenario_nodes(registry, scenario_dir)
+    if not nodes:
+        raise RuntimeError("no target nodes selected")
+    nodes = [validate_node_name(node) for node in nodes]
+    if len(nodes) != len(set(nodes)):
+        raise RuntimeError("target node list contains duplicates")
+    if args.jobs <= 0:
+        raise RuntimeError("--jobs must be positive")
+    if args.ssh_timeout <= 0:
+        raise RuntimeError("--ssh-timeout must be positive")
+    if args.contact_start_guard < 0 or args.contact_end_guard < 0:
+        raise RuntimeError("contact guards must be non-negative")
+    if args.contact_start_guard + args.contact_end_guard >= args.epoch_duration:
+        raise RuntimeError("contact guards must leave a positive window within one epoch")
+    if args.contact_start_guard == 0 and args.contact_end_guard == 0:
+        log.warning(
+            "ION contacts share physical link boundaries; use contact guards "
+            "when link setup or teardown is not instantaneous"
+        )
+
+    ion_nodes_text = write_ion_nodes_file(registry, nodes)
+    absolute_start_time = None
+    if args.absolute_start_time:
+        absolute_start_time = parse_utc_datetime(args.absolute_start_time)
+    elif args.start_delay is not None:
+        if args.start_delay <= 0:
+            raise RuntimeError("--start-delay must be positive")
+        absolute_start_time = utc_now() + timedelta(seconds=args.start_delay)
+    return registry_path, scenario_dir, nodes, ion_nodes_text, absolute_start_time
+
+
+def build_generator_command(args, registry_path, scenario_dir, generated_dir, absolute_start_time):
+    """Build the config-generator invocation without running it."""
+    generator = repo_root_from_script() / "utils/nsb-ion-generate-configs.py"
+    generator_cmd = [
+        sys.executable,
+        str(generator),
+        "--registry",
+        str(registry_path),
+        "--output",
+        str(generated_dir),
+        "--epoch-dir",
+        str(scenario_dir),
+        "--file-pattern",
+        args.file_pattern,
+        "--epoch-duration",
+        str(args.epoch_duration),
+        "--contact-start-guard",
+        str(args.contact_start_guard),
+        "--contact-end-guard",
+        str(args.contact_end_guard),
+    ]
+    if args.clock_error is not None:
+        generator_cmd += ["--clock-error", str(args.clock_error)]
+    if absolute_start_time:
+        generator_cmd.extend(
+            [
+                "--absolute-start-time",
+                format_iso_z(absolute_start_time),
+            ]
+        )
+    return generator_cmd
+
+
+def resolve_preparation_targets(args, nodes, generated_dir, ion_nodes_text, temp_dir):
+    """Resolve local containers and assigned workers, then stage remote archives."""
+    local_nodes = {
+        node for node in nodes if args.transport != "ssh" and local_container_exists(node)
+    }
+    if args.transport == "local" and local_nodes != set(nodes):
+        missing = sorted(set(nodes) - local_nodes)
+        raise RuntimeError(
+            "containers are not available on the local Docker daemon: " + ", ".join(missing)
+        )
+
+    remote_nodes = set(nodes) - local_nodes
+    remote_workers = {}
+    archives = {}
+    if remote_nodes:
+        etcd_client = connect_etcd(args)
+        remote_workers = resolve_remote_workers(etcd_client, remote_nodes)
+        archive_dir = temp_dir / "archives"
+        archive_dir.mkdir()
+        for node in remote_nodes:
+            archive_path = archive_dir / f"{node}.tar.gz"
+            build_node_archive(
+                node,
+                generated_dir,
+                ion_nodes_text,
+                archive_path,
+            )
+            archives[node] = archive_path
+
+    if local_nodes:
+        log.info("📍 Local Docker nodes: %s", " ".join(sorted(local_nodes)))
+    if remote_nodes:
+        log.info(
+            "🌐 SSH worker nodes: %s",
+            " ".join(f"{node}@{remote_workers[node]['name']}" for node in sorted(remote_nodes)),
+        )
+    return local_nodes, remote_workers, archives
+
+
+def prepare_selected_nodes(
+    args, nodes, generated_dir, ion_nodes_text, local_nodes, remote_workers, archives
+):
+    """Prepare every selected node and roll back the batch if any node fails."""
+    worker_count = min(args.jobs, len(nodes))
+    log.info(f"🚀 Preparing ION containers with {worker_count} worker(s)")
+    failures = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {}
+        for node in nodes:
+            if node in local_nodes:
+                future = executor.submit(
+                    prepare_node,
+                    node,
+                    generated_dir,
+                    ion_nodes_text,
+                    args,
+                )
+            else:
+                future = executor.submit(
+                    prepare_remote_node,
+                    node,
+                    remote_workers[node],
+                    archives[node],
+                    args,
+                )
+            futures[future] = node
+        for future in concurrent.futures.as_completed(futures):
+            node = futures[future]
+            try:
+                log.info(f"✅ {future.result()}")
+            except Exception as exc:
+                failures[node] = exc
+
+    if failures:
+        cleanup_errors = rollback_preparation(
+            nodes,
+            local_nodes,
+            remote_workers,
+            args,
+        )
+        details = "; ".join(f"{node}: {error}" for node, error in sorted(failures.items()))
+        if cleanup_errors:
+            details += "; rollback errors: " + "; ".join(cleanup_errors)
+        raise RuntimeError("ION preparation failed; all selected nodes were stopped: " + details)
+
+
+# ==========================================
 # MAIN
 # ==========================================
-def main():
-    repo_root = repo_root_from_script()
+def create_parser(repo_root):
+    """Define the ION preparation command-line interface."""
     ion_dir = default_ion_dir(repo_root)
 
     parser = argparse.ArgumentParser(
@@ -557,66 +708,27 @@ def main():
         help="SSH/SCP connection timeout in seconds (default: 30).",
     )
     parser.add_argument("--etcd-host", default=os.getenv("ETCD_HOST", "127.0.0.1"))
-    parser.add_argument(
-        "--etcd-port", type=int, default=int(os.getenv("ETCD_PORT", "2379"))
-    )
+    parser.add_argument("--etcd-port", type=int, default=int(os.getenv("ETCD_PORT", "2379")))
     parser.add_argument("--etcd-user", default=os.getenv("ETCD_USER"))
     parser.add_argument("--etcd-password", default=os.getenv("ETCD_PASSWORD"))
     parser.add_argument("--etcd-ca-cert", default=os.getenv("ETCD_CA_CERT"))
-    args = parser.parse_args()
+    return parser
 
+
+def main():
+    repo_root = repo_root_from_script()
+    args = create_parser(repo_root).parse_args()
     if args.list_scenarios:
         for scenario in list_scenarios(repo_root):
             print(scenario)
         return 0
 
-    # Argument and registry problems are the operator's to fix, so they are
-    # reported like every other nsb command failure instead of as a traceback.
     try:
-        registry_path = Path(args.registry_path).resolve()
-        registry = load_json(registry_path)
-
-        scenario_dir = (
-            Path(args.scenario_dir).resolve()
-            if args.scenario_dir
-            else default_scenario_base(repo_root) / args.scenario
+        registry_path, scenario_dir, nodes, ion_nodes_text, absolute_start_time = (
+            load_preparation_inputs(args, repo_root)
         )
-        if not scenario_dir.is_dir():
-            raise RuntimeError(f"scenario directory not found: {scenario_dir}")
-
-        nodes = args.nodes if args.nodes else scenario_nodes(registry, scenario_dir)
-        if not nodes:
-            raise RuntimeError("no target nodes selected")
-        nodes = [validate_node_name(node) for node in nodes]
-        if len(nodes) != len(set(nodes)):
-            raise RuntimeError("target node list contains duplicates")
-        if args.jobs <= 0:
-            raise RuntimeError("--jobs must be positive")
-        if args.ssh_timeout <= 0:
-            raise RuntimeError("--ssh-timeout must be positive")
-        if args.contact_start_guard < 0 or args.contact_end_guard < 0:
-            raise RuntimeError("contact guards must be non-negative")
-        if args.contact_start_guard + args.contact_end_guard >= args.epoch_duration:
-            raise RuntimeError(
-                "contact guards must leave a positive window within one epoch"
-            )
-        if args.contact_start_guard == 0 and args.contact_end_guard == 0:
-            log.warning(
-                "ION contacts share physical link boundaries; use contact guards "
-                "when link setup or teardown is not instantaneous"
-            )
-
-        generator = repo_root / "utils/nsb-ion-generate-configs.py"
-        ion_nodes_text = write_ion_nodes_file(registry, nodes)
-        absolute_start_time = None
-        if args.absolute_start_time:
-            absolute_start_time = parse_utc_datetime(args.absolute_start_time)
-        elif args.start_delay is not None:
-            if args.start_delay <= 0:
-                raise RuntimeError("--start-delay must be positive")
-            absolute_start_time = utc_now() + timedelta(seconds=args.start_delay)
-    except (RuntimeError, ValueError, FileNotFoundError, KeyError) as e:
-        log.error(f"❌ {e}")
+    except (RuntimeError, ValueError, FileNotFoundError, KeyError) as exc:
+        log.error(f"❌ {exc}")
         return 1
 
     log.info(f"🛰️ ION scenario: {scenario_dir}")
@@ -626,121 +738,26 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="nsb-ion-generated-") as tmp:
         generated_dir = Path(tmp) / "generated"
-        generator_cmd = [
-            sys.executable,
-            str(generator),
-            "--registry",
-            str(registry_path),
-            "--output",
-            str(generated_dir),
-            "--epoch-dir",
-            str(scenario_dir),
-            "--file-pattern",
-            args.file_pattern,
-            "--epoch-duration",
-            str(args.epoch_duration),
-            "--contact-start-guard",
-            str(args.contact_start_guard),
-            "--contact-end-guard",
-            str(args.contact_end_guard),
-        ]
-        if args.clock_error is not None:
-            generator_cmd += ["--clock-error", str(args.clock_error)]
-        if absolute_start_time:
-            generator_cmd.extend([
-                "--absolute-start-time",
-                format_iso_z(absolute_start_time),
-            ])
-
+        generator_cmd = build_generator_command(
+            args, registry_path, scenario_dir, generated_dir, absolute_start_time
+        )
         run(generator_cmd, capture_output=True)
+        local_nodes, remote_workers, archives = resolve_preparation_targets(
+            args, nodes, generated_dir, ion_nodes_text, Path(tmp)
+        )
+        prepare_selected_nodes(
+            args,
+            nodes,
+            generated_dir,
+            ion_nodes_text,
+            local_nodes,
+            remote_workers,
+            archives,
+        )
 
-        local_nodes = {
-            node for node in nodes
-            if args.transport != "ssh" and local_container_exists(node)
-        }
-        if args.transport == "local" and local_nodes != set(nodes):
-            missing = sorted(set(nodes) - local_nodes)
-            raise RuntimeError(
-                "containers are not available on the local Docker daemon: "
-                + ", ".join(missing)
-            )
-
-        remote_nodes = set(nodes) - local_nodes
-        remote_workers = {}
-        archives = {}
-        if remote_nodes:
-            etcd_client = connect_etcd(args)
-            remote_workers = resolve_remote_workers(etcd_client, remote_nodes)
-            archive_dir = Path(tmp) / "archives"
-            archive_dir.mkdir()
-            for node in remote_nodes:
-                archive_path = archive_dir / f"{node}.tar.gz"
-                build_node_archive(
-                    node,
-                    generated_dir,
-                    ion_nodes_text,
-                    archive_path,
-                )
-                archives[node] = archive_path
-
-        if local_nodes:
-            log.info("📍 Local Docker nodes: %s", " ".join(sorted(local_nodes)))
-        if remote_nodes:
-            log.info(
-                "🌐 SSH worker nodes: %s",
-                " ".join(
-                    f"{node}@{remote_workers[node]['name']}"
-                    for node in sorted(remote_nodes)
-                ),
-            )
-
-        worker_count = min(args.jobs, len(nodes))
-        log.info(f"🚀 Preparing ION containers with {worker_count} worker(s)")
-        failures = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = {}
-            for node in nodes:
-                if node in local_nodes:
-                    future = executor.submit(
-                        prepare_node,
-                        node,
-                        generated_dir,
-                        ion_nodes_text,
-                        args,
-                    )
-                else:
-                    future = executor.submit(
-                        prepare_remote_node,
-                        node,
-                        remote_workers[node],
-                        archives[node],
-                        args,
-                    )
-                futures[future] = node
-            for future in concurrent.futures.as_completed(futures):
-                node = futures[future]
-                try:
-                    log.info(f"✅ {future.result()}")
-                except Exception as exc:
-                    failures[node] = exc
-
-        if failures:
-            cleanup_errors = rollback_preparation(
-                nodes,
-                local_nodes,
-                remote_workers,
-                args,
-            )
-            details = "; ".join(
-                f"{node}: {error}" for node, error in sorted(failures.items())
-            )
-            if cleanup_errors:
-                details += "; rollback errors: " + "; ".join(cleanup_errors)
-            raise RuntimeError(
-                "ION preparation failed; all selected nodes were stopped: " + details
-            )
-
-    log.info("✅ ION preparation completed. Temporary generated configs were removed from the host.")
+    log.info(
+        "✅ ION preparation completed. Temporary generated configs were removed from the host."
+    )
     return 0
 
 

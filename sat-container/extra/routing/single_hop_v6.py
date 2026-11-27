@@ -141,7 +141,7 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
         my_config = json.loads(val.decode())
         l3_config = my_config.get("L3-config", {})
         if "cidr-v6" not in l3_config:
-            msg=f" ❌ Configuration failed: No CIDR v6 assigned to node."
+            msg=" ❌ Configuration failed: No CIDR v6 assigned to node."
             return msg, False
         refresh_hosts_ipv6_cache()
         return f" ✅ IPv6 routing initialized for node {node_name}", True

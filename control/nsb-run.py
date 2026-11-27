@@ -555,7 +555,7 @@ def run_all_epochs(
     
     if resume:
         log.info("🔄 Resume emulation from state in Etcd...")
-        cfg_val, _ = etcd_client.get(f"/config/epoch-config")
+        cfg_val, _ = etcd_client.get("/config/epoch-config")
         cfg = json.loads(cfg_val.decode())
         if "epoch-file" in cfg:
             last_epoch = os.path.join(epoch_dir, cfg["epoch-file"])
@@ -633,9 +633,8 @@ def prepare_epoch_queue(queue_dir: Path, policy: str) -> bool:
     return True
 
 
-def main() -> int:
-    global etcd_client, PARALLEL_WORKERS
-
+def create_parser():
+    """Define the command-line arguments without executing runtime operations."""
     parser = argparse.ArgumentParser(
         description="Apply all epoch JSON files to Etcd (with optional virtual-time synchronization)."
     )
@@ -728,9 +727,13 @@ def main() -> int:
         type=int,
         help="Number of worker threads for per-epoch Etcd operations (default: 4).",
     )
+    return parser
 
 
-    args = parser.parse_args()
+def main() -> int:
+    global etcd_client, PARALLEL_WORKERS
+
+    args = create_parser().parse_args()
     log.setLevel(args.log_level.upper())
     PARALLEL_WORKERS = max(1, args.parallel_workers)
 

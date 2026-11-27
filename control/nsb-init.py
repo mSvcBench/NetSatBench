@@ -283,7 +283,7 @@ def auto_ip_addressing(sat_config_data: dict) -> dict:
         # upload config to etcd and auto-assign IPs if enabled
         for key, value in sat_config_data_new.items():
             if key == "nodes":
-                log.info(f"⚙️ Starting IP assignment process...")
+                log.info("⚙️ Starting IP assignment process...")
                 for name, node_cfg in value.items():
                     l3_cfg = node_cfg.get("L3-config", {})
 
@@ -338,7 +338,7 @@ def auto_ip_addressing(sat_config_data: dict) -> dict:
                         f"to node {name}, matched rule v4: {matched_string_v4}, matched rule v6: {matched_string_v6}"
                     )
 
-                log.info(f"✅ IP assignment process completed.")
+                log.info("✅ IP assignment process completed.")
                 return sat_config_data_new
         return sat_config_data_new
     except Exception as e:

@@ -312,7 +312,7 @@ def main():
         )
         check_forwarded = run(check_forward_cmd)
         if check_forwarded.returncode == 0:
-            log.info(f"    ✅ DOCKER-USER iptables rule enabled successfully.")
+            log.info("    ✅ DOCKER-USER iptables rule enabled successfully.")
         else:    
             forward_cmd = (
                 f"ssh {remote_str} sudo iptables -I DOCKER-USER -s {sat_vnet_supercidr}"
@@ -326,7 +326,7 @@ def main():
                     f"\t\tSTDOUT:\n{forwarded.stdout}\n"
                     f"\t\tSTDERR:\n{forwarded.stderr}")
             else:
-                log.info(f"    ✅ DOCKER-USER iptables rule enabled successfully.")
+                log.info("    ✅ DOCKER-USER iptables rule enabled successfully.")
 
         # ADD POSTROUTING iptables rule to enable NAT for outgoing packets from containers to outside world, i.e. with destination different from sat_vnet_supercidr
         ## discover the default interface on the worker
@@ -348,7 +348,7 @@ def main():
         )
         nat_checked = run(nat_cmd)
         if nat_checked.returncode == 0:
-            log.info(f"    ✅ POSTROUTING iptables NAT rule already exists.")
+            log.info("    ✅ POSTROUTING iptables NAT rule already exists.")
         else:    
             nat_add_cmd = (
                 f"ssh {remote_str} sudo iptables -t nat -A POSTROUTING -s {sat_vnet_supercidr} "
@@ -363,7 +363,7 @@ def main():
                     f"\t\tSTDOUT:\n{nat_added.stdout}\n"
                     f"\t\tSTDERR:\n{nat_added.stderr}")
             else:
-                log.info(f"    ✅ POSTROUTING iptables NAT rule added successfully.")
+                log.info("    ✅ POSTROUTING iptables NAT rule added successfully.")
 
         for other_worker_name, other_worker in workers.items():
             if other_worker_name == worker_name:

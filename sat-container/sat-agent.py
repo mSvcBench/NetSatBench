@@ -679,7 +679,7 @@ def watch_link_actions_loop():
             backoff = 1
             for event in events_iterator:
                 process_link_action(etcd_client, event)
-        except Exception as ex:
+        except Exception:
             log.exception("❌ Failed to watch link actions (will retry).")
             time.sleep(backoff)
             backoff = min(backoff * 2, 30)
@@ -992,7 +992,7 @@ def main():
     ]
     for t in threads: t.start()
     
-    log.info(f"✅ All Watchers Started.")
+    log.info("✅ All Watchers Started.")
 
     # Initial Links Setup
     process_initial_topology(etcd_client)

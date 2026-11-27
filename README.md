@@ -300,6 +300,7 @@ python3 ./nsb.py system-clean-docker
 
 ## Documentation
 
+- [Development and Code Style](CONTRIBUTING.md)
 - [CLI Emulation Control](docs/control-commands.md)
 - [CLI Utilities](docs/utils.md)
 - [Configuration and Epoch Files](docs/configuration.md)

@@ -10,7 +10,7 @@ import re
 import numpy as np
 import argparse
 import logging
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from collections import deque, defaultdict
 
@@ -73,7 +73,6 @@ def parse_utc_timestamp(ts: str) -> float:
     """
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
 
-from typing import Dict, Tuple, Set
 
 def convert_time_epoch_to_timestamp(time_str: str) -> float:
     """
@@ -334,7 +333,7 @@ def apply_metis_worker_assignment(
 
     block = sat_config.get("nodes", {})
     if not isinstance(block, dict):
-        raise ValueError(f"Section nodes must be a dict of node_name -> node_config.")
+        raise ValueError("Section nodes must be a dict of node_name -> node_config.")
 
     for node_name, effective_node_config in block.items():
         if node_name not in node_to_part:

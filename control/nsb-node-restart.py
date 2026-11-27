@@ -208,7 +208,7 @@ def recreate_and_run_container(
                 "-i", ssh_key_path,
                 "-o", "BatchMode=yes",
                 "-o", "StrictHostKeyChecking=no",
-                "-o", f"ConnectTimeout=30",
+                "-o", "ConnectTimeout=30",
                 etcd_ca_cert,
                 f"{ssh_username}@{worker}:/tmp/etcd-ca.crt",
             ]
@@ -283,7 +283,7 @@ def create_one_node(
         return name, False, "❌ 'env' must be an object of NAME: value pairs"
 
     try:
-        cmd = recreate_and_run_container(
+        recreate_and_run_container(
             node_name=name,
             worker=worker_ip,
             ssh_username=ssh_user,

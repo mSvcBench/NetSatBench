@@ -44,7 +44,7 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
         my_config = json.loads(val.decode())
         l3_config = my_config.get("L3-config", {})
         if "cidr" not in l3_config:
-            msg=f"  ❌ IS-IS configuration failed: No CIDR assigned to node."
+            msg="  ❌ IS-IS configuration failed: No CIDR assigned to node."
             return msg, False
         area_id = l3_config.get("metadata", {}).get("isis-area-id","0001")  # default area ID
 
@@ -79,7 +79,7 @@ def init(etcd_client, node_name) -> tuple[str, bool]:
             cmd = ["ip", "route", "show", "default"]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
-                msg=f"  ❌ IS-IS default route advertisement failed: Unable to determine local default route."
+                msg="  ❌ IS-IS default route advertisement failed: Unable to determine local default route."
                 return msg, False
             default_gw = result.stdout.strip().split()[2]
             cmd = [
